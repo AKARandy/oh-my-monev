@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  TANGKASAN MANIFEST UNTUK LEAD (milestone M3 - ladder penjadwalan)
+  ================================================================
+  Potongan XML di bawah ini dilepas ke AndroidManifest.xml ":app".
+  Jangan ubah file ini; salin blok <uses-permission> dan blok komponen
+  sesuai penanda MERGE-DI:...
+
+  CATATAN PENTING:
+  * RECEIVE_BOOT_COMPLETED hanya untuk BOOT_COMPLETED.
+  * MY_PACKAGE_REPLACED BUKAN izin - cukup intent-filter pada
+    PackageReplacedReceiver; jangan tambahkan entri uses-permission untuknya.
+  * BootReceiver & PackageReplacedReceiver menerima protected system
+    broadcast, jadi exported=false SUDAH cukup dan lebih aman.
+  * FOREGROUND_SERVICE_DATA_SYNC dipakai karena AutoFillService
+    berjalan dengan foregroundServiceType="dataSync" (Android 14+ wajib).
+-->
+
+<!-- MERGE-DI:#1 - letakkan sebelum <application>, sambung daftar izin yang sudah ada -->
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+<uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+<uses-permission android:name="android.permission.WAKE_LOCK" />
+<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+<!-- MERGE-DI:#2 - letakkan di dalam <application>, sambung komponen .MainActivity -->
+<receiver
+    android:name=".schedule.ReminderReceiver"
+    android:exported="false">
+    <intent-filter>
+        <action android:name="id.ohmymonev.android.schedule.ACTION_REMINDER" />
+    </intent-filter>
+</receiver>
+
+<receiver
+    android:name=".schedule.AutoFillReceiver"
+    android:exported="false">
+    <intent-filter>
+        <action android:name="id.ohmymonev.android.schedule.ACTION_AUTOFILL" />
+    </intent-filter>
+</receiver>
+
+<receiver
+    android:name=".schedule.EscalationReceiver"
+    android:exported="false">
+    <intent-filter>
+        <action android:name="id.ohmymonev.android.schedule.ACTION_ESCALATION" />
+    </intent-filter>
+</receiver>
+
+<receiver
+    android:name=".schedule.BootReceiver"
+    android:exported="false">
+    <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+    </intent-filter>
+</receiver>
+
+<receiver
+    android:name=".schedule.PackageReplacedReceiver"
+    android:exported="false">
+    <intent-filter>
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+    </intent-filter>
+</receiver>
+
+<service
+    android:name=".schedule.AutoFillService"
+    android:exported="false"
+    android:foregroundServiceType="dataSync" />

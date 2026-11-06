@@ -1,0 +1,17 @@
+{
+  "pelajaran": [
+    "Pekerjaan harian dirancang agar setiap tahap diuji terlebih dahulu sebelum melangkah ke bagian berikutnya sehingga kesalahan mengecil dan waktu perbaikan terukur lebih baik.",
+    "Kolaborasi dengan mentor mengajarkan bahwa keputusan teknis lebih mudah dipertahankan ketika disertai catatan uji singkat yang mudah ditinjau kembali oleh siapa pun.",
+    "Pembagian tugas menjadi potongan kecil membuat progres dapat dipantau setiap hari tanpa menumpuk pekerjaan besar di penghujung minggu magang.",
+    "Struktur penyimpanan yang tertata jelas mempercepat pencarian ulang informasi ketika menjawab pertanyaan mentor selama sesi pembahasan mingguan."
+  ],
+  "kendala": [
+    "Akses ke beberapa lingkungan pengujian terbatas pada jam kerja tertentu sehingga penjadwalan pengecekan perlu disesuaikan agar tidak mengganggu pekerjaan utama.",
+    "Dokumentasi internal belum lengkap untuk beberapa modul lama sehingga pemahaman alur memerlukan waktu tambahan selama beberapa sesi pembacaan kode.",
+    "Keterbatasan perangkat pengujian membuat beberapa skenario harus dijalankan bergantian sehingga urutan pengetesan disusun ulang agar tetap tepat waktu.",
+    "Konektivitas jaringan kadang tidak stabil sehingga proses unggah berkas besar dibagi menjadi beberapa tahap dengan pengecekan integritas berkas."
+  ],
+  "aktivitasTemplate": null,
+  "pelajaranTemplate": null,
+  "kendalaTemplate": null
+}

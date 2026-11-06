@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Halaman contoh mesin</title>
+<style>
+  body { font-family: -apple-system, Roboto, sans-serif; margin: 0; padding: 24px; color: #101215; background: #f3f4f7; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { color: #5f6570; margin: 0 0 20px; font-size: 14px; }
+  .nav { display: flex; gap: 16px; font-size: 14px; color: #5f6570; margin-bottom: 20px; }
+  .card { background: #fff; border: 1px solid #e6e8ec; border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+  label { display: block; font-size: 13px; color: #5f6570; margin-bottom: 6px; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 84px; border: 1px solid #c9cdd4; border-radius: 10px; padding: 10px; font: inherit; font-size: 14px; }
+  .lokasi { color: #1e8e3e; font-size: 13px; margin-bottom: 12px; }
+  .confirm { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; margin: 16px 0; }
+  button { width: 100%; padding: 14px; border: 0; border-radius: 12px; background: #0a6bff; color: #fff; font-size: 16px; font-weight: 600; }
+  #hasil { color: #1e8e3e; font-weight: 600; font-size: 15px; }
+</style>
+</head>
+<body>
+  <!-- Penanda "sesi aktif": engine mengenali tab dasbor dari teks ini. -->
+  <nav class="nav"><span>Beranda</span><span>Riwayat</span><span>Perkembangan</span><span>Akun</span></nav>
+  <h1>Tambah laporan · halaman contoh</h1>
+  <p class="sub">Halaman tiruan untuk membuktikan mesin mengisi dan mengirim. Bukan situs asli.</p>
+  <div class="lokasi">Lokasi berhasil diakses</div>
+
+  <div class="card">
+    <label>Uraian aktivitas</label>
+    <textarea id="a" placeholder="Tulis uraian aktivitas minimal 100 karakter"></textarea>
+    <label style="margin-top:12px">Pembelajaran yang diperoleh</label>
+    <textarea id="b" placeholder="Tulis ilmu/pembelajaran yang diperoleh minimal 100 karakter"></textarea>
+    <label style="margin-top:12px">Kendala yang dialami</label>
+    <textarea id="c" placeholder="Tulis kendala/hambatan yang dialami minimal 100 karakter"></textarea>
+  </div>
+
+  <div class="confirm">
+    <input type="checkbox" id="cek">
+    <label for="cek" style="margin:0;color:#101215;font-size:14px">Saya menyatakan telah meninjau dan memastikan isian laporan ini sudah benar</label>
+  </div>
+  <button id="kirim" type="button">Simpan dan Kirim</button>
+  <p id="hasil"></p>
+
+<script>
+  document.getElementById('kirim').addEventListener('click', function () {
+    var a = document.getElementById('a').value;
+    var b = document.getElementById('b').value;
+    var c = document.getElementById('c').value;
+    var ok = document.getElementById('cek').checked;
+    if (!ok || a.length < 100 || b.length < 100 || c.length < 100) {
+      document.getElementById('hasil').textContent = 'Belum lengkap atau belum dicentang.';
+      document.getElementById('hasil').style.color = '#c5221f';
+      return;
+    }
+    document.getElementById('hasil').textContent = 'Kehadiran dan laporan harian berhasil dikirim.';
+    // Ganti judul agar bukti terlihat di layar bila diperlukan.
+    document.title = 'TERKIRIM';
+  });
+</script>
+</body>
+</html>

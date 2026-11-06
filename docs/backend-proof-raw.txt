@@ -1,0 +1,35 @@
+﻿=== GENERATOR (laporan kemarin -> laporan hari ini) ===
+tier: CONTINUATION_RULES
+catatan: [dari laporan 2026-11-05]
+--- aktivitas ---
+- Melanjutkan pembuatan endpoint login berbasis JWT
+- Melanjutkan penyusunan laporan mingguan tim
+- Melanjutkan pengujian modul kehadiran
+--- pelajaran ---
+Struktur data yang rapi mempercepat penelusuran kesalahan saat pengujian dan membuat serah terima pekerjaan menjadi lebih mudah dipahami.
+--- kendala ---
+Akses lingkungan pengujian yang terbatas memaksa urutan pengujian disusun ulang setiap hari kerja agar bagian penting selesai lebih dulu.
+gate lulus: true pelanggaran: []
+
+=== BUKTI TANPA BAHAN: TIDAK MENGARANG ===
+hasil: Failed(reason=NO_SOURCE_MATERIAL, detail=no template and no previous report before 2026-11-06; nothing may be submitted)
+
+=== JADWAL HARI INI (WIB) ===
+alarm: 2026-11-06T20:00+07:00[Asia/Jakarta]
+alarm: 2026-11-06T21:00+07:00[Asia/Jakarta]
+alarm: 2026-11-06T22:30+07:00[Asia/Jakarta]
+contoh coba ulang setelah gagal 21:05 (batas 22:30):
+coba lagi: 2026-11-06T21:10+07:00[Asia/Jakarta]
+coba lagi: 2026-11-06T21:25+07:00[Asia/Jakarta]
+coba lagi: 2026-11-06T22:05+07:00[Asia/Jakarta]
+
+=== GATE: CONTOH DITOLAK ===
+G-8: Uraian aktivitas: activity bullet does not open with an active meN- verb: 'Batal'
+G-1: Kendala yang dialami: only 15 chars, minimum is 100
+
+=== CONTINUATION MAP CONTOH ===
+Melakukan aktivitas pengecekan sistem -> Melanjutkan aktivitas pengecekan sistem
+Membuat endpoint login -> Melanjutkan pembuatan endpoint login
+Menyusun laporan mingguan -> Melanjutkan penyusunan laporan mingguan
+Menganalisis data media -> Melanjutkan analisis data media
+

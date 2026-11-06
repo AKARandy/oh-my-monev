@@ -1,0 +1,33 @@
+# Gradle
+.gradle/
+build/
+app/build/
+core/build/
+
+# local machine config
+local.properties
+
+# IDE
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# vendored toolchain (Gradle + Android SDK), provisioned by scripts/provision-toolchain.ps1
+.tools/
+
+# signing
+*.jks
+*.keystore
+keystore.properties
+
+# OS
+.DS_Store
+Thumbs.db
+
+.kotlin/
+
+# agent/harness instructions and local scratch docs
+AGENTS.md
+docs/backend-proof-raw.txt
