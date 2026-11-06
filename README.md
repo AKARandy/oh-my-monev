@@ -1,36 +1,45 @@
 # oh my monev
 
-An offline-first Android app that helps MagangHub participants (Kemnaker, Indonesia) never lose a stipend
-day just because they forgot to fill the daily attendance on https://monev.maganghub.kemnaker.go.id.
+oh my monev is an Android app. It helps MagangHub participants (Kemnaker, Indonesia) to record
+their daily attendance on https://monev.maganghub.kemnaker.go.id.
 
-- Alarm at a set time (default 20:00) when attendance is still unrecorded
-- Pre-fill tonight's report, auto-submit at a set time unless cancelled
-- If forgotten: rule-based continuation from the previous report (e.g. "Melakukan aktivitas X" →
-  "Melanjutkan aktivitas X") and rotating user pools — never fabricated content
-- Submitted content is always gated through a delivery gate (min 100 chars per part, no first-person
-  pronouns, 3–5 bulleted activities, one-paragraph lessons/struggles, no clichés)
-- Runs unattended from an idle phone (Doze-exact alarms, foreground service, full-screen intent)
+MagangHub gives money to interns. But the participant must record attendance every day.
+If the participant does not send the record before 23:59 WIB, the participant loses the money
+for that day.
 
-Status: v0.1 in development (milestones in `docs/plan.md`).
+The app does this:
 
-## Layout
+- It gives an alarm at a set time (default: 20:00) if attendance is not recorded.
+- It can fill the report form. It can also send the form. You choose the time.
+  You can stop the automation for one night.
+- If you did not write a report, the app makes one. It uses the report from the previous day.
+  Example: "Melakukan aktivitas X" becomes "Melanjutkan aktivitas X". It does not invent words.
+- The app checks all text before it fills the form. Each part must have 100 or more characters.
+  No words such as "saya" or "kami". 3 to 5 activity lines. No clichés.
+- The phone can be idle. The alarms stay exact. A service keeps the phone awake during the fill.
 
-- `:core` — pure Kotlin: delivery gate, verb-continuation generator, scheduling math, site profile
-- `:app` — Android app (Compose, WebView engine, alarms)
-- `docs/` — plan, site research, behavior spec (`monev-logic.md`), recon spike checklist
-- `.tools/` — locally provisioned build toolchain (gitignored)
+Status: version 0.1 is in development. See `docs/plan.md`.
 
-## Build (once toolchain provisioning finishes)
+## Structure
+
+- `:core`: Kotlin code with no Android parts. Checks the text, makes reports, calculates times.
+- `:app`: the Android app. Screen code, web page control, alarms.
+- `docs/`: the plan. The rules of the Monev website (`monev-logic.md`). Other notes.
+- `.tools/`: the build tools for this computer. Not in the repository.
+
+## Build
 
 ```powershell
-# from repo root
-sdk_dir will be written to local.properties by scripts; then:
-.tools\gradle-8.10.2\bin\gradle.bat :core:test      # pure logic tests run without SDK too
+# Step 1: Go to the repository folder.
+# Step 2: Make local.properties. Write the SDK path in it.
+# Step 3: Run these commands:
+.tools\gradle-8.10.2\bin\gradle.bat :core:test      # start with these tests. No SDK is necessary.
 .tools\gradle-8.10.2\bin\gradle.bat :app:assembleDebug
 ```
 
-## Responsible use
+## Approved use
 
-The app automates **your own** actions in **your own** session and never invents report content; you remain
-responsible for what is submitted under your name (auto-submissions are logged with their exact text and can
-be disabled per-day).
+The app uses your account and your session. It does not invent report text.
+You are responsible for the text that the app sends.
+The app writes every automatic action to a log. You can read the text of each action.
+You can stop the automation for one day.
