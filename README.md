@@ -1,47 +1,47 @@
 # oh my monev
 
-oh my monev is an Android app. It helps MagangHub participants (Kemnaker, Indonesia) to record
-their daily attendance on https://monev.maganghub.kemnaker.go.id.
+oh my monev adalah aplikasi Android. Aplikasi ini membantu peserta MagangHub (Kemnaker, Indonesia)
+mencatat kehadiran harian di https://monev.maganghub.kemnaker.go.id.
 
-Read this file in Indonesian: [README.id.md](README.id.md).
+Versi bahasa Inggris: [README.en.md](README.en.md).
 
-MagangHub gives money to interns. But the participant must record attendance every day.
-If the participant does not send the record before 23:59 WIB, the participant loses the money
-for that day.
+MagangHub memberi uang kepada peserta magang. Tetapi peserta wajib mencatat kehadiran setiap hari.
+Jika peserta tidak mengirim catatan sebelum pukul 23.59 WIB, peserta kehilangan uang untuk hari itu.
 
-The app does this:
+Aplikasi ini melakukan hal-hal ini:
 
-- It gives an alarm at a set time (default: 20:00) if attendance is not recorded.
-- It can fill the report form. It can also send the form. You choose the time.
-  You can stop the automation for one night.
-- If you did not write a report, the app makes one. It uses the report from the previous day.
-  Example: "Melakukan aktivitas X" becomes "Melanjutkan aktivitas X". It does not invent words.
-- The app checks all text before it fills the form. Each part must have 100 or more characters.
-  No words such as "saya" or "kami". 3 to 5 activity lines. No clichés.
-- The phone can be idle. The alarms stay exact. A service keeps the phone awake during the fill.
+- Aplikasi memberi alarm pada jam yang ditetapkan (bawaan: 20.00) jika kehadiran belum tercatat.
+- Aplikasi dapat mengisi formulir laporan. Aplikasi juga dapat mengirim formulir itu. Anda memilih
+  jamnya. Anda dapat menghentikan otomatisasi untuk satu malam.
+- Jika Anda tidak menulis laporan, aplikasi membuatnya. Aplikasi memakai laporan hari sebelumnya.
+  Contoh: "Melakukan aktivitas X" menjadi "Melanjutkan aktivitas X". Aplikasi tidak mengarang kata.
+- Aplikasi memeriksa semua teks sebelum mengisi formulir. Setiap bagian wajib memiliki 100 karakter
+  atau lebih. Tanpa kata seperti "saya" atau "kami". 3 sampai 5 baris aktivitas. Tanpa klise.
+- Ponsel boleh dalam keadaan diam. Alarm tetap tepat waktu. Sebuah layanan menjaga ponsel tetap
+  menyala selama pengisian berlangsung.
 
-Status: version 0.1 is in development. See `docs/plan.md`.
+Status: versi 0.1 masih dalam pengembangan. Lihat `docs/plan.md`.
 
-## Structure
+## Struktur
 
-- `:core`: Kotlin code with no Android parts. Checks the text, makes reports, calculates times.
-- `:app`: the Android app. Screen code, web page control, alarms.
-- `docs/`: the plan. The rules of the Monev website (`monev-logic.md`). Other notes.
-- `.tools/`: the build tools for this computer. Not in the repository.
+- `:core`: kode Kotlin tanpa bagian Android. Memeriksa teks, membuat laporan, menghitung waktu.
+- `:app`: aplikasi Android. Kode layar, kendali halaman web, alarm.
+- `docs/`: rencana kerja. Aturan situs Monev (`monev-logic.md`). Catatan lain.
+- `.tools/`: alat bantu build untuk komputer ini. Tidak ada di repositori.
 
 ## Build
 
 ```powershell
-# Step 1: Go to the repository folder.
-# Step 2: Make local.properties. Write the SDK path in it.
-# Step 3: Run these commands:
-.tools\gradle-8.10.2\bin\gradle.bat :core:test      # start with these tests. No SDK is necessary.
+# Langkah 1: Buka folder repositori.
+# Langkah 2: Buat local.properties. Tulis jalur SDK di dalamnya.
+# Langkah 3: Jalankan perintah ini:
+.tools\gradle-8.10.2\bin\gradle.bat :core:test      # mulai dari tes ini. SDK tidak diperlukan.
 .tools\gradle-8.10.2\bin\gradle.bat :app:assembleDebug
 ```
 
-## Approved use
+## Penggunaan yang disetujui
 
-The app uses your account and your session. It does not invent report text.
-You are responsible for the text that the app sends.
-The app writes every automatic action to a log. You can read the text of each action.
-You can stop the automation for one day.
+Aplikasi memakai akun Anda dan sesi Anda. Aplikasi tidak mengarang isi laporan.
+Anda bertanggung jawab atas teks yang dikirim aplikasi.
+Aplikasi menulis setiap tindakan otomatis ke dalam catatan. Anda dapat membaca teks setiap tindakan.
+Anda dapat menghentikan otomatisasi untuk satu hari.
