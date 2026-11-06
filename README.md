@@ -3,6 +3,8 @@
 oh my monev is an Android app. It helps MagangHub participants (Kemnaker, Indonesia) to record
 their daily attendance on https://monev.maganghub.kemnaker.go.id.
 
+Read this file in Indonesian: [README.id.md](README.id.md).
+
 MagangHub gives money to interns. But the participant must record attendance every day.
 If the participant does not send the record before 23:59 WIB, the participant loses the money
 for that day.
