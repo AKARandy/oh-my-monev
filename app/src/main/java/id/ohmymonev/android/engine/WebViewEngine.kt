@@ -1,6 +1,10 @@
 package id.ohmymonev.android.engine
 
 import android.annotation.SuppressLint
+import id.ohmymonev.android.data.SessionRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -70,6 +74,7 @@ class WebViewEngine(
         var httpStatusCode: Int = 200
         var mainFrameError: String? = null
         var finished = false
+        var sessionVersion = 0L
     }
 
     fun runAutomation(dateISO: String, draft: ReportDraft, liveSubmit: Boolean, attempt: Int) {
@@ -132,9 +137,15 @@ class WebViewEngine(
 
     /** Loads the dashboard and polls until the loggedInTabs markers appear (session sanity). */
     private fun openDashboard(state: RunState) {
-        val deadline = SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs
-        state.webView.loadUrl(profile.dashboardUrl())
-        main.postDelayed({ waitTabs(state, deadline) }, profile.timing.spaSettleMs)
+        CoroutineScope(Dispatchers.Main).launch {
+            val session = SessionRepository.get(appContext)
+            val credentials = session.credentials()
+            if (state.finished) return@launch
+            state.sessionVersion = credentials?.version ?: session.state.value.version
+            SessionWebView.load(state.webView, credentials?.token, profile.dashboardUrl())
+            val deadline = SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs
+            main.postDelayed({ waitTabs(state, deadline) }, profile.timing.spaSettleMs)
+        }
     }
 
     private fun waitTabs(state: RunState, deadline: Long) {
@@ -327,10 +338,7 @@ class WebViewEngine(
         CookieManager.getInstance().flush()
         events(state, "Hasil: $outcome" + (detail?.let { " ($it)" } ?: ""))
         val webView = state.webView
-        webView.post {
-            webView.stopLoading()
-            webView.destroy()
-        }
+        SessionWebView.release(webView, SessionRepository.get(appContext), state.sessionVersion)
         callbacks.onRunFinished(
             RunRecord(
                 date = state.dateISO,

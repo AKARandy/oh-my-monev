@@ -4,6 +4,7 @@ import android.content.Context
 import id.ohmymonev.core.enginecore.RunRecord
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.builtins.nullable
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -77,13 +78,20 @@ class AppStore(private val context: Context) {
     }
 
     fun sessionStatus(): SessionRecord? = runCatching {
-        sessionFile().takeIf { it.exists() }
-            ?.readUtf8()
-            ?.let { json.decodeFromString(SessionRecord.serializer(), it) }
+        val preferences = context.getSharedPreferences("monev_session", Context.MODE_PRIVATE)
+        val encoded = if (preferences.contains("status")) preferences.getString("status", "null")!!
+            else sessionFile().takeIf { it.exists() }?.readUtf8() ?: return null
+        json.decodeFromString(SessionRecord.serializer().nullable, encoded)
     }.getOrNull()
 
     fun saveSessionStatus(record: SessionRecord) {
-        sessionFile().writeText(json.encodeToString(record))
+        val preferences = context.getSharedPreferences("monev_session", Context.MODE_PRIVATE)
+        if (!preferences.edit().putString("status", json.encodeToString(record)).commit()) throw java.io.IOException("Session storage failed")
+    }
+
+    fun clearSessionStatus() {
+        val preferences = context.getSharedPreferences("monev_session", Context.MODE_PRIVATE)
+        if (!preferences.edit().putString("status", "null").commit()) throw java.io.IOException("Session removal failed")
     }
 
     /** Benar bila alarm otomatis untuk tanggal ini dibatalkan pengguna. */

@@ -1,118 +1,66 @@
 package id.ohmymonev.android.engine
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
-import android.os.SystemClock
-import android.webkit.CookieManager
-import android.webkit.WebView
 import id.ohmymonev.core.enginecore.DayEntry
-import id.ohmymonev.core.enginecore.DashboardParser
+import id.ohmymonev.core.enginecore.SessionState
 import id.ohmymonev.core.enginecore.TodayState
-import id.ohmymonev.core.siteprofile.SiteProfile
-import org.json.JSONTokener
+import id.ohmymonev.core.schedule.ScheduleCalculator
+import java.net.URLEncoder
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import org.json.JSONObject
 
-/** Hasil pembacaan status dari situs. */
 data class SiteStatus(
-    val sessionActive: Boolean,
+    val sessionActive: Boolean?,
     val today: TodayState,
     val deadline: String?,
     val days: List<DayEntry>,
+    val error: String? = null,
 )
 
-/**
- * Membaca (tanpa menyentuh form sama sekali):
- * 1. Beranda -> status laporan hari ini + batas jam.
- * 2. Riwayat -> status hari-hari sebelumnya.
- * Hasil dipakai layar Beranda untuk menunjukkan kondisi nyata, bukan klaim.
- */
-class SiteStatusProbe(
-    context: Context,
-    private val profile: SiteProfile,
-    private val onResult: (SiteStatus) -> Unit,
-) {
-    private val appContext = context.applicationContext
-    private val main = Handler(Looper.getMainLooper())
-    private val bodyTextJs = "(function(){return document.body?document.body.textContent:'';})()"
-
-    fun check() {
-        main.post { start() }
-    }
-
-    private fun start() {
-        val webView = WebView(appContext).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            webViewClient = android.webkit.WebViewClient()
+/** The same authenticated data that powers Monev's own Beranda. No DOM verdicts. */
+class SiteStatusProbe(private val context: Context) {
+    suspend fun check(): SiteStatus {
+        val api = MonevApiClient(context)
+        fun unavailable() = SiteStatus(if (api.failureState == SessionState.EXPIRED) false else null,
+            TodayState.UNKNOWN, null, emptyList(), api.message)
+        val profile = api.objectData("/users/me") ?: return unavailable()
+        val id = profile.optString("id")
+        if (id.isBlank()) { api.failed("Profil belum dapat dibaca."); return unavailable() }
+        api.confirmActive()
+        val home = api.objectData("/users/me/home") ?: return unavailable()
+        if (home.opt("has_attendance") !is Boolean || home.opt("is_scheduled_off_day") !is Boolean) {
+            api.failed("Kondisi hari ini belum dapat dibaca.")
+            return unavailable()
         }
-        CookieManager.getInstance().setAcceptCookie(true)
-        readPage(
-            webView,
-            profile.dashboardUrl(),
-            ready = { text ->
-                text.contains("Laporan hari ini sudah diisi") ||
-                    text.contains("Laporan hari ini belum diisi") ||
-                    text.contains("Batas pengisian")
-            },
-        ) { dashboardText ->
-            if (dashboardText == null || !DashboardParser.isLoggedIn(dashboardText)) {
-                finish(webView, SiteStatus(false, TodayState.UNKNOWN, null, emptyList()))
-                return@readPage
-            }
-            val today = DashboardParser.todayState(dashboardText)
-            val deadline = DashboardParser.deadline(dashboardText)
-            readPage(
-                webView,
-                profile.riwayatUrl(),
-                ready = { text ->
-                    text.contains("Riwayat Kehadiran") && DashboardParser.days(text).isNotEmpty()
-                },
-            ) { riwayatText ->
-                val days = riwayatText?.let { DashboardParser.days(it) }.orEmpty()
-                finish(webView, SiteStatus(true, today, deadline, days))
-            }
-        }
-    }
-
-    private fun readPage(webView: WebView, url: String, ready: (String) -> Boolean, onText: (String?) -> Unit) {
-        var finished = false
-        var lastText: String? = null
-        val deadline = SystemClock.elapsedRealtime() + 45_000
-        webView.loadUrl(url)
-        fun poll() {
-            if (finished) return
-            webView.evaluateJavascript(bodyTextJs) { raw ->
-                if (finished) return@evaluateJavascript
-                val text = unwrap(raw)
-                if (text != null) lastText = text
-                if (text != null && ready(text)) {
-                    finished = true
-                    onText(text)
-                } else if (SystemClock.elapsedRealtime() >= deadline) {
-                    finished = true
-                    onText(lastText)
-                } else {
-                    main.postDelayed({ poll() }, profile.timing.pollIntervalMs)
+        val today = LocalDate.now(ScheduleCalculator.asiaJakarta)
+        val attendances = api.arrayData("/attendances?participant_id=${URLEncoder.encode(id, "UTF-8")}&start_date=${today.withDayOfMonth(1)}&end_date=$today&limit=100")
+        if (api.failureState == SessionState.EXPIRED) return unavailable()
+        api.confirmActive()
+        val format = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", Locale("id", "ID"))
+        val days = attendances?.let { rows ->
+            (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }.sortedBy { it.optString("date") }.mapNotNull { row ->
+                val date = runCatching { LocalDate.parse(row.optString("date").take(10)) }.getOrNull() ?: return@mapNotNull null
+                val state = when {
+                    row.optString("status") == "DAYOFF" -> "Jadwal libur posisi"
+                    row.optString("approval_status") == "APPROVED" -> if (row.optString("status") == "ON_LEAVE") "Izin disetujui" else "Hadir disetujui"
+                    row.optString("approval_status") == "SUBMITTED" -> "Menunggu Persetujuan"
+                    else -> "Belum Diisi"
                 }
+                DayEntry(date.format(format), state)
             }
-        }
-        main.postDelayed({ poll() }, profile.timing.spaSettleMs)
+        }.orEmpty()
+        val state = todayState(home)
+        return SiteStatus(true, state, if (state == TodayState.LIBUR) null else "23:59", days,
+            if (attendances == null) "Riwayat belum dapat dibaca. Coba Periksa situs." else null)
     }
 
-    private fun finish(webView: WebView, status: SiteStatus) {
-        webView.post {
-            webView.stopLoading()
-            webView.destroy()
-        }
-        onResult(status)
-    }
-
-    private fun unwrap(raw: String?): String? {
-        if (raw.isNullOrBlank() || raw == "null") return null
-        return try {
-            JSONTokener(raw).nextValue().toString()
-        } catch (e: Exception) {
-            null
+    companion object {
+        internal fun todayState(home: JSONObject): TodayState = when {
+            home.optBoolean("is_holiday") || home.optBoolean("is_scheduled_off_day") -> TodayState.LIBUR
+            home.optBoolean("has_attendance") -> TodayState.FILLED
+            else -> TodayState.UNFILLED
         }
     }
 }

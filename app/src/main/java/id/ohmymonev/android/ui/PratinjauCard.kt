@@ -14,8 +14,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import id.ohmymonev.core.generator.GenerationOutcome
 import id.ohmymonev.core.model.ReportDraft
 
@@ -32,7 +34,7 @@ fun PratinjauCard(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().testTag("automatic-preview"),
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -43,15 +45,16 @@ fun PratinjauCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
             ) {
-                Column {
-                    Text("Pratinjau otomatis", style = MaterialTheme.typography.titleMedium)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Pratinjau otomatis", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Cara mesin mengisi hari ini dari laporan kemarin.",
-                        style = MaterialTheme.typography.bodySmall,
+                        "Laporan hari ini dari laporan pada hari kerja sebelumnya.",
+                        fontSize = 18.sp,
+                        lineHeight = 26.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(onClick = onRefresh, enabled = !loading) { Text("Perbarui") }
+                TextButton(onClick = onRefresh, enabled = !loading) { Text("Perbarui", fontSize = 18.sp) }
             }
 
             when {
@@ -66,20 +69,22 @@ fun PratinjauCard(
                         outcome.detail.contains("sesi") || outcome.detail.contains("gagal") ||
                             outcome.detail.contains("halaman") || outcome.detail.contains("situs") -> outcome.detail
                         outcome.reason.name == "NO_SOURCE_MATERIAL" ->
-                            "Belum ada laporan sebelumnya untuk ditiru. Tulis hari ini, besok mulai pratinjau ini terisi."
+                            source ?: "Belum ada laporan sebelumnya. Tulis laporan hari ini."
                         outcome.reason.name == "TOO_FEW_BULLETS" ->
                             "Laporan kemarin terlalu pendek untuk ditiru menjadi 3 butir."
                         outcome.reason.name == "PELAJARAN_POOL_EXHAUSTED" || outcome.reason.name == "KENDALA_POOL_EXHAUSTED" ->
                             "Kalimat cadangan sudah terpakai semua. Tambah lewat editor Tulisan hari ini."
                         else -> "Tidak bisa menyusun: " + outcome.detail
                     },
-                    style = MaterialTheme.typography.bodySmall,
+                    fontSize = 18.sp,
+                    lineHeight = 26.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 outcome is GenerationOutcome.Generated -> {
                     Text(
                         source ?: "Dari laporan kemarin:",
-                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 18.sp,
+                        lineHeight = 26.sp,
                         color = MaterialTheme.colorScheme.primary,
                     )
                     PreviewPart("Aktivitas", outcome.draft.aktivitas)
@@ -89,12 +94,13 @@ fun PratinjauCard(
                     PreviewPart("Kendala", outcome.draft.kendala)
                     Text(
                         "Pratinjau saja. Teks final diperiksa ulang sebelum dikirim.",
-                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 18.sp,
+                        lineHeight = 26.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 else -> Text(
-                    "Belum diperiksa.",
+                    "Pratinjau akan disusun setelah login.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -106,10 +112,11 @@ fun PratinjauCard(
 @Composable
 private fun PreviewPart(label: String, text: String) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+        Text(label, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
         Text(
             text,
-            style = MaterialTheme.typography.bodySmall,
+            fontSize = 18.sp,
+            lineHeight = 26.sp,
             maxLines = 6,
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )

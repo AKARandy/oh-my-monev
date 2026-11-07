@@ -3,6 +3,10 @@ package id.ohmymonev.android
 import android.app.Application
 import android.content.Context
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -22,6 +26,13 @@ import id.ohmymonev.android.ui.AlarmEditor
 import id.ohmymonev.android.ui.AppRoot
 import id.ohmymonev.android.ui.OhMyMonevTheme
 import id.ohmymonev.android.ui.ScheduleTab
+import id.ohmymonev.android.ui.SessionStatusCard
+import id.ohmymonev.android.ui.PratinjauCard
+import id.ohmymonev.android.data.SessionSnapshot
+import id.ohmymonev.android.data.SessionRecord
+import id.ohmymonev.core.generator.GenerationOutcome
+import id.ohmymonev.core.model.GenerationTier
+import id.ohmymonev.core.model.ReportDraft
 import id.ohmymonev.core.schedule.ScheduleSettings
 import java.io.File
 import java.time.DayOfWeek
@@ -42,7 +53,7 @@ import org.robolectric.annotation.GraphicsMode
 class UiRenderTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun capture(name: String, readyText: String, fontScale: Float = 1f, captureCards: Boolean = false, content: @Composable () -> Unit) {
+    private fun capture(name: String, readyText: String, fontScale: Float = 1f, captureCards: Boolean = false, captureTag: String? = null, content: @Composable () -> Unit) {
         RuntimeEnvironment.setFontScale(fontScale)
         val context = ApplicationProvider.getApplicationContext<Context>()
         runBlocking {
@@ -56,7 +67,12 @@ class UiRenderTest {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
                 OhMyMonevTheme {
-                    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { content() }
+                    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        Box(Modifier.fillMaxSize()) {
+                            if (captureTag == null) content()
+                            else Box(Modifier.fillMaxWidth().padding(20.dp)) { content() }
+                        }
+                    }
                 }
             }
         }
@@ -67,7 +83,8 @@ class UiRenderTest {
         val root = requireNotNull(File(requireNotNull(System.getProperty("user.dir"))).parentFile)
         val output = File(root, "screenshots/$name.png")
         requireNotNull(output.parentFile).mkdirs()
-        compose.onAllNodes(isRoot()).onLast().captureRoboImage(output.absolutePath)
+        if (captureTag == null) compose.onAllNodes(isRoot()).onLast().captureRoboImage(output.absolutePath)
+        else compose.onNodeWithTag(captureTag).captureRoboImage(output.absolutePath)
         if (captureCards) {
             listOf("Pengingat", "Pengisian", "Peringatan terakhir").forEachIndexed { index, title ->
                 compose.onNodeWithTag("alarm-card-$title")
@@ -114,6 +131,23 @@ class UiRenderTest {
             initialAction = ScheduleSettings.Policy.REMIND_ONLY,
             onDismiss = {}, onSave = { _, _, _, _ -> },
         )
+    }
+
+    @Test fun sessionRememberedDuringNetworkFailure() = capture("forge-session-remembered", "Status terakhir: aktif.", captureTag = "session-status") {
+        SessionStatusCard(SessionSnapshot(SessionRecord(true, "2026-11-07T10:00:00+07:00"), hasToken = true,
+            issue = "Aplikasi belum dapat menghubungi situs. Status login terakhir tidak berubah."), false, {})
+    }
+
+    @Test fun sessionActuallyExpired() = capture("forge-session-expired", "Login diperlukan.", captureTag = "session-status") {
+        SessionStatusCard(SessionSnapshot(SessionRecord(false, "2026-11-07T10:00:00+07:00"), issue = "Sesi berakhir. Login kembali."), false, {})
+    }
+
+    @Test fun automaticPreviewReady() = capture("forge-preview-ready", "Pratinjau otomatis", captureTag = "automatic-preview") {
+        PratinjauCard(GenerationOutcome.Generated(ReportDraft(
+            "- Melanjutkan pemeriksaan kelengkapan data.\n- Melanjutkan validasi hasil pemeriksaan.\n- Melanjutkan penyusunan catatan hasil.",
+            "Memahami cara memeriksa kelengkapan data dan mencatat hasil pemeriksaan.",
+            "Sebagian data memerlukan pemeriksaan lanjutan sebelum hasil dapat dirangkum.",
+        ), GenerationTier.CONTINUATION_RULES, emptyList()), false, "Dari laporan situs tanggal 6 November 2026.", {})
     }
 
 }

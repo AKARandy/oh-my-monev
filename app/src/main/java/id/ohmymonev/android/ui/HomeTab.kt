@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -44,9 +45,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import id.ohmymonev.android.BuildConfig
+import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.data.AppStore
 import id.ohmymonev.android.data.StoredDraft
 import id.ohmymonev.android.engine.BenchStatusSite
@@ -72,6 +75,7 @@ import java.time.OffsetDateTime
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -90,6 +94,15 @@ fun HomeTab(
     val store = remember { TimeSettingsStore(context) }
     val appStore = remember { AppStore(context) }
     val scope = rememberCoroutineScope()
+    val sessionRepository = remember { SessionRepository.get(context) }
+    val session by sessionRepository.state.collectAsState()
+    val sessionActive = session.record?.active
+    val sessionChecked = session.record != null
+    val confirmingSession = session.initializing || (session.hasToken && session.record == null && session.issue == null)
+    var previewJob by remember { mutableStateOf<Job?>(null) }
+    var statusJob by remember { mutableStateOf<Job?>(null) }
+    var previewRequest by remember { mutableStateOf(0) }
+    var statusRequest by remember { mutableStateOf(0) }
     val settings by store.settings.collectAsState(initial = null)
 
     val todayIso = LocalDate.now(ScheduleCalculator.asiaJakarta).toString()
@@ -99,11 +112,8 @@ fun HomeTab(
     var notificationsOn by remember {
         mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
     }
-    var sessionActive by remember { mutableStateOf<Boolean?>(null) }
-    var sessionChecked by remember { mutableStateOf(false) }
     var todayDraft by remember { mutableStateOf<StoredDraft?>(null) }
     var draftValid by remember { mutableStateOf(false) }
-    var sessionStale by remember { mutableStateOf(false) }
     var lastRecord by remember { mutableStateOf<RunRecord?>(null) }
     var running by remember { mutableStateOf(false) }
     var siteStatus by remember { mutableStateOf<SiteStatus?>(null) }
@@ -130,41 +140,30 @@ fun HomeTab(
      * Kalau tidak (sesi habis, belum ada laporan), pratinjau menolak dengan alasan nyata.
      */
     fun refreshPratinjau() {
+        val request = ++previewRequest
+        previewJob?.cancel()
         pratinjauLoading = true
-        PastReportReader(context) { result ->
-            scope.launch {
-                if (result.sessionActive && result.draft != null) {
-                    sessionActive = true
-                    sessionChecked = true
-                    sessionStale = false
-                    // Laporan asli kemarin -> jalankan generator lanjutan sesungguhnya di atasnya.
-                    pratinjau = withContext(Dispatchers.IO) {
+        previewJob = scope.launch {
+            try {
+                val result = PastReportReader(context).read()
+                pratinjauSource = result.source
+                pratinjau = if (result.draft != null) {
+                    withContext(Dispatchers.IO) {
                         val seed = appStore.loadSeed()
-                        val lastUsed: Map<String, java.time.LocalDate> = appStore.poolState().lastUsed.entries
-                            .mapNotNull { (text, iso) ->
-                                runCatching { text to java.time.LocalDate.parse(iso) }.getOrNull()
-                            }.toMap()
+                        val lastUsed = appStore.poolState().lastUsed.mapNotNull { (text, iso) ->
+                            runCatching { text to LocalDate.parse(iso) }.getOrNull()
+                        }.toMap()
                         val pools = id.ohmymonev.core.generator.PoolBundle(seed.pelajaran, seed.kendala, lastUsed)
                         val previous = id.ohmymonev.core.generator.DatedReport(result.date, result.draft)
-                        val history = id.ohmymonev.core.generator.ReportHistory { previous }
-                        GeneratorPipeline(history = history, poolBundle = pools)
-                            .generate(java.time.LocalDate.parse(todayIso))
+                        GeneratorPipeline(
+                            history = id.ohmymonev.core.generator.ReportHistory { previous }, poolBundle = pools,
+                        ).generate(LocalDate.parse(todayIso))
                     }
-                    pratinjauSource = result.source
                 } else {
-                    pratinjau = id.ohmymonev.core.generator.GenerationOutcome.Failed(
-                        id.ohmymonev.core.generator.FailureReason.NO_SOURCE_MATERIAL,
-                        result.source,
-                    )
-                    pratinjauSource = result.source
-                    if (!result.sessionActive) {
-                        sessionActive = false
-                        sessionChecked = true
-                    }
+                    GenerationOutcome.Failed(id.ohmymonev.core.generator.FailureReason.NO_SOURCE_MATERIAL, result.source)
                 }
-                pratinjauLoading = false
-            }
-        }.read()
+            } finally { if (request == previewRequest) pratinjauLoading = false }
+        }
     }
 
     suspend fun refresh() {
@@ -176,42 +175,42 @@ fun HomeTab(
         ).passed
         lastRecord = withContext(Dispatchers.IO) { appStore.records().lastOrNull() }
         tonightSkipped = withContext(Dispatchers.IO) { appStore.isSkipped(todayIso) }
-        val saved = withContext(Dispatchers.IO) { appStore.sessionStatus() }
-        if (saved != null) {
-            sessionActive = saved.active
-            sessionChecked = true
-            // Status sesi tidak boleh mengklaim "Aktif" tanpa batas waktu.
-            sessionStale = SessionFreshness.isStale(saved.checkedAtISO)
-        }
-        refreshPratinjau()
     }
 
     /** Baca keadaan sesungguhnya dari situs: status hari ini (isi/kosong/libur) + riwayat. */
     fun refreshSiteStatus() {
+        val request = ++statusRequest
+        statusJob?.cancel()
         checkingStatus = true
-        SiteStatusProbe(context, DEFAULT_SITE_PROFILE) { result ->
-            siteStatus = result
-            checkingStatus = false
-            sessionActive = result.sessionActive
-            sessionChecked = true
-            sessionStale = false
-            appStore.saveSessionStatus(
-                id.ohmymonev.android.data.SessionRecord(result.sessionActive, OffsetDateTime.now().toString()),
-            )
-        }.check()
+        statusJob = scope.launch {
+            try { siteStatus = SiteStatusProbe(context).check() }
+            finally { if (request == statusRequest) checkingStatus = false }
+        }
     }
 
-    LaunchedEffect(Unit) {
-        refresh()
-        refreshSiteStatus()
-        // Perbaiki dulu, baru buktikan: buka layar = pastikan alarm terpasang, lalu tampilkan buktinya.
-        val s = withContext(Dispatchers.IO) { store.settingsOnce() }
-        armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
+    DisposableEffect(Unit) {
+        onDispose { previewJob?.cancel(); statusJob?.cancel() }
+    }
+    LaunchedEffect(session.version, session.initializing) {
+        if (!session.initializing) {
+            refresh()
+            refreshSiteStatus()
+            val s = withContext(Dispatchers.IO) { store.settingsOnce() }
+            armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
+        }
+    }
+    LaunchedEffect(session.version, session.usable) {
+        previewJob?.cancel()
+        pratinjau = null
+        pratinjauSource = null
+        pratinjauLoading = false
+        if (session.usable) refreshPratinjau()
     }
     LaunchedEffect(running) {
         if (running) {
             delay(15_000)
             refresh()
+            if (session.usable) refreshPratinjau()
             val s = withContext(Dispatchers.IO) { store.settingsOnce() }
             armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
             running = false
@@ -227,7 +226,7 @@ fun HomeTab(
         }
     }
 
-    fun sessionReadyForAutomation(): Boolean = sessionActive == true && !sessionStale
+    fun sessionReadyForAutomation(): Boolean = session.usable
 
     // Setup yang masih kurang: sesi, lokasi, notifikasi. Dipakai tombol utama dan kartu persiapan.
     val needSetup = !sessionReadyForAutomation() || !locationGranted || !notificationsOn
@@ -252,11 +251,13 @@ fun HomeTab(
             Text("Laporan hari ini", style = MaterialTheme.typography.headlineMedium)
             Text(
                 text = when {
+                    confirmingSession -> "Memeriksa login tersimpan…"
                     settings == null -> "Memuat jadwal…"
                     siteStatus?.sessionActive == true && siteStatus?.today == TodayState.FILLED ->
                         "Laporan hari ini sudah tercatat di situs."
                     siteStatus?.sessionActive == true && siteStatus?.today == TodayState.LIBUR ->
                         "Hari libur. Tidak perlu laporan hari ini."
+                    !sessionReadyForAutomation() && session.hasToken -> "Login tersimpan. Pemeriksaan belum berhasil."
                     !sessionReadyForAutomation() -> "Login untuk menyiapkan laporan hari ini."
                     todayDraft != null && !draftValid -> "Perbaiki laporan sebelum mengisi formulir."
                     draftValid -> "Laporan siap diisi ke formulir."
@@ -278,7 +279,7 @@ fun HomeTab(
                     else -> { AutoFillService.start(context, lastChance = false); running = true }
                 }
             },
-            enabled = !running && (noReportRequired || !sessionReadyForAutomation() || !needSetup),
+            enabled = !running && !confirmingSession && (noReportRequired || !sessionReadyForAutomation() || !needSetup),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp)
@@ -289,7 +290,9 @@ fun HomeTab(
             Text(
                 when {
                     running -> "Mengisi…"
+                    confirmingSession -> "Memeriksa login…"
                     noReportRequired -> "Lihat di situs Monev"
+                    !sessionReadyForAutomation() && session.hasToken -> "Cek sesi tersimpan"
                     !sessionReadyForAutomation() -> "Login ke Monev"
                     needSetup -> "Lengkapi izin di bawah"
                     todayDraft != null && !draftValid -> "Perbaiki laporan"
@@ -301,10 +304,9 @@ fun HomeTab(
         }
 
         // Satu kartu persiapan: tutorial dan status digabung; langkah mencentang dari keadaan nyata.
-        if (needSetup) {
+        if (needSetup && !confirmingSession) {
             ReadinessCard(
-                sessionActive = sessionActive,
-                sessionStale = sessionStale,
+                sessionActive = if (session.hasToken) sessionActive else null,
                 locationGranted = locationGranted,
                 notificationsOn = notificationsOn,
                 // Satu fungsi satu tombol: memeriksa sesi hanya ada di tab Sesi.
@@ -537,7 +539,11 @@ private fun SiteStatusCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                !status.sessionActive -> Text(
+                status.sessionActive == null -> Text(
+                    status.error ?: "Situs belum dapat diperiksa. Status login terakhir tetap disimpan.",
+                    fontSize = 18.sp,
+                )
+                status.sessionActive == false -> Text(
                     "Sesi habis. Login di tab Sesi, lalu cek lagi.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
@@ -653,7 +659,6 @@ private fun TimeSlot(label: String, time: LocalTime, modifier: Modifier = Modifi
 @Composable
 private fun ReadinessCard(
     sessionActive: Boolean?,
-    sessionStale: Boolean,
     locationGranted: Boolean,
     notificationsOn: Boolean,
     onGrantLocation: () -> Unit,
@@ -667,11 +672,11 @@ private fun ReadinessCard(
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Persiapan", style = MaterialTheme.typography.titleMedium)
-            if (sessionActive != true || sessionStale) {
+            if (sessionActive != true) {
                 ReadyRow(
                     label = "Sesi login",
-                    ok = if (sessionActive == true && sessionStale) null else sessionActive,
-                    detail = if (sessionStale) "Periksa kembali di tab Sesi" else "Gunakan tombol Login di atas",
+                    ok = sessionActive,
+                    detail = "Gunakan tombol di atas untuk memeriksa login",
                     action = null,
                     onAction = {},
                 )
