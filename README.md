@@ -20,7 +20,7 @@ Aplikasi ini melakukan hal-hal ini:
 - Ponsel boleh dalam keadaan diam. Alarm tetap tepat waktu. Sebuah layanan menjaga ponsel tetap
   menyala selama pengisian berlangsung.
 
-Status: versi 0.1 masih dalam pengembangan. Lihat `docs/plan.md`.
+Status: masih dalam pengembangan. Lihat `docs/plan.md`.
 
 ## Struktur
 
