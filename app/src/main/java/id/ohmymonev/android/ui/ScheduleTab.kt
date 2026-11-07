@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import id.ohmymonev.android.schedule.AlarmScheduler
+import id.ohmymonev.android.schedule.GuardService
 import id.ohmymonev.android.schedule.TimeSettingsStore
 import id.ohmymonev.core.schedule.ScheduleSettings
 import java.time.DayOfWeek
@@ -242,6 +243,13 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                         )
                         store.save(saved)
                         AlarmScheduler.armAll(context, saved)
+                        // Sinkronkan layanan penjaga dengan pilihan pengguna:
+                        // menyala saat alarm otomatis aktif, mati saat dimatikan.
+                        if (saved.masterEnabled) {
+                            GuardService.ensure(context)
+                        } else {
+                            GuardService.stop(context)
+                        }
                         Toast.makeText(context, "Jadwal disimpan", Toast.LENGTH_SHORT).show()
                     }
                 },

@@ -55,7 +55,15 @@ class NotificationFactory(private val context: Context) {
             )
             enableVibration(true)
         }
-        manager.createNotificationChannels(listOf(reminder, autofill, escalation))
+        val guard = NotificationChannel(
+            CHANNEL_GUARD,
+            "Penjaga otomatisasi",
+            NotificationManager.IMPORTANCE_MIN,
+        ).apply {
+            description = "Notifikasi tetap: bukti alarm otomatis menyala. Aman untuk disembunyikan."
+            setShowBadge(false)
+        }
+        manager.createNotificationChannels(listOf(reminder, autofill, escalation, guard))
     }
 
     // -------------------------------------------------------------- izin aman
@@ -79,6 +87,34 @@ class NotificationFactory(private val context: Context) {
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
+
+    /** Notifikasi penjaga (permanen): bukti status otomatisasi. Tanpa suara, tanpa badge. */
+    fun guard(nextFireISO: String?, skipped: Boolean): Notification {
+        val (title, text) = when {
+            skipped -> "oh-my-monev: otomatis malam ini dimatikan" to
+                "Kamu memilih isi sendiri malam ini. Alarm menyala lagi besok."
+            nextFireISO != null -> "oh-my-monev: alarm aktif" to
+                "Pengisian berikutnya " + formatFire(nextFireISO) + " WIB. Aplikasi boleh ditutup."
+            else -> "oh-my-monev: menyiapkan alarm" to
+                "Alarm berikutnya akan terpasang sesuai jadwal."
+        }
+        return builder(CHANNEL_GUARD)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .build()
+    }
+
+    private fun formatFire(nextFireISO: String): String = try {
+        java.time.OffsetDateTime.parse(nextFireISO)
+            .atZoneSameInstant(java.time.ZoneOffset.ofHours(7))
+            .format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", java.util.Locale("id")))
+    } catch (_: Exception) {
+        nextFireISO
+    }
 
     /** Pengingat netral: tidak mengklaim status yang belum diperiksa. */
     fun neutralReminder(detail: String): Notification =
@@ -135,10 +171,12 @@ class NotificationFactory(private val context: Context) {
         const val CHANNEL_REMINDER = "reminder"
         const val CHANNEL_AUTOFILL = "autofill"
         const val CHANNEL_ESCALATION = "escalation"
+        const val CHANNEL_GUARD = "guard"
 
         const val NOTIF_ID_REMINDER = 2001
         const val NOTIF_ID_AUTOFILL = 2002 // juga ID startForeground layanan
         const val NOTIF_ID_ESCALATION = 2003
+        const val NOTIF_ID_GUARD = 2004
 
         private const val REQUEST_OPEN_APP = 3001
     }

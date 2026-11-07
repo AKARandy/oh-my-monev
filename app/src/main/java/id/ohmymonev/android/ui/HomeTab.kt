@@ -109,6 +109,7 @@ fun HomeTab(
     var siteStatus by remember { mutableStateOf<SiteStatus?>(null) }
     var checkingStatus by remember { mutableStateOf(false) }
     var tonightSkipped by remember { mutableStateOf(false) }
+    var armedState by remember { mutableStateOf<AlarmScheduler.ArmedState?>(null) }
 
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -135,12 +136,28 @@ fun HomeTab(
         }
     }
 
-    LaunchedEffect(Unit) { refresh() }
+    LaunchedEffect(Unit) {
+        refresh()
+        // Perbaiki dulu, baru buktikan: buka layar = pastikan alarm terpasang, lalu tampilkan buktinya.
+        val s = withContext(Dispatchers.IO) { store.settingsOnce() }
+        armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
+    }
     LaunchedEffect(running) {
         if (running) {
             delay(15_000)
             refresh()
+            val s = withContext(Dispatchers.IO) { store.settingsOnce() }
+            armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
             running = false
+        }
+    }
+
+    fun refreshArmed() {
+        armedState = null
+        scope.launch {
+            // Perbaiki dulu, baru buktikan: "Periksa" tidak pernah membaca keadaan lama.
+            val s = withContext(Dispatchers.IO) { store.settingsOnce() }
+            armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
         }
     }
 
@@ -251,7 +268,7 @@ fun HomeTab(
             }
         }
 
-        // Ringkasan malam ini: apa yang akan terjadi + satu jalan keluar bila ingin mandiri.
+        // Ringkasan malam ini: bukti alarm + apa yang akan terjadi + jalan keluar bila ingin mandiri.
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
@@ -260,6 +277,40 @@ fun HomeTab(
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Malam ini", style = MaterialTheme.typography.titleMedium)
+
+                // BUKTI, bukan klaim: status alarm yang benar-benar terdaftar di OS.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Status alarm", style = MaterialTheme.typography.bodyMedium)
+                        val armed = armedState
+                        Text(
+                            text = when {
+                                armed == null -> "Memeriksa…"
+                                armed.armed -> "TERPASANG · " + formatFire(armed.nextFireISO) + " · " + armedLabel(armed.source)
+                                else -> "TIDAK TERPASANG (" + armed.source + ")"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = when {
+                                armed == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                                armed.armed -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.error
+                            },
+                        )
+                        armed?.lastError?.takeIf { !armed.armed }?.let {
+                            Text(
+                                "Sistem menolak: $it",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                    TextButton(onClick = { refreshArmed() }) { Text("Periksa") }
+                }
+
                 settings?.let { s ->
                     Text(
                         "Pengingat " + s.reminderTime.format(TIME_FORMAT) +
@@ -314,6 +365,7 @@ fun HomeTab(
                                 scope.launch {
                                     withContext(Dispatchers.IO) { appStore.setTonightSkip(todayIso) }
                                     tonightSkipped = true
+                                    refreshArmed()
                                 }
                             }) { Text("Ya, matikan") }
                         },
@@ -664,6 +716,26 @@ private fun attemptTime(iso: String): String = try {
     OffsetDateTime.parse(iso).format(TIME_FORMAT)
 } catch (_: Exception) {
     ""
+}
+
+/** Tampilkan jam kebakaran alarm berikutnya dalam zona WIB, teks pendek. */
+private fun formatFire(nextFireISO: String?): String {
+    if (nextFireISO == null) return "?"
+    return try {
+        java.time.OffsetDateTime.parse(nextFireISO)
+            .atZoneSameInstant(java.time.ZoneOffset.ofHours(7))
+            .format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", ID_LOCALE))
+    } catch (_: Exception) {
+        nextFireISO
+    }
+}
+
+/** Label ramah untuk sumber alarm yang terbaca dari OS. */
+private fun armedLabel(source: String): String = when (source) {
+    id.ohmymonev.core.schedule.ScheduleCalculator.KEY_REMINDER -> "pengingat"
+    id.ohmymonev.core.schedule.ScheduleCalculator.KEY_AUTOFILL -> "pengisian"
+    id.ohmymonev.core.schedule.ScheduleCalculator.KEY_ESCALATION -> "peringatan"
+    else -> source
 }
 
 private fun hasPermission(context: Context, permission: String): Boolean =
