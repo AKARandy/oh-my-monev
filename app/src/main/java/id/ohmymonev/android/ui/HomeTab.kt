@@ -50,6 +50,7 @@ import id.ohmymonev.android.BuildConfig
 import id.ohmymonev.android.data.AppStore
 import id.ohmymonev.android.data.StoredDraft
 import id.ohmymonev.android.engine.BenchStatusSite
+import id.ohmymonev.android.engine.PastReportReader
 import id.ohmymonev.android.engine.SiteStatus
 import id.ohmymonev.android.engine.SiteStatusProbe
 import id.ohmymonev.core.enginecore.TodayState
@@ -111,6 +112,7 @@ fun HomeTab(
     var armedState by remember { mutableStateOf<AlarmScheduler.ArmedState?>(null) }
     var pratinjau by remember { mutableStateOf<GenerationOutcome?>(null) }
     var pratinjauLoading by remember { mutableStateOf(false) }
+    var pratinjauSource by remember { mutableStateOf<String?>(null) }
     var editorExpanded by remember { mutableStateOf(false) }
     var tutorialHidden by remember { mutableStateOf(false) }
 
@@ -121,33 +123,47 @@ fun HomeTab(
         ActivityResultContracts.RequestPermission(),
     ) { notificationsOn = it }
 
-    /** Jalankan generator sungguhan untuk pratinjau, TANPA menggerus masa pakai kalimat (pools salinan). */
+    /**
+     * Pratinjau dari LAPORAN ASLI situs: baca laporan kemarin lewat API dalam WebView.
+     * Kalau situs terbaca, teks di bawah adalah teks kemarin yang sebenarnya.
+     * Kalau tidak (sesi habis, belum ada laporan), pratinjau menolak dengan alasan nyata.
+     */
     fun refreshPratinjau() {
         pratinjauLoading = true
-        scope.launch {
-            pratinjau = withContext(Dispatchers.IO) {
-                val seed = appStore.loadSeed()
-                val lastUsed: Map<String, java.time.LocalDate> = appStore.poolState().lastUsed.entries
-                    .mapNotNull { (text, iso) ->
-                        runCatching { text to java.time.LocalDate.parse(iso) }.getOrNull()
-                    }.toMap()
-                val pools = id.ohmymonev.core.generator.PoolBundle(seed.pelajaran, seed.kendala, lastUsed)
-                val previous = appStore.drafts()
-                    .mapNotNull { stored ->
-                        runCatching { java.time.LocalDate.parse(stored.date) }.getOrNull()?.let {
-                            id.ohmymonev.core.generator.DatedReport(
-                                it,
-                                ReportDraft(stored.aktivitas, stored.pelajaran, stored.kendala),
-                            )
-                        }
+        PastReportReader(context) { result ->
+            scope.launch {
+                if (result.sessionActive && result.draft != null) {
+                    sessionActive = true
+                    sessionChecked = true
+                    sessionStale = false
+                    // Laporan asli kemarin -> jalankan generator lanjutan sesungguhnya di atasnya.
+                    pratinjau = withContext(Dispatchers.IO) {
+                        val seed = appStore.loadSeed()
+                        val lastUsed: Map<String, java.time.LocalDate> = appStore.poolState().lastUsed.entries
+                            .mapNotNull { (text, iso) ->
+                                runCatching { text to java.time.LocalDate.parse(iso) }.getOrNull()
+                            }.toMap()
+                        val pools = id.ohmymonev.core.generator.PoolBundle(seed.pelajaran, seed.kendala, lastUsed)
+                        val previous = id.ohmymonev.core.generator.DatedReport(result.date, result.draft)
+                        val history = id.ohmymonev.core.generator.ReportHistory { previous }
+                        GeneratorPipeline(history = history, poolBundle = pools)
+                            .generate(java.time.LocalDate.parse(todayIso))
                     }
-                    .filter { it.date.isBefore(java.time.LocalDate.parse(todayIso)) }
-                    .maxByOrNull { it.date }
-                val history = id.ohmymonev.core.generator.ReportHistory { previous }
-                GeneratorPipeline(history = history, poolBundle = pools).generate(java.time.LocalDate.parse(todayIso))
+                    pratinjauSource = result.source
+                } else {
+                    pratinjau = id.ohmymonev.core.generator.GenerationOutcome.Failed(
+                        id.ohmymonev.core.generator.FailureReason.NO_SOURCE_MATERIAL,
+                        result.source,
+                    )
+                    pratinjauSource = result.source
+                    if (!result.sessionActive) {
+                        sessionActive = false
+                        sessionChecked = true
+                    }
+                }
+                pratinjauLoading = false
             }
-            pratinjauLoading = false
-        }
+        }.read()
     }
 
     suspend fun refresh() {
@@ -506,6 +522,7 @@ fun HomeTab(
         PratinjauCard(
             outcome = pratinjau,
             loading = pratinjauLoading,
+            source = pratinjauSource,
             onRefresh = { refreshPratinjau() },
         )
 

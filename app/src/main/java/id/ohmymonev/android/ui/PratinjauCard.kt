@@ -27,6 +27,7 @@ import id.ohmymonev.core.model.ReportDraft
 fun PratinjauCard(
     outcome: GenerationOutcome?,
     loading: Boolean,
+    source: String?,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -60,10 +61,16 @@ fun PratinjauCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 outcome is GenerationOutcome.Failed -> Text(
-                    text = when (outcome.reason.name) {
-                        "NO_SOURCE_MATERIAL" -> "Belum ada laporan sebelumnya untuk ditiru. Tulis hari ini, besok mulai pratinjau ini terisi."
-                        "TOO_FEW_BULLETS" -> "Laporan kemarin terlalu pendek untuk ditiru menjadi 3 butir."
-                        "PELAJARAN_POOL_EXHAUSTED", "KENDALA_POOL_EXHAUSTED" -> "Kalimat cadangan sudah terpakai semua. Tambah lewat tab Tulis."
+                    text = when {
+                        // Alasan dari pembaca situs ditampilkan apa adanya (sesi habis, hari libur, dll).
+                        outcome.detail.contains("sesi") || outcome.detail.contains("gagal") ||
+                            outcome.detail.contains("halaman") || outcome.detail.contains("situs") -> outcome.detail
+                        outcome.reason.name == "NO_SOURCE_MATERIAL" ->
+                            "Belum ada laporan sebelumnya untuk ditiru. Tulis hari ini, besok mulai pratinjau ini terisi."
+                        outcome.reason.name == "TOO_FEW_BULLETS" ->
+                            "Laporan kemarin terlalu pendek untuk ditiru menjadi 3 butir."
+                        outcome.reason.name == "PELAJARAN_POOL_EXHAUSTED" || outcome.reason.name == "KENDALA_POOL_EXHAUSTED" ->
+                            "Kalimat cadangan sudah terpakai semua. Tambah lewat editor Tulisan hari ini."
                         else -> "Tidak bisa menyusun: " + outcome.detail
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -71,9 +78,9 @@ fun PratinjauCard(
                 )
                 outcome is GenerationOutcome.Generated -> {
                     Text(
-                        "Dari laporan kemarin:",
+                        source ?: "Dari laporan kemarin:",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MaterialTheme.colorScheme.primary,
                     )
                     PreviewPart("Aktivitas", outcome.draft.aktivitas)
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
