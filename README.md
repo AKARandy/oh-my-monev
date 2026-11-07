@@ -3,7 +3,7 @@
 oh my monev adalah aplikasi Android. Aplikasi ini membantu peserta MagangHub (Kemnaker, Indonesia)
 mencatat kehadiran harian di https://monev.maganghub.kemnaker.go.id.
 
-Versi bahasa Inggris: [README.en.md](README.en.md).
+English version: [README.en.md](README.en.md).
 
 MagangHub memberi uang kepada peserta magang. Tetapi peserta wajib mencatat kehadiran setiap hari.
 Jika peserta tidak mengirim catatan sebelum pukul 23.59 WIB, peserta kehilangan uang untuk hari itu.
