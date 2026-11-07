@@ -1,7 +1,7 @@
 package id.ohmymonev.core.enginecore
 
 /** Status laporan hari ini menurut halaman Beranda situs. */
-enum class TodayState { UNKNOWN, FILLED, UNFILLED }
+enum class TodayState { UNKNOWN, FILLED, UNFILLED, LIBUR }
 
 /** Satu hari di kalender Riwayat: label tanggal + status (mis. "Hadir disetujui"). */
 data class DayEntry(val label: String, val state: String)
@@ -23,6 +23,8 @@ object DashboardParser {
     fun todayState(pageText: String): TodayState = when {
         pageText.contains("Laporan hari ini sudah diisi") -> TodayState.FILLED
         pageText.contains("Laporan hari ini belum diisi") -> TodayState.UNFILLED
+        // Hari libur: kartu Hari Ini menyebut jadwal libur; tidak ada laporan yang diharapkan.
+        pageText.contains("Jadwal libur") -> TodayState.LIBUR
         else -> TodayState.UNKNOWN
     }
 

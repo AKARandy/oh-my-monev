@@ -50,7 +50,6 @@ import id.ohmymonev.android.BuildConfig
 import id.ohmymonev.android.data.AppStore
 import id.ohmymonev.android.data.StoredDraft
 import id.ohmymonev.android.engine.BenchStatusSite
-import id.ohmymonev.android.engine.SessionProbe
 import id.ohmymonev.android.engine.SiteStatus
 import id.ohmymonev.android.engine.SiteStatusProbe
 import id.ohmymonev.core.enginecore.TodayState
@@ -101,7 +100,6 @@ fun HomeTab(
     }
     var sessionActive by remember { mutableStateOf<Boolean?>(null) }
     var sessionChecked by remember { mutableStateOf(false) }
-    var checkingSession by remember { mutableStateOf(false) }
     var todayDraft by remember { mutableStateOf<StoredDraft?>(null) }
     var draftValid by remember { mutableStateOf(false) }
     var sessionStale by remember { mutableStateOf(false) }
@@ -114,6 +112,7 @@ fun HomeTab(
     var pratinjau by remember { mutableStateOf<GenerationOutcome?>(null) }
     var pratinjauLoading by remember { mutableStateOf(false) }
     var editorExpanded by remember { mutableStateOf(false) }
+    var tutorialHidden by remember { mutableStateOf(false) }
 
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -170,8 +169,24 @@ fun HomeTab(
         refreshPratinjau()
     }
 
+    /** Baca keadaan sesungguhnya dari situs: status hari ini (isi/kosong/libur) + riwayat. */
+    fun refreshSiteStatus() {
+        checkingStatus = true
+        SiteStatusProbe(context, DEFAULT_SITE_PROFILE) { result ->
+            siteStatus = result
+            checkingStatus = false
+            sessionActive = result.sessionActive
+            sessionChecked = true
+            sessionStale = false
+            appStore.saveSessionStatus(
+                id.ohmymonev.android.data.SessionRecord(result.sessionActive, OffsetDateTime.now().toString()),
+            )
+        }.check()
+    }
+
     LaunchedEffect(Unit) {
         refresh()
+        refreshSiteStatus()
         // Perbaiki dulu, baru buktikan: buka layar = pastikan alarm terpasang, lalu tampilkan buktinya.
         val s = withContext(Dispatchers.IO) { store.settingsOnce() }
         armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
@@ -197,13 +212,23 @@ fun HomeTab(
 
     fun sessionReadyForAutomation(): Boolean = sessionActive == true && !sessionStale
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
-    ) {
+    // Setup yang masih kurang: sesi, lokasi, notifikasi. Dipakai tombol utama dan kartu persiapan.
+    val needSetup = !sessionReadyForAutomation() || !locationGranted || !notificationsOn
+
+    val scrollState = rememberScrollState()
+    // Bukti visual bahwa halaman bisa digulir: bayangan bawah + chevron, hilang setelah menggulir.
+    val showScrollHint by remember {
+        androidx.compose.runtime.derivedStateOf { scrollState.value < 40 }
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
                 text = ZonedDateTime.now(ScheduleCalculator.asiaJakarta).format(DATE_FORMAT).uppercase(ID_LOCALE),
@@ -212,7 +237,12 @@ fun HomeTab(
             )
             Text("Hadir hari ini?", style = MaterialTheme.typography.headlineMedium)
             Text(
+                // Keadaan dari situs sendiri (bila sudah pernah dibaca) menimpa asumsi lokal.
                 text = when {
+                    siteStatus?.sessionActive == true && siteStatus?.today == TodayState.FILLED ->
+                        "Sudah absen di situs. Tidak ada yang perlu dilakukan."
+                    siteStatus?.sessionActive == true && siteStatus?.today == TodayState.LIBUR ->
+                        "Hari libur. Situs tidak meminta laporan hari ini."
                     !sessionReadyForAutomation() -> "Login dulu agar aplikasi bisa mengisi."
                     draftValid -> "Siap. Mesin akan mengisi pukul " + (settings?.autofillTime?.format(TIME_FORMAT) ?: "21:00") + "."
                     todayDraft != null -> "Tulisanmu belum memenuhi aturan situs. Perbaiki sebentar."
@@ -223,27 +253,48 @@ fun HomeTab(
             )
         }
 
-        if (!sessionReadyForAutomation() || !locationGranted || !notificationsOn || (todayDraft != null && !draftValid)) {
+        // Tutorial: langkah mencentang dirinya dari keadaan nyata, bukan klaim.
+        if (!tutorialHidden) {
+            TutorialCard(
+                steps = listOf(
+                    TutorialStep(
+                        "Login sekali di tab Sesi",
+                        "Buka tab Sesi di bawah, masuk seperti di Chrome.",
+                        sessionReadyForAutomation(),
+                    ),
+                    TutorialStep(
+                        "Izinkan lokasi dan notifikasi",
+                        "Keduanya wajib: situs membaca lokasi, aplikasi mengingatkan lewat notifikasi.",
+                        locationGranted && notificationsOn,
+                    ),
+                    TutorialStep(
+                        "Siapkan tulisan hari ini",
+                        "Tulis sendiri di kartu Tulisan hari ini, atau biarkan mesin memakai laporan kemarin.",
+                        draftValid || (todayDraft == null && sessionReadyForAutomation()),
+                    ),
+                    TutorialStep(
+                        "Tekan Isi sekarang sekali untuk uji",
+                        "Lihat mesin mengisi formulir, lalu kamu yang menekan kirim di situs.",
+                        lastRecord != null && lastRecord!!.outcome in listOf(
+                            EngineOutcome.FILL_OK, EngineOutcome.SUBMITTED, EngineOutcome.DAY_NOT_FILLABLE,
+                        ),
+                    ),
+                ),
+                onDismiss = { tutorialHidden = true },
+            )
+        }
+
+        if (needSetup || (todayDraft != null && !draftValid)) {
             ReadinessCard(
                 sessionActive = sessionActive,
                 sessionStale = sessionStale,
-                checkingSession = checkingSession,
                 locationGranted = locationGranted,
                 notificationsOn = notificationsOn,
                 draftReady = draftValid,
                 draftInvalid = todayDraft != null && !draftValid,
-                onCheckSession = {
-                    checkingSession = true
-                    SessionProbe(context, DEFAULT_SITE_PROFILE) { active, _ ->
-                        sessionActive = active
-                        sessionChecked = true
-                        sessionStale = false
-                        checkingSession = false
-                        appStore.saveSessionStatus(
-                            id.ohmymonev.android.data.SessionRecord(active, java.time.OffsetDateTime.now().toString()),
-                        )
-                    }.check()
-                },
+                // Satu fungsi satu tombol: memeriksa sesi hanya ada di tab Sesi.
+                // Dari sini pengguna diarahkan ke sana, bukan diperiksa ulang di sini.
+                onOpenSession = onOpenSession,
                 onGrantLocation = { locationLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION) },
                 onGrantNotifications = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -255,9 +306,10 @@ fun HomeTab(
         }
 
         val interaction = remember { MutableInteractionSource() }
+        // Tombol yang tidak bisa berhasil memang harus tampak mati, bukan sekali tap lalu gagal.
         Button(
             onClick = { AutoFillService.start(context, lastChance = false); running = true },
-            enabled = !running,
+            enabled = !running && !needSetup,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp)
@@ -265,7 +317,14 @@ fun HomeTab(
             shape = RoundedCornerShape(16.dp),
             interactionSource = interaction,
         ) {
-            Text(if (running) "Mengisi…" else "Isi sekarang", style = MaterialTheme.typography.titleMedium)
+            Text(
+                when {
+                    running -> "Mengisi…"
+                    !sessionReadyForAutomation() -> "Isi sekarang (login dulu)"
+                    else -> "Isi sekarang"
+                },
+                style = MaterialTheme.typography.titleMedium,
+            )
         }
 
         // Baris sekunder: buka situs + uji mesin. Menulis laporan pindah ke kartu Tulisan hari ini.
@@ -459,6 +518,37 @@ fun HomeTab(
                 color = MaterialTheme.colorScheme.error,
             )
         }
+        }
+
+        // Petunjuk gulir: bayangan + chevron di tepi bawah, hilang begitu pengguna menggulir.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showScrollHint,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.fadeOut(),
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .background(
+                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.background.copy(alpha = 0f),
+                                    MaterialTheme.colorScheme.background.copy(alpha = 0.9f),
+                                ),
+                            ),
+                        ),
+                )
+                Text(
+                    "v",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
+        }
     }
 }
 
@@ -518,14 +608,15 @@ private fun SiteStatusCard(
                             text = when (status.today) {
                                 TodayState.FILLED -> "Sudah diisi"
                                 TodayState.UNFILLED -> "Belum diisi"
+                                TodayState.LIBUR -> "Hari libur, tidak perlu isi"
                                 TodayState.UNKNOWN -> "Tidak jelas"
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (status.today == TodayState.UNFILLED) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.primary
+                            color = when (status.today) {
+                                TodayState.UNFILLED -> MaterialTheme.colorScheme.error
+                                TodayState.LIBUR -> MaterialTheme.colorScheme.onSurfaceVariant
+                                else -> MaterialTheme.colorScheme.primary
                             },
                         )
                     }
@@ -619,12 +710,11 @@ private fun TimeSlot(label: String, time: LocalTime, modifier: Modifier = Modifi
 private fun ReadinessCard(
     sessionActive: Boolean?,
     sessionStale: Boolean,
-    checkingSession: Boolean,
     locationGranted: Boolean,
     notificationsOn: Boolean,
     draftReady: Boolean,
     draftInvalid: Boolean,
-    onCheckSession: () -> Unit,
+    onOpenSession: () -> Unit,
     onGrantLocation: () -> Unit,
     onGrantNotifications: () -> Unit,
     onOpenEditor: () -> Unit,
@@ -641,14 +731,14 @@ private fun ReadinessCard(
                 label = "Sesi login",
                 ok = if (sessionActive == true && sessionStale) null else sessionActive,
                 detail = when {
-                    checkingSession -> "Memeriksa…"
                     sessionActive == true && sessionStale -> "Sudah lama, periksa lagi"
                     sessionActive == true -> "Aktif"
-                    sessionActive == false -> "Login di tab Sesi"
+                    sessionActive == false -> "Belum login"
                     else -> "Belum dicek"
                 },
-                action = if (checkingSession) null else "Periksa",
-                onAction = onCheckSession,
+                // Satu fungsi satu tombol: pemeriksaan sesi hanya hidup di tab Sesi.
+                action = "Login",
+                onAction = onOpenSession,
             )
             ReadyRow(
                 label = "Izin lokasi",

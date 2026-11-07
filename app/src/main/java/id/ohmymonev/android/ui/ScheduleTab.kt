@@ -2,28 +2,27 @@ package id.ohmymonev.android.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -37,10 +36,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import id.ohmymonev.android.schedule.AlarmScheduler
 import id.ohmymonev.android.schedule.GuardService
 import id.ohmymonev.android.schedule.TimeSettingsStore
@@ -51,7 +49,16 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
 
 private val HHMM = DateTimeFormatter.ofPattern("HH:mm")
-private val DAY_LABELS = mapOf(
+private val DAY_LETTERS = mapOf(
+    DayOfWeek.MONDAY to "S",
+    DayOfWeek.TUESDAY to "S",
+    DayOfWeek.WEDNESDAY to "R",
+    DayOfWeek.THURSDAY to "K",
+    DayOfWeek.FRIDAY to "J",
+    DayOfWeek.SATURDAY to "S",
+    DayOfWeek.SUNDAY to "M",
+)
+private val DAY_SHORT = mapOf(
     DayOfWeek.MONDAY to "Sen",
     DayOfWeek.TUESDAY to "Sel",
     DayOfWeek.WEDNESDAY to "Rab",
@@ -61,7 +68,10 @@ private val DAY_LABELS = mapOf(
     DayOfWeek.SUNDAY to "Min",
 )
 
-/** Jadwal: tiga waktu, hari, cara isi. Tanpa paragraf penjelasan. */
+/**
+ * Jadwal bergaya aplikasi alarm: SATU kartu per alarm (jam besar, hari, sakelar di kartu).
+ * Tap kartu membuka lembar edit. Sakelar dan jam tidak lagi terpisah-pisah.
+ */
 @Composable
 fun ScheduleTab(modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -69,201 +79,167 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
 
     var loaded by remember { mutableStateOf<ScheduleSettings?>(null) }
-    var reminderText by remember { mutableStateOf("") }
-    var autofillText by remember { mutableStateOf("") }
-    var escalationText by remember { mutableStateOf("") }
-    var activeDays by remember { mutableStateOf(DayOfWeek.entries.toSet()) }
-    var policy by remember { mutableStateOf(ScheduleSettings.Policy.FILL_ONLY) }
-    var escalationPolicy by remember {
-        mutableStateOf(ScheduleSettings.EscalationPolicy.AUTO_FILL_LAST_CHANCE)
-    }
+    var editing by remember { mutableStateOf<AlarmId?>(null) }
     var confirmSubmitPolicy by remember { mutableStateOf(false) }
-    var masterEnabled by remember { mutableStateOf(true) }
-    var reminderEnabled by remember { mutableStateOf(true) }
-    var autofillEnabled by remember { mutableStateOf(true) }
-    var escalationEnabled by remember { mutableStateOf(true) }
+    var confirmMasterOff by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        val s = store.settingsOnce()
-        reminderText = s.reminderTime.format(HHMM)
-        autofillText = s.autofillTime.format(HHMM)
-        escalationText = s.escalationTime.format(HHMM)
-        activeDays = s.activeDays
-        policy = s.autofillPolicy
-        escalationPolicy = s.escalationPolicy
-        masterEnabled = s.masterEnabled
-        reminderEnabled = s.reminderEnabled
-        autofillEnabled = s.autofillEnabled
-        escalationEnabled = s.escalationEnabled
-        loaded = s
+    LaunchedEffect(Unit) { loaded = store.settingsOnce() }
+
+    val current = loaded
+    if (current == null) {
+        Column(
+            modifier = modifier.fillMaxSize().padding(20.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text("Memuat…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        return
     }
 
-    val reminderTime = parseHhmm(reminderText)
-    val autofillTime = parseHhmm(autofillText)
-    val escalationTime = parseHhmm(escalationText)
-    val allValid = reminderTime != null && autofillTime != null && escalationTime != null
+    fun save(settings: ScheduleSettings) {
+        scope.launch {
+            store.save(settings)
+            AlarmScheduler.armAll(context, settings)
+            if (settings.masterEnabled) GuardService.ensure(context) else GuardService.stop(context)
+            loaded = settings
+            Toast.makeText(context, "Tersimpan", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Jadwal", style = MaterialTheme.typography.headlineMedium)
             Text(
-                "Jam dan cara isi.",
+                "Ketuk kartu untuk mengubah jam dan hari.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        val current = loaded
-        if (current == null) {
-            Text(
-                "Memuat…",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            SectionLabel("Sakelar")
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-                    SwitchRow(
-                        "Alarm otomatis",
-                        "Kalau dimatikan, pengingat dan isi otomatis tidak jalan. Tombol manual tetap bisa dipakai.",
-                        masterEnabled,
-                    ) {
-                        masterEnabled = it
-                    }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    SwitchRow(
-                        "Pengingat",
-                        "Notifikasi malam sebelum laporan diisi.",
-                        reminderEnabled && masterEnabled,
-                    ) {
-                        reminderEnabled = it
-                    }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    SwitchRow(
-                        "Isi formulir otomatis",
-                        "Formulir diisi sendiri pada jam isi otomatis.",
-                        autofillEnabled && masterEnabled,
-                    ) {
-                        autofillEnabled = it
-                    }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    SwitchRow(
-                        "Peringatan sebelum tengah malam",
-                        "Bunyi keras kalau laporan masih kosong.",
-                        escalationEnabled && masterEnabled,
-                    ) {
-                        escalationEnabled = it
-                    }
-                }
-            }
-            SectionLabel("Jam")
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                    TimeRow("Pengingat", reminderText, reminderTime != null) { reminderText = it }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    TimeRow("Isi otomatis", autofillText, autofillTime != null) { autofillText = it }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    TimeRow("Peringatan terakhir", escalationText, escalationTime != null) { escalationText = it }
-                }
-            }
 
-            SectionLabel("Hari")
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (day in DayOfWeek.entries.take(4)) DayChip(day, day in activeDays) { d, on ->
-                        activeDays = if (on) activeDays + d else activeDays - d
+        AlarmCard(
+            title = "Pengingat",
+            time = current.reminderTime,
+            days = current.activeDays,
+            enabled = current.reminderEnabled && current.masterEnabled,
+            detail = "Pesan lembut sebelum jam isi.",
+        ) { editing = AlarmId.REMINDER }
+
+        AlarmCard(
+            title = "Isi otomatis",
+            time = current.autofillTime,
+            days = current.activeDays,
+            enabled = current.autofillEnabled && current.masterEnabled,
+            detail = "Mesin mengisi formulir Monev.",
+        ) { editing = AlarmId.AUTOFILL }
+
+        AlarmCard(
+            title = "Peringatan terakhir",
+            time = current.escalationTime,
+            days = current.activeDays,
+            enabled = current.escalationEnabled && current.masterEnabled,
+            detail = "Bunyi keras kalau masih kosong.",
+        ) { editing = AlarmId.ESCALATION }
+
+        // Kebijakan isi: milik bersama ketiga alarm, satu tempat.
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                Text("Cara isi", style = MaterialTheme.typography.titleSmall)
+                RadioRow("Hanya ingatkan", current.autofillPolicy == ScheduleSettings.Policy.REMIND_ONLY) {
+                    save(current.copy(autofillPolicy = ScheduleSettings.Policy.REMIND_ONLY))
+                }
+                RadioRow("Isi saja, jangan kirim", current.autofillPolicy == ScheduleSettings.Policy.FILL_ONLY) {
+                    save(current.copy(autofillPolicy = ScheduleSettings.Policy.FILL_ONLY))
+                }
+                RadioRow("Kirim otomatis", current.autofillPolicy == ScheduleSettings.Policy.FILL_AND_SUBMIT) {
+                    if (current.autofillPolicy != ScheduleSettings.Policy.FILL_AND_SUBMIT) {
+                        confirmSubmitPolicy = true
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (day in DayOfWeek.entries.drop(4)) DayChip(day, day in activeDays) { d, on ->
-                        activeDays = if (on) activeDays + d else activeDays - d
-                    }
-                }
-            }
-
-            SectionLabel("Cara isi")
-            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                RadioRow("Hanya ingatkan", policy == ScheduleSettings.Policy.REMIND_ONLY) {
-                    policy = ScheduleSettings.Policy.REMIND_ONLY
-                }
-                RadioRow("Isi saja, jangan kirim", policy == ScheduleSettings.Policy.FILL_ONLY) {
-                    policy = ScheduleSettings.Policy.FILL_ONLY
-                }
-                RadioRow("Kirim otomatis", policy == ScheduleSettings.Policy.FILL_AND_SUBMIT) {
-                    if (policy != ScheduleSettings.Policy.FILL_AND_SUBMIT) confirmSubmitPolicy = true
-                }
-            }
-
-            SectionLabel("Kalau malam ini masih kosong")
-            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                HorizontalDividerLight()
+                Text("Kalau malam masih kosong", style = MaterialTheme.typography.titleSmall)
                 RadioRow(
                     "Ingatkan saja",
-                    escalationPolicy == ScheduleSettings.EscalationPolicy.NOTIFY_ONLY,
-                ) { escalationPolicy = ScheduleSettings.EscalationPolicy.NOTIFY_ONLY }
+                    current.escalationPolicy == ScheduleSettings.EscalationPolicy.NOTIFY_ONLY,
+                ) { save(current.copy(escalationPolicy = ScheduleSettings.EscalationPolicy.NOTIFY_ONLY)) }
                 RadioRow(
                     "Isi otomatis terakhir",
-                    escalationPolicy == ScheduleSettings.EscalationPolicy.AUTO_FILL_LAST_CHANCE,
-                ) { escalationPolicy = ScheduleSettings.EscalationPolicy.AUTO_FILL_LAST_CHANCE }
-            }
-
-            val interaction = remember { MutableInteractionSource() }
-            Button(
-                onClick = {
-                    val r = reminderTime ?: return@Button
-                    val a = autofillTime ?: return@Button
-                    val e = escalationTime ?: return@Button
-                    scope.launch {
-                        val saved = current.copy(
-                            reminderTime = r,
-                            autofillTime = a,
-                            escalationTime = e,
-                            activeDays = activeDays,
-                            autofillPolicy = policy,
-                            escalationPolicy = escalationPolicy,
-                            masterEnabled = masterEnabled,
-                            reminderEnabled = reminderEnabled,
-                            autofillEnabled = autofillEnabled,
-                            escalationEnabled = escalationEnabled,
-                        )
-                        store.save(saved)
-                        AlarmScheduler.armAll(context, saved)
-                        // Sinkronkan layanan penjaga dengan pilihan pengguna:
-                        // menyala saat alarm otomatis aktif, mati saat dimatikan.
-                        if (saved.masterEnabled) {
-                            GuardService.ensure(context)
-                        } else {
-                            GuardService.stop(context)
-                        }
-                        Toast.makeText(context, "Jadwal disimpan", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                enabled = allValid,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp)
-                    .pressScale(interaction),
-                shape = RoundedCornerShape(16.dp),
-                interactionSource = interaction,
-            ) {
-                Text("Simpan jadwal", style = MaterialTheme.typography.titleMedium)
+                    current.escalationPolicy == ScheduleSettings.EscalationPolicy.AUTO_FILL_LAST_CHANCE,
+                ) { save(current.copy(escalationPolicy = ScheduleSettings.EscalationPolicy.AUTO_FILL_LAST_CHANCE)) }
             }
         }
+    }
+
+    // Lembar edit per alarm: jam, hari, sakelar alarm ini, sakelar utama.
+    editing?.let { which ->
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            title = { Text(when (which) {
+                AlarmId.REMINDER -> "Pengingat"
+                AlarmId.AUTOFILL -> "Isi otomatis"
+                AlarmId.ESCALATION -> "Peringatan terakhir"
+            }) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = when (which) {
+                            AlarmId.REMINDER -> current.reminderTime.format(HHMM)
+                            AlarmId.AUTOFILL -> current.autofillTime.format(HHMM)
+                            AlarmId.ESCALATION -> current.escalationTime.format(HHMM)
+                        },
+                        fontSize = 44.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Text("Hari aktif", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (day in DayOfWeek.entries) {
+                            FilterChip(
+                                selected = day in current.activeDays,
+                                onClick = {
+                                    val next = if (day in current.activeDays) current.activeDays - day else current.activeDays + day
+                                    save(current.copy(activeDays = next))
+                                },
+                                label = { Text(DAY_SHORT[day] ?: "") },
+                            )
+                        }
+                    }
+                    HorizontalDividerLight()
+                    SwitchRowLocal(
+                        "Alarm ini menyala",
+                        when (which) {
+                            AlarmId.REMINDER -> current.reminderEnabled
+                            AlarmId.AUTOFILL -> current.autofillEnabled
+                            AlarmId.ESCALATION -> current.escalationEnabled
+                        },
+                    ) { on ->
+                        val next = when (which) {
+                            AlarmId.REMINDER -> current.copy(reminderEnabled = on)
+                            AlarmId.AUTOFILL -> current.copy(autofillEnabled = on)
+                            AlarmId.ESCALATION -> current.copy(escalationEnabled = on)
+                        }
+                        save(next)
+                    }
+                    SwitchRowLocal("Semua alarm otomatis", current.masterEnabled) { on ->
+                        if (!on) confirmMasterOff = true else save(current.copy(masterEnabled = true))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { editing = null }) { Text("Selesai") }
+            },
+        )
     }
 
     if (confirmSubmitPolicy) {
@@ -273,91 +249,112 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             text = {
                 Text(
                     "Aplikasi akan mencentang kotak pernyataan lalu menekan Simpan dan Kirim " +
-                        "atas nama kamu.",
+                        "atas nama kamu. Isi teks tetap berasal dari tulisanmu.",
                 )
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        policy = ScheduleSettings.Policy.FILL_AND_SUBMIT
-                        confirmSubmitPolicy = false
-                    },
-                ) { Text("Nyalakan") }
+                TextButton(onClick = {
+                    save(current.copy(autofillPolicy = ScheduleSettings.Policy.FILL_AND_SUBMIT))
+                    confirmSubmitPolicy = false
+                }) { Text("Nyalakan") }
             },
             dismissButton = {
                 TextButton(onClick = { confirmSubmitPolicy = false }) { Text("Batal") }
             },
         )
     }
-}
 
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text = text.uppercase(java.util.Locale("id", "ID")),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-}
-
-@Composable
-private fun TimeRow(
-    label: String,
-    value: String,
-    valid: Boolean,
-    onChange: (String) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-        OutlinedTextField(
-            value = value,
-            onValueChange = onChange,
-            isError = !valid,
-            singleLine = true,
-            textStyle = TextStyle(textAlign = TextAlign.End, fontSize = MaterialTheme.typography.titleMedium.fontSize),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.width(104.dp),
-            shape = RoundedCornerShape(10.dp),
-            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-            ),
+    if (confirmMasterOff) {
+        AlertDialog(
+            onDismissRequest = { confirmMasterOff = false },
+            title = { Text("Matikan semua alarm otomatis?") },
+            text = {
+                Text(
+                    "Tidak ada pengingat, pengisian, atau peringatan malam. Tombol isi manual tetap bisa dipakai. " +
+                        "Notifikasi penjaga juga hilang.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    save(current.copy(masterEnabled = false))
+                    confirmMasterOff = false
+                }) { Text("Ya, matikan") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmMasterOff = false }) { Text("Batal") }
+            },
         )
     }
 }
 
+private enum class AlarmId { REMINDER, AUTOFILL, ESCALATION }
+
+/** Kartu alarm: jam besar di kiri, hari ringkas, sakelar di kanan. Satu kartu = satu alarm utuh. */
 @Composable
-private fun SwitchRow(label: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
+private fun AlarmCard(
+    title: String,
+    time: LocalTime,
+    days: Set<DayOfWeek>,
+    enabled: Boolean,
+    detail: String,
+    onOpen: () -> Unit,
+) {
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .clickable(onClick = onOpen),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge)
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    time.format(HHMM),
+                    fontSize = 40.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = if (days.size == DayOfWeek.entries.size) "Setiap hari" else days.sorted().joinToString { DAY_SHORT[it] ?: "" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Text(
-                detail,
-                style = MaterialTheme.typography.labelSmall,
+                title,
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Switch(checked = enabled, onCheckedChange = null, modifier = Modifier.padding(start = 8.dp))
         }
-        androidx.compose.material3.Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 
 @Composable
-private fun DayChip(day: DayOfWeek, selected: Boolean, toggle: (DayOfWeek, Boolean) -> Unit) {
-    FilterChip(
-        selected = selected,
-        onClick = { toggle(day, !selected) },
-        label = { Text(DAY_LABELS[day] ?: day.name) },
+private fun SwitchRowLocal(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun HorizontalDividerLight() {
+    androidx.compose.material3.HorizontalDivider(
+        color = MaterialTheme.colorScheme.outlineVariant,
+        modifier = Modifier.padding(vertical = 4.dp),
     )
 }
 
@@ -373,12 +370,4 @@ private fun RadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
         RadioButton(selected = selected, onClick = null)
         Text(label, modifier = Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodyLarge)
     }
-}
-
-private fun parseHhmm(text: String): LocalTime? {
-    val m = Regex("""^(\d{1,2}):(\d{2})$""").matchEntire(text.trim()) ?: return null
-    val hour = m.groupValues[1].toInt()
-    val minute = m.groupValues[2].toInt()
-    if (hour !in 0..23 || minute !in 0..59) return null
-    return LocalTime.of(hour, minute)
 }

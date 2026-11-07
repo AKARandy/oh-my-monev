@@ -44,6 +44,12 @@ class DashboardParserTest {
     }
 
     @Test
+    fun `reads holiday as libur`() {
+        val libur = "Hari Ini\nSabtu, 7 November 2026\nJadwal libur posisi\nBatas pengisian pukul 23.59 WIB"
+        assertEquals(TodayState.LIBUR, DashboardParser.todayState(libur))
+    }
+
+    @Test
     fun `reads riwayat day states`() {
         val riwayat = """
             Riwayat Kehadiran
