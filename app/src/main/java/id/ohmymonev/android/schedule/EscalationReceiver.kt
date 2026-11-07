@@ -16,7 +16,8 @@ import kotlinx.coroutines.runBlocking
 class EscalationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
-        if (!settings.masterEnabled || !settings.escalationEnabled) return
+        val today = java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
+        if (!settings.masterEnabled || !settings.escalationEnabled || today.dayOfWeek !in settings.escalationDays) return
         if (id.ohmymonev.android.data.AppStore(context).isSkipped(
                 java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta).toString(),
             )
@@ -29,7 +30,7 @@ class EscalationReceiver : BroadcastReceiver() {
             NotificationManagerCompat.from(context)
                 .notify(NotificationFactory.NOTIF_ID_ESCALATION, factory.escalation())
         }
-        if (settings.escalationPolicy == ScheduleSettings.EscalationPolicy.AUTO_FILL_LAST_CHANCE) {
+        if (settings.escalationAction != ScheduleSettings.Policy.REMIND_ONLY) {
             AutoFillService.start(context, lastChance = true)
         }
     }

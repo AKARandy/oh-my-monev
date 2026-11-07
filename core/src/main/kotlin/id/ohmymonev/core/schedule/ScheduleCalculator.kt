@@ -25,18 +25,17 @@ object ScheduleCalculator {
 
     /**
      * Tiga momen alarm (pengingat, isi-otomatis, eskalasi) untuk [day] dalam WIB,
-     * sesuai [s]. Hari non-aktif → daftar kosong (pemanggil harus abaikan hari itu).
+     * sesuai [s]. Setiap fitur memakai pilihan harinya sendiri.
      * Catatan kebijakan: urutan mengikuti jam dinding tiap alarm apa adanya —
      * kalkulator TIDAK menyusun ulang/menggeser walau misalnya autofill digeser
      * ke 23:40; eskalasi tetap 22:30 malam yang sama.
      */
     fun threeFires(day: LocalDate, s: ScheduleSettings): List<ZonedDateTime> {
         if (!s.masterEnabled) return emptyList()
-        if (day.dayOfWeek !in s.activeDays) return emptyList()
         return buildList {
-            if (s.reminderEnabled) add(fire(day, s.reminderTime))
-            if (s.autofillEnabled) add(fire(day, s.autofillTime))
-            if (s.escalationEnabled) add(fire(day, s.escalationTime))
+            if (s.reminderEnabled && day.dayOfWeek in s.reminderDays) add(fire(day, s.reminderTime))
+            if (s.autofillEnabled && day.dayOfWeek in s.autofillDays) add(fire(day, s.autofillTime))
+            if (s.escalationEnabled && day.dayOfWeek in s.escalationDays) add(fire(day, s.escalationTime))
         }
     }
 
@@ -58,6 +57,11 @@ object ScheduleCalculator {
             KEY_AUTOFILL to s.autofillTime,
             KEY_ESCALATION to s.escalationTime,
         )
+        val days = mapOf(
+            KEY_REMINDER to s.reminderDays,
+            KEY_AUTOFILL to s.autofillDays,
+            KEY_ESCALATION to s.escalationDays,
+        )
         val result = LinkedHashMap<String, ZonedDateTime>()
         if (!s.masterEnabled) return result
         val enabled = buildSet {
@@ -67,9 +71,9 @@ object ScheduleCalculator {
         }
         for (dayOffset in 0..horizonDays) {
             val day = startDate.plusDays(dayOffset.toLong())
-            if (day.dayOfWeek !in s.activeDays) continue
             for (key in allKeys) {
                 if (key !in enabled) continue
+                if (day.dayOfWeek !in days.getValue(key)) continue
                 if (result.containsKey(key)) continue
                 val candidate = fire(day, times.getValue(key))
                 if (candidate.toInstant().isAfter(start)) result[key] = candidate

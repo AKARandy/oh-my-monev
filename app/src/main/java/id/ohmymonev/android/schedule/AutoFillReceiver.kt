@@ -16,7 +16,10 @@ class AutoFillReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val lastChance = intent.getBooleanExtra(AutoFillService.EXTRA_LAST_CHANCE, false)
         val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
-        if (!settings.masterEnabled || !settings.autofillEnabled) return
+        val enabled = if (lastChance) settings.escalationEnabled else settings.autofillEnabled
+        val days = if (lastChance) settings.escalationDays else settings.autofillDays
+        val today = java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
+        if (!settings.masterEnabled || !enabled || today.dayOfWeek !in days) return
         // Pengguna membatalkan malam ini: hormati, jangan jalankan apa pun.
         if (id.ohmymonev.android.data.AppStore(context).isSkipped(
                 java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta).toString(),
@@ -27,7 +30,7 @@ class AutoFillReceiver : BroadcastReceiver() {
         val factory = NotificationFactory(context)
         factory.ensureChannels()
 
-        if (settings.autofillPolicy == ScheduleSettings.Policy.REMIND_ONLY) {
+        if (settings.policyFor(lastChance) == ScheduleSettings.Policy.REMIND_ONLY) {
             // Kebijakan hanya-mengingatkan: jangan jalankan mesin sama sekali.
             if (factory.canPostNotifications()) {
                 NotificationManagerCompat.from(context).notify(

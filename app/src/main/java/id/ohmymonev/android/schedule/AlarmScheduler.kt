@@ -38,8 +38,21 @@ object AlarmScheduler {
         }
         val now = ZonedDateTime.now(ScheduleCalculator.asiaJakarta)
         val fires = ScheduleCalculator.nextFires(now, settings, horizonDays = 7)
+        for (key in listOf(ScheduleCalculator.KEY_REMINDER, ScheduleCalculator.KEY_AUTOFILL, ScheduleCalculator.KEY_ESCALATION)) {
+            if (key in fires) continue
+            val intent = Intent(context, receiverFor(key)).apply { action = actionFor(key) }
+            PendingIntent.getBroadcast(
+                context,
+                requestCodeFor(key),
+                intent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE,
+            )?.let { pending ->
+                am.cancel(pending)
+                pending.cancel()
+            }
+        }
         if (fires.isEmpty()) {
-            return ArmReport(emptyList(), listOf("tidak ada jadwal aktif (sakelar mati atau hari non-aktif)"))
+            return ArmReport(emptyList(), listOf("tidak ada jadwal aktif (otomatis nonaktif atau tidak ada hari aktif)"))
         }
         val armedKeys = mutableListOf<String>()
         val errors = mutableListOf<String>()
@@ -94,10 +107,11 @@ object AlarmScheduler {
      * Percobaan ulang berikutnya pada [at] (tangga +5/+20/+60 dari ScheduleCalculator).
      * requestCode tetap: percobaan berikutnya menggantikan yang lama.
      */
-    fun scheduleRetry(context: Context, at: ZonedDateTime) {
+    fun scheduleRetry(context: Context, at: ZonedDateTime, lastChance: Boolean = false) {
         val am = context.getSystemService(AlarmManager::class.java) ?: return
         val intent = Intent(context, AutoFillReceiver::class.java)
             .setAction(AutoFillReceiver.ACTION_AUTOFILL)
+            .putExtra(AutoFillService.EXTRA_LAST_CHANCE, lastChance)
         val pending = PendingIntent.getBroadcast(
             context,
             REQUEST_CODE_RETRY,
@@ -128,7 +142,7 @@ object AlarmScheduler {
 
     /**
      * Bukti dari sistem, bukan klaim: baca alarm berikutnya yang benar-benar terdaftar di OS.
-     * Null = tidak ada alarm terpasang (berarti sakelar mati / OS menghapusnya).
+     * Null = tidak ada alarm terpasang (berarti otomatis nonaktif / OS menghapusnya).
      */
     fun readArmedState(context: Context, settings: ScheduleSettings): ArmedState {
         val am = context.getSystemService(AlarmManager::class.java)
@@ -138,7 +152,7 @@ object AlarmScheduler {
         val next = am.nextAlarmClock
         val oursIsNext = next != null && next.showIntent != null && next.triggerTime > 0
         if (next == null) {
-            val reason = if (!settings.masterEnabled) "sakelar utama mati" else "belum terbaca di OS"
+            val reason = if (!settings.masterEnabled) "otomatis nonaktif" else "belum terbaca di OS"
             return ArmedState(armed = false, nextFireISO = null, source = reason, lastError = lastArmError)
         }
         val whenISO = java.time.Instant.ofEpochMilli(next.triggerTime).toString()

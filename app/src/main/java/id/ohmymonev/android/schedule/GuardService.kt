@@ -14,11 +14,11 @@ import kotlinx.coroutines.runBlocking
  * Layanan penjaga: notifikasi permanen yang menjadi BUKTI nyata status otomatisasi.
  *
  * Aturan keberadaannya (disetujui pengguna):
- * - Tampil hanya saat alarm otomatis aktif (sakelar utama menyala dan alarm terpasang).
+ * - Tampil hanya saat alarm otomatis aktif (pengaturan otomatis menyala dan alarm terpasang).
  * - Tidak bisa dihilangkan dengan swipe; kalau prosesnya dibunuh sistem, START_STICKY
  *   menghidupkan ulang dan notifikasi muncul lagi (sekaligus memperbaiki alarm yang hilang).
  * - Hilang total saat aplikasi di-Force Stop (sistem menghapus semuanya) — memang begitu aturannya.
- * - Hilang saat sakelar utama dimatikan di aplikasi.
+ * - Hilang saat pengaturan otomatis dimatikan di aplikasi.
  */
 class GuardService : Service() {
 

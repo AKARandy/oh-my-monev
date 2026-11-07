@@ -114,7 +114,8 @@ fun HomeTab(
     var pratinjauLoading by remember { mutableStateOf(false) }
     var pratinjauSource by remember { mutableStateOf<String?>(null) }
     var editorExpanded by remember { mutableStateOf(false) }
-    var tutorialHidden by remember { mutableStateOf(false) }
+    var diagnosticsExpanded by remember { mutableStateOf(false) }
+    var alarmDetailsExpanded by remember { mutableStateOf(false) }
 
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -230,13 +231,10 @@ fun HomeTab(
 
     // Setup yang masih kurang: sesi, lokasi, notifikasi. Dipakai tombol utama dan kartu persiapan.
     val needSetup = !sessionReadyForAutomation() || !locationGranted || !notificationsOn
+    val noReportRequired = siteStatus?.sessionActive == true &&
+        (siteStatus?.today == TodayState.FILLED || siteStatus?.today == TodayState.LIBUR)
 
     val scrollState = rememberScrollState()
-    // Bukti visual bahwa halaman bisa digulir: bayangan bawah + chevron, hilang setelah menggulir.
-    val showScrollHint by remember {
-        androidx.compose.runtime.derivedStateOf { scrollState.value < 40 }
-    }
-
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -251,81 +249,36 @@ fun HomeTab(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text("Hadir hari ini?", style = MaterialTheme.typography.headlineMedium)
+            Text("Laporan hari ini", style = MaterialTheme.typography.headlineMedium)
             Text(
-                // Keadaan dari situs sendiri (bila sudah pernah dibaca) menimpa asumsi lokal.
                 text = when {
+                    settings == null -> "Memuat jadwal…"
                     siteStatus?.sessionActive == true && siteStatus?.today == TodayState.FILLED ->
-                        "Sudah absen di situs. Tidak ada yang perlu dilakukan."
+                        "Laporan hari ini sudah tercatat di situs."
                     siteStatus?.sessionActive == true && siteStatus?.today == TodayState.LIBUR ->
-                        "Hari libur. Situs tidak meminta laporan hari ini."
-                    !sessionReadyForAutomation() -> "Login dulu agar aplikasi bisa mengisi."
-                    draftValid -> "Siap. Mesin akan mengisi pukul " + (settings?.autofillTime?.format(TIME_FORMAT) ?: "21:00") + "."
-                    todayDraft != null -> "Tulisanmu belum memenuhi aturan situs. Perbaiki sebentar."
-                    else -> "Belum disiapkan. Tulis sendiri atau pakai laporan kemarin."
+                        "Hari libur. Tidak perlu laporan hari ini."
+                    !sessionReadyForAutomation() -> "Login untuk menyiapkan laporan hari ini."
+                    todayDraft != null && !draftValid -> "Perbaiki laporan sebelum mengisi formulir."
+                    draftValid -> "Laporan siap diisi ke formulir."
+                    else -> "Siapkan laporan hari ini, lalu isi formulir."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
-        // Tutorial: langkah mencentang dirinya dari keadaan nyata, bukan klaim.
-        if (!tutorialHidden) {
-            TutorialCard(
-                steps = listOf(
-                    TutorialStep(
-                        "Login sekali di tab Sesi",
-                        "Buka tab Sesi di bawah, masuk seperti di Chrome.",
-                        sessionReadyForAutomation(),
-                    ),
-                    TutorialStep(
-                        "Izinkan lokasi dan notifikasi",
-                        "Keduanya wajib: situs membaca lokasi, aplikasi mengingatkan lewat notifikasi.",
-                        locationGranted && notificationsOn,
-                    ),
-                    TutorialStep(
-                        "Siapkan tulisan hari ini",
-                        "Tulis sendiri di kartu Tulisan hari ini, atau biarkan mesin memakai laporan kemarin.",
-                        draftValid || (todayDraft == null && sessionReadyForAutomation()),
-                    ),
-                    TutorialStep(
-                        "Tekan Isi sekarang sekali untuk uji",
-                        "Lihat mesin mengisi formulir, lalu kamu yang menekan kirim di situs.",
-                        lastRecord != null && lastRecord!!.outcome in listOf(
-                            EngineOutcome.FILL_OK, EngineOutcome.SUBMITTED, EngineOutcome.DAY_NOT_FILLABLE,
-                        ),
-                    ),
-                ),
-                onDismiss = { tutorialHidden = true },
-            )
-        }
-
-        if (needSetup || (todayDraft != null && !draftValid)) {
-            ReadinessCard(
-                sessionActive = sessionActive,
-                sessionStale = sessionStale,
-                locationGranted = locationGranted,
-                notificationsOn = notificationsOn,
-                draftReady = draftValid,
-                draftInvalid = todayDraft != null && !draftValid,
-                // Satu fungsi satu tombol: memeriksa sesi hanya ada di tab Sesi.
-                // Dari sini pengguna diarahkan ke sana, bukan diperiksa ulang di sini.
-                onOpenSession = onOpenSession,
-                onGrantLocation = { locationLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION) },
-                onGrantNotifications = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                },
-                onOpenEditor = { editorExpanded = true },
-            )
-        }
-
         val interaction = remember { MutableInteractionSource() }
         // Tombol yang tidak bisa berhasil memang harus tampak mati, bukan sekali tap lalu gagal.
         Button(
-            onClick = { AutoFillService.start(context, lastChance = false); running = true },
-            enabled = !running && !needSetup,
+            onClick = {
+                when {
+                    noReportRequired -> onOpenSession()
+                    !sessionReadyForAutomation() -> onOpenSession()
+                    todayDraft != null && !draftValid -> editorExpanded = true
+                    else -> { AutoFillService.start(context, lastChance = false); running = true }
+                }
+            },
+            enabled = !running && (noReportRequired || !sessionReadyForAutomation() || !needSetup),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp)
@@ -336,35 +289,36 @@ fun HomeTab(
             Text(
                 when {
                     running -> "Mengisi…"
-                    !sessionReadyForAutomation() -> "Isi sekarang (login dulu)"
-                    else -> "Isi sekarang"
+                    noReportRequired -> "Lihat di situs Monev"
+                    !sessionReadyForAutomation() -> "Login ke Monev"
+                    needSetup -> "Lengkapi izin di bawah"
+                    todayDraft != null && !draftValid -> "Perbaiki laporan"
+                    settings?.autofillPolicy == ScheduleSettings.Policy.FILL_AND_SUBMIT -> "Isi dan kirim sekarang"
+                    else -> "Isi formulir sekarang"
                 },
                 style = MaterialTheme.typography.titleMedium,
             )
         }
 
-        // Baris sekunder: buka situs + uji mesin. Menulis laporan pindah ke kartu Tulisan hari ini.
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(
-                onClick = onOpenSession,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp),
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Text("Buka situs", maxLines = 1)
-            }
-            OutlinedButton(
-                onClick = { AutoFillService.startBench(context); running = true },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp),
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Text("Uji mesin", maxLines = 1)
-            }
+        // Satu kartu persiapan: tutorial dan status digabung; langkah mencentang dari keadaan nyata.
+        if (needSetup) {
+            ReadinessCard(
+                sessionActive = sessionActive,
+                sessionStale = sessionStale,
+                locationGranted = locationGranted,
+                notificationsOn = notificationsOn,
+                // Satu fungsi satu tombol: memeriksa sesi hanya ada di tab Sesi.
+                onGrantLocation = { locationLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION) },
+                onGrantNotifications = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                },
+            )
+        }
+
+        if (sessionReadyForAutomation() && !noReportRequired) {
+            TextButton(onClick = onOpenSession) { Text("Buka situs Monev") }
         }
 
         DraftCard(
@@ -395,41 +349,35 @@ fun HomeTab(
                         Text(
                             text = when {
                                 armed == null -> "Memeriksa…"
-                                armed.armed -> "TERPASANG · " + formatFire(armed.nextFireISO) + " · " + armedLabel(armed.source)
-                                else -> "TIDAK TERPASANG (" + armed.source + ")"
+                                armed.armed -> "Terpasang · " + formatFire(armed.nextFireISO)
+                                else -> "Jadwal belum terkonfirmasi"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = when {
                                 armed == null -> MaterialTheme.colorScheme.onSurfaceVariant
                                 armed.armed -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.error
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
-                        armed?.lastError?.takeIf { !armed.armed }?.let {
-                            Text(
-                                "Sistem menolak: $it",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
                     }
                     TextButton(onClick = { refreshArmed() }) { Text("Periksa") }
                 }
 
+                armedState?.lastError?.let { detail ->
+                    TextButton(onClick = { alarmDetailsExpanded = !alarmDetailsExpanded }) {
+                        Text(if (alarmDetailsExpanded) "Tutup detail alarm" else "Detail alarm")
+                    }
+                    if (alarmDetailsExpanded) {
+                        Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 settings?.let { s ->
                     Text(
-                        "Pengingat " + s.reminderTime.format(TIME_FORMAT) +
-                            " · Mesin mengisi " + s.autofillTime.format(TIME_FORMAT) +
-                            " · Peringatan " + s.escalationTime.format(TIME_FORMAT),
+                        automationSummary(s, ZonedDateTime.now(ScheduleCalculator.asiaJakarta), tonightSkipped),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        if (s.autofillPolicy == ScheduleSettings.Policy.FILL_AND_SUBMIT) {
-                            "Mode kirim otomatis: kotak pernyataan ikut dicentang."
-                        } else {
-                            "Mode isi saja: formulir terisi, kamu yang menekan kirim."
-                        },
+                        "Periksa tindakan setiap fitur di Jadwal.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -512,13 +460,6 @@ fun HomeTab(
             }
         }
 
-        TextButton(
-            onClick = { AlarmScheduler.quickFireForTest(context, 90) },
-            modifier = Modifier.align(Alignment.CenterHorizontally),
-        ) {
-            Text("Tes alarm 90 detik", color = MaterialTheme.colorScheme.primary)
-        }
-
         PratinjauCard(
             outcome = pratinjau,
             loading = pratinjauLoading,
@@ -528,6 +469,20 @@ fun HomeTab(
 
         LastRunRow(lastRecord)
         DisclaimerCard()
+        TextButton(onClick = { diagnosticsExpanded = !diagnosticsExpanded }) {
+            Text(if (diagnosticsExpanded) "Tutup alat pengujian" else "Alat pengujian")
+        }
+        if (diagnosticsExpanded) {
+            Text("Uji mesin memakai halaman tiruan. Tes alarm memakai pengaturan Pengisian dan sesi aktif.", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(
+                onClick = { AutoFillService.startBench(context); running = true },
+                enabled = !running,
+            ) { Text("Uji mesin") }
+            TextButton(onClick = { AlarmScheduler.quickFireForTest(context, 90) }) {
+                Text("Tes alarm 90 detik")
+            }
+        }
+
         if (sessionChecked && sessionActive == false) {
             Text(
                 "Sesi belum aktif. Buka tab Sesi, login, lalu periksa lagi.",
@@ -537,35 +492,7 @@ fun HomeTab(
         }
         }
 
-        // Petunjuk gulir: bayangan + chevron di tepi bawah, hilang begitu pengguna menggulir.
-        androidx.compose.animation.AnimatedVisibility(
-            visible = showScrollHint,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            enter = androidx.compose.animation.fadeIn(),
-            exit = androidx.compose.animation.fadeOut(),
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .background(
-                            androidx.compose.ui.graphics.Brush.verticalGradient(
-                                listOf(
-                                    MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                                    MaterialTheme.colorScheme.background.copy(alpha = 0.9f),
-                                ),
-                            ),
-                        ),
-                )
-                Text(
-                    "v",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(bottom = 8.dp),
-                )
-            }
-        }
+
     }
 }
 
@@ -581,7 +508,7 @@ private fun DisclaimerCard() {
             Text(
                 "Bukan layanan resmi Kemnaker atau MagangHub. Aplikasi ini hanya mengotomatiskan " +
                     "tindakan di akunmu sendiri. Kamu tetap bertanggung jawab atas isi laporan yang " +
-                    "terkirim. Uji dulu dengan mode isi saja sebelum menyalakan kirim otomatis.",
+                    "terkirim. Uji pengisian sebelum mengizinkan pengiriman otomatis.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -729,12 +656,8 @@ private fun ReadinessCard(
     sessionStale: Boolean,
     locationGranted: Boolean,
     notificationsOn: Boolean,
-    draftReady: Boolean,
-    draftInvalid: Boolean,
-    onOpenSession: () -> Unit,
     onGrantLocation: () -> Unit,
     onGrantNotifications: () -> Unit,
-    onOpenEditor: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -743,45 +666,22 @@ private fun ReadinessCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Siap dipakai?", style = MaterialTheme.typography.titleMedium)
-            ReadyRow(
-                label = "Sesi login",
-                ok = if (sessionActive == true && sessionStale) null else sessionActive,
-                detail = when {
-                    sessionActive == true && sessionStale -> "Sudah lama, periksa lagi"
-                    sessionActive == true -> "Aktif"
-                    sessionActive == false -> "Belum login"
-                    else -> "Belum dicek"
-                },
-                // Satu fungsi satu tombol: pemeriksaan sesi hanya hidup di tab Sesi.
-                action = "Login",
-                onAction = onOpenSession,
-            )
-            ReadyRow(
-                label = "Izin lokasi",
-                ok = locationGranted,
-                detail = if (locationGranted) "Diberikan" else "Dibutuhkan situs",
-                action = if (locationGranted) null else "Izinkan",
-                onAction = onGrantLocation,
-            )
-            ReadyRow(
-                label = "Notifikasi",
-                ok = notificationsOn,
-                detail = if (notificationsOn) "Menyala" else "Mati",
-                action = if (notificationsOn) null else "Izinkan",
-                onAction = onGrantNotifications,
-            )
-            ReadyRow(
-                label = "Laporan hari ini",
-                ok = !draftInvalid && draftReady,
-                detail = when {
-                    draftInvalid -> "Belum sesuai aturan situs"
-                    draftReady -> "Tertulis"
-                    else -> "Belum ditulis"
-                },
-                action = if (draftReady && !draftInvalid) null else "Tulis",
-                onAction = onOpenEditor,
-            )
+            Text("Persiapan", style = MaterialTheme.typography.titleMedium)
+            if (sessionActive != true || sessionStale) {
+                ReadyRow(
+                    label = "Sesi login",
+                    ok = if (sessionActive == true && sessionStale) null else sessionActive,
+                    detail = if (sessionStale) "Periksa kembali di tab Sesi" else "Gunakan tombol Login di atas",
+                    action = null,
+                    onAction = {},
+                )
+            }
+            if (!locationGranted) {
+                ReadyRow("Izin lokasi", false, "Dibutuhkan situs", "Izinkan", onGrantLocation)
+            }
+            if (!notificationsOn) {
+                ReadyRow("Notifikasi", false, "Aktifkan pengingat", "Izinkan", onGrantNotifications)
+            }
         }
     }
 }
@@ -807,18 +707,10 @@ private fun ReadyRow(
                     shape = CircleShape,
                 ),
         )
-        Text(
-            label,
-            modifier = Modifier
-                .padding(start = 10.dp)
-                .weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        Text(
-            detail,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Column(modifier = Modifier.padding(start = 10.dp).weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (action != null) {
             TextButton(onClick = onAction) { Text(action) }
         }
@@ -871,14 +763,6 @@ private fun formatFire(nextFireISO: String?): String {
     } catch (_: Exception) {
         nextFireISO
     }
-}
-
-/** Label ramah untuk sumber alarm yang terbaca dari OS. */
-private fun armedLabel(source: String): String = when (source) {
-    id.ohmymonev.core.schedule.ScheduleCalculator.KEY_REMINDER -> "pengingat"
-    id.ohmymonev.core.schedule.ScheduleCalculator.KEY_AUTOFILL -> "pengisian"
-    id.ohmymonev.core.schedule.ScheduleCalculator.KEY_ESCALATION -> "peringatan"
-    else -> source
 }
 
 private fun hasPermission(context: Context, permission: String): Boolean =

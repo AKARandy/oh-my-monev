@@ -21,10 +21,11 @@ data class ScheduleSettings(
     /** Jendela batal sebelum auto-submit (D9). Default 30 menit. */
     val cancelWindowMinutes: Long = 30,
 
-    /** Hari aktif pengiriman laporan; default semua hari. */
-    val activeDays: Set<DayOfWeek> = DayOfWeek.entries.toSet(),
+    val reminderDays: Set<DayOfWeek> = DayOfWeek.entries.toSet(),
+    val autofillDays: Set<DayOfWeek> = DayOfWeek.entries.toSet(),
+    val escalationDays: Set<DayOfWeek> = DayOfWeek.entries.toSet(),
 
-    /** Sakelar utama: kalau mati, tidak ada alarm otomatis sama sekali. */
+    /** Pengaturan otomatis: kalau mati, tidak ada alarm otomatis sama sekali. */
     val masterEnabled: Boolean = true,
 
     /** Pengingat malam boleh menyala? */
@@ -39,10 +40,10 @@ data class ScheduleSettings(
     /** Kebijakan pengisian otomatis malam ini. Default FILL_ONLY = Mode Uji (D8): isi laporan, KOTAK KONFIRMASI & Kirim tidak disentuh sampai pengguna menyetujuinya. */
     val autofillPolicy: Policy = Policy.FILL_ONLY,
 
-    /** Kebijakan saat eskalasi tiba. */
-    val escalationPolicy: EscalationPolicy = EscalationPolicy.AUTO_FILL_LAST_CHANCE,
+    /** Tindakan peringatan terakhir, terpisah dari tindakan pengisian. */
+    val escalationAction: Policy = Policy.FILL_ONLY,
 ) {
     enum class Policy { REMIND_ONLY, FILL_ONLY, FILL_AND_SUBMIT }
 
-    enum class EscalationPolicy { NOTIFY_ONLY, AUTO_FILL_LAST_CHANCE }
+    fun policyFor(lastChance: Boolean): Policy = if (lastChance) escalationAction else autofillPolicy
 }

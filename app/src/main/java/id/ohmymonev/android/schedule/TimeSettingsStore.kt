@@ -25,14 +25,19 @@ private val Context.scheduleDataStore: DataStore<Preferences> by preferencesData
  * Waktu disimpan sebagai menit-sejak-tengah-malam (stabil & tahan format salah).
  * Dependensi: androidx.datastore:datastore-preferences:1.1.1 (diminta ke lead).
  */
-class TimeSettingsStore(private val context: Context) {
+class TimeSettingsStore internal constructor(private val dataStore: DataStore<Preferences>) {
+    constructor(context: Context) : this(context.scheduleDataStore)
 
     private object Keys {
         val REMINDER_MINUTES = intPreferencesKey("reminder_minutes_of_day")
         val AUTOFILL_MINUTES = intPreferencesKey("autofill_minutes_of_day")
         val ESCALATION_MINUTES = intPreferencesKey("escalation_minutes_of_day")
         val CANCEL_WINDOW_MINUTES = intPreferencesKey("cancel_window_minutes")
-        val ACTIVE_DAYS = stringPreferencesKey("active_days") // ordinal dipisah koma, kosong = default
+        val ACTIVE_DAYS = stringPreferencesKey("active_days") // Kunci lama untuk migrasi hari bersama.
+        val REMINDER_DAYS = stringPreferencesKey("reminder_days")
+        val AUTOFILL_DAYS = stringPreferencesKey("autofill_days")
+        val ESCALATION_DAYS = stringPreferencesKey("escalation_days")
+        val ESCALATION_ACTION = stringPreferencesKey("escalation_action")
         val AUTOFILL_POLICY = stringPreferencesKey("autofill_policy")
         val ESCALATION_POLICY = stringPreferencesKey("escalation_policy")
         val MASTER_ENABLED = booleanPreferencesKey("master_enabled")
@@ -41,17 +46,24 @@ class TimeSettingsStore(private val context: Context) {
         val ESCALATION_ENABLED = booleanPreferencesKey("escalation_enabled")
     }
 
-    val settings: Flow<ScheduleSettings> = context.scheduleDataStore.data.map { prefs ->
+    val settings: Flow<ScheduleSettings> = dataStore.data.map { prefs ->
+        val legacyDays = activeDays(prefs[Keys.ACTIVE_DAYS])
+        val autofillPolicy = prefs[Keys.AUTOFILL_POLICY]?.toPolicyOrNull() ?: DEFAULT.autofillPolicy
+        val legacyEscalation = when {
+            prefs[Keys.ESCALATION_POLICY] == "NOTIFY_ONLY" -> ScheduleSettings.Policy.REMIND_ONLY
+            autofillPolicy == ScheduleSettings.Policy.FILL_AND_SUBMIT -> ScheduleSettings.Policy.FILL_AND_SUBMIT
+            else -> ScheduleSettings.Policy.FILL_ONLY
+        }
         ScheduleSettings(
             reminderTime = minutesOfDay(prefs, Keys.REMINDER_MINUTES, DEFAULT.reminderTime),
             autofillTime = minutesOfDay(prefs, Keys.AUTOFILL_MINUTES, DEFAULT.autofillTime),
             escalationTime = minutesOfDay(prefs, Keys.ESCALATION_MINUTES, DEFAULT.escalationTime),
             cancelWindowMinutes = (prefs[Keys.CANCEL_WINDOW_MINUTES] ?: DEFAULT.cancelWindowMinutes.toInt()).toLong(),
-            activeDays = activeDays(prefs[Keys.ACTIVE_DAYS]),
-            autofillPolicy = prefs[Keys.AUTOFILL_POLICY]?.toPolicyOrNull()
-                ?: DEFAULT.autofillPolicy,
-            escalationPolicy = prefs[Keys.ESCALATION_POLICY]?.toEscalationOrNull()
-                ?: DEFAULT.escalationPolicy,
+            reminderDays = readDays(prefs[Keys.REMINDER_DAYS], legacyDays),
+            autofillDays = readDays(prefs[Keys.AUTOFILL_DAYS], legacyDays),
+            escalationDays = readDays(prefs[Keys.ESCALATION_DAYS], legacyDays),
+            autofillPolicy = autofillPolicy,
+            escalationAction = prefs[Keys.ESCALATION_ACTION]?.toPolicyOrNull() ?: legacyEscalation,
             masterEnabled = prefs[Keys.MASTER_ENABLED] ?: DEFAULT.masterEnabled,
             reminderEnabled = prefs[Keys.REMINDER_ENABLED] ?: DEFAULT.reminderEnabled,
             autofillEnabled = prefs[Keys.AUTOFILL_ENABLED] ?: DEFAULT.autofillEnabled,
@@ -63,18 +75,16 @@ class TimeSettingsStore(private val context: Context) {
     suspend fun settingsOnce(): ScheduleSettings = settings.first()
 
     suspend fun save(settings: ScheduleSettings) {
-        context.scheduleDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.REMINDER_MINUTES] = settings.reminderTime.toSecondOfDay() / 60
             prefs[Keys.AUTOFILL_MINUTES] = settings.autofillTime.toSecondOfDay() / 60
             prefs[Keys.ESCALATION_MINUTES] = settings.escalationTime.toSecondOfDay() / 60
             prefs[Keys.CANCEL_WINDOW_MINUTES] = settings.cancelWindowMinutes.toInt()
-            prefs[Keys.ACTIVE_DAYS] = if (settings.activeDays == DayOfWeek.entries.toSet()) {
-                ""
-            } else {
-                settings.activeDays.map { it.value }.sorted().joinToString(",")
-            }
+            prefs[Keys.REMINDER_DAYS] = settings.reminderDays.sortedBy { it.value }.joinToString(",") { it.value.toString() }
+            prefs[Keys.AUTOFILL_DAYS] = settings.autofillDays.sortedBy { it.value }.joinToString(",") { it.value.toString() }
+            prefs[Keys.ESCALATION_DAYS] = settings.escalationDays.sortedBy { it.value }.joinToString(",") { it.value.toString() }
             prefs[Keys.AUTOFILL_POLICY] = settings.autofillPolicy.name
-            prefs[Keys.ESCALATION_POLICY] = settings.escalationPolicy.name
+            prefs[Keys.ESCALATION_ACTION] = settings.escalationAction.name
             prefs[Keys.MASTER_ENABLED] = settings.masterEnabled
             prefs[Keys.REMINDER_ENABLED] = settings.reminderEnabled
             prefs[Keys.AUTOFILL_ENABLED] = settings.autofillEnabled
@@ -108,10 +118,9 @@ class TimeSettingsStore(private val context: Context) {
             null
         }
 
-        fun String.toEscalationOrNull(): ScheduleSettings.EscalationPolicy? = try {
-            ScheduleSettings.EscalationPolicy.valueOf(this)
-        } catch (_: IllegalArgumentException) {
-            null
-        }
+        fun readDays(raw: String?, fallback: Set<DayOfWeek>): Set<DayOfWeek> =
+            raw?.split(',')?.mapNotNull { it.trim().toIntOrNull() }
+                ?.filter { it in 1..7 }?.map { DayOfWeek.of(it) }?.toSet() ?: fallback
+
     }
 }

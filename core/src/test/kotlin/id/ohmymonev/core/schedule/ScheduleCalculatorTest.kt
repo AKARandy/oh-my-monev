@@ -29,11 +29,46 @@ class ScheduleCalculatorTest {
         reminderTime = reminder,
         autofillTime = autofill,
         escalationTime = escalation,
-        activeDays = activeDays,
+        reminderDays = activeDays,
+        autofillDays = activeDays,
+        escalationDays = activeDays,
     )
 
     private fun wallClock(fire: ZonedDateTime): LocalDateTime =
         LocalDateTime.ofInstant(fire.toInstant(), wib)
+
+    @Test
+    fun `each feature has its own next active day`() {
+        val s = ScheduleSettings(
+            reminderDays = setOf(DayOfWeek.MONDAY),
+            autofillDays = setOf(DayOfWeek.TUESDAY),
+            escalationDays = setOf(DayOfWeek.FRIDAY),
+        )
+        val fires = ScheduleCalculator.nextFires(at(normalDay, 8, 0), s)
+        assertEquals(at(normalDay, 20, 0), fires.getValue(ScheduleCalculator.KEY_REMINDER))
+        assertEquals(at(normalDay.plusDays(1), 21, 0), fires.getValue(ScheduleCalculator.KEY_AUTOFILL))
+        assertEquals(at(normalDay.plusDays(4), 22, 30), fires.getValue(ScheduleCalculator.KEY_ESCALATION))
+        assertEquals(listOf(at(normalDay, 20, 0)), ScheduleCalculator.threeFires(normalDay, s))
+    }
+
+    @Test
+    fun `editing reminder days leaves other feature dates unchanged`() {
+        val now = at(normalDay, 8, 0)
+        val original = ScheduleSettings()
+        val before = ScheduleCalculator.nextFires(now, original)
+        val after = ScheduleCalculator.nextFires(now, original.copy(reminderDays = setOf(DayOfWeek.WEDNESDAY)))
+        assertEquals(before[ScheduleCalculator.KEY_AUTOFILL], after[ScheduleCalculator.KEY_AUTOFILL])
+        assertEquals(before[ScheduleCalculator.KEY_ESCALATION], after[ScheduleCalculator.KEY_ESCALATION])
+        assertEquals(normalDay.plusDays(2), after.getValue(ScheduleCalculator.KEY_REMINDER).toLocalDate())
+    }
+
+    @Test
+    fun `an empty day selection disables only that feature`() {
+        val s = ScheduleSettings(autofillDays = emptySet())
+        assertEquals(2, ScheduleCalculator.threeFires(normalDay, s).size)
+        val fires = ScheduleCalculator.nextFires(at(normalDay, 8, 0), s)
+        assertEquals(setOf(ScheduleCalculator.KEY_REMINDER, ScheduleCalculator.KEY_ESCALATION), fires.keys)
+    }
 
     // ---------------------------------------------------------------- threeFires
 

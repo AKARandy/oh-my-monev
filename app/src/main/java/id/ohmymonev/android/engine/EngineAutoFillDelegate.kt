@@ -49,10 +49,10 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
     override fun startAutoFill(context: Context, lastChance: Boolean) {
         val factory = NotificationFactory(appContext)
         factory.ensureChannels()
-        scope.launch { runCycle(factory) }
+        scope.launch { runCycle(factory, lastChance) }
     }
 
-    private suspend fun runCycle(factory: NotificationFactory) {
+    private suspend fun runCycle(factory: NotificationFactory, lastChance: Boolean) {
         val store = AppStore(appContext)
         val settings = TimeSettingsStore(appContext).settingsOnce()
         val today = LocalDate.now(ScheduleCalculator.asiaJakarta)
@@ -83,7 +83,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                     "Laporan belum bisa diisi sekarang. Akan dicoba lagi otomatis.",
                 ),
             )
-            maybeScheduleRetry(record, store, settings)
+            maybeScheduleRetry(record, store, settings, lastChance)
             AutoFillService.finished(appContext)
             return
         }
@@ -114,13 +114,12 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
         when (outcome) {
             is GenerationOutcome.Generated -> {
-                val engine = WebViewEngine(appContext, DEFAULT_SITE_PROFILE, runCallbacks(todayIso, outcome.draft, store, factory, settings))
+                val engine = WebViewEngine(appContext, DEFAULT_SITE_PROFILE, runCallbacks(todayIso, outcome.draft, store, factory, settings, lastChance = lastChance))
                 engine.runAutomation(
                     dateISO = todayIso,
                     draft = outcome.draft,
-                    // D8/D9: pengiriman otomatis hanya saat pengguna secara eksplisit memilih
-                    // FILL_AND_SUBMIT (kotak konfirmasi Mode Uji). Default FILL_ONLY = Mode Uji.
-                    liveSubmit = settings.autofillPolicy == ScheduleSettings.Policy.FILL_AND_SUBMIT,
+                    // Setiap fitur memakai persetujuan pengiriman otomatisnya sendiri.
+                    liveSubmit = settings.policyFor(lastChance) == ScheduleSettings.Policy.FILL_AND_SUBMIT,
                     attempt = attemptToday(store, todayIso),
                 )
             }
@@ -179,6 +178,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
         factory: NotificationFactory,
         settings: ScheduleSettings,
         bench: Boolean = false,
+        lastChance: Boolean = false,
     ) = object : WebViewEngine.Callbacks {
         override fun onRunFinished(record: RunRecord) {
             scope.launch {
@@ -218,7 +218,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
                     else -> {
                         post(factory, NotificationFactory.NOTIF_ID_ESCALATION, factory.escalation())
-                        maybeScheduleRetry(record, store, settings)
+                        maybeScheduleRetry(record, store, settings, lastChance)
                     }
                 }
                 AutoFillService.finished(appContext)
@@ -230,9 +230,11 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
         }
     }
 
-    /** Menyiapkan tangga coba ulang, hanya bila sakelar isi-otomatis memang menyala. */
-    private fun maybeScheduleRetry(record: RunRecord, store: AppStore, settings: ScheduleSettings) {
-        if (!settings.masterEnabled || !settings.autofillEnabled) return
+    /** Menyiapkan tangga coba ulang, hanya bila pengisian otomatis memang menyala. */
+    private fun maybeScheduleRetry(record: RunRecord, store: AppStore, settings: ScheduleSettings, lastChance: Boolean) {
+        val enabled = if (lastChance) settings.escalationEnabled else settings.autofillEnabled
+        val days = if (lastChance) settings.escalationDays else settings.autofillDays
+        if (!settings.masterEnabled || !enabled || LocalDate.now(ScheduleCalculator.asiaJakarta).dayOfWeek !in days) return
         if (record.outcome !in RETRYABLE_OUTCOMES) return
         if (attemptToday(store, record.date) >= MAX_ATTEMPTS) {
             Log.w("ohmymonev", "batas percobaan tercapai: ${record.date} tidak dijadwalkan coba lagi")
@@ -244,7 +246,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             ZonedDateTime.now(ScheduleCalculator.asiaJakarta),
             deadline,
         ).firstOrNull() ?: return
-        AlarmScheduler.scheduleRetry(appContext, next)
+        AlarmScheduler.scheduleRetry(appContext, next, lastChance)
     }
 
     private fun attemptToday(store: AppStore, dateIso: String): Int =

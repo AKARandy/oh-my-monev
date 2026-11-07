@@ -13,7 +13,8 @@ import kotlinx.coroutines.runBlocking
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
-        if (!settings.masterEnabled || !settings.reminderEnabled) return
+        val today = java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
+        if (!settings.masterEnabled || !settings.reminderEnabled || today.dayOfWeek !in settings.reminderDays) return
         val factory = NotificationFactory(context)
         factory.ensureChannels()
         if (!factory.canPostNotifications()) return // POST_NOTIFICATIONS belum diberikan

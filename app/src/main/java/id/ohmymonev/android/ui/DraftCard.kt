@@ -171,11 +171,10 @@ fun DraftCard(
     if (confirmEnableAutomation) {
         AlertDialog(
             onDismissRequest = { confirmEnableAutomation = false },
-            title = { Text("Simpan dan isi otomatis malam ini?") },
+            title = { Text("Simpan laporan?") },
             text = {
                 Text(
-                    "Tulisan ini disimpan dan mesin akan memasukkannya ke situs sesuai jadwal " +
-                        "(mode isi saja: kamu yang menekan kirim). Kamu bisa mematikan kapan saja di kartu Malam ini.",
+                    "Aplikasi menyimpan tulisan ini. Pengisian mengikuti hari, jam, dan tindakan yang Anda pilih di Jadwal.",
                 )
             },
             confirmButton = {
@@ -185,7 +184,7 @@ fun DraftCard(
                     scope.launch {
                         withContext(Dispatchers.IO) { store.saveTodayDraft(toSave) }
                         dirty = false
-                        Toast.makeText(context, "Tersimpan. Mesin siap mengisi.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Laporan tersimpan.", Toast.LENGTH_SHORT).show()
                         onSaved()
                         onExpandedChange(false)
                     }
