@@ -126,24 +126,30 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             title = "Pengingat",
             time = current.reminderTime,
             days = current.activeDays,
-            enabled = current.reminderEnabled && current.masterEnabled,
+            enabled = current.reminderEnabled,
+            effective = current.reminderEnabled && current.masterEnabled,
             detail = "Pesan lembut sebelum jam isi.",
+            onToggle = { on -> save(current.copy(reminderEnabled = on)) },
         ) { editing = AlarmId.REMINDER }
 
         AlarmCard(
             title = "Isi otomatis",
             time = current.autofillTime,
             days = current.activeDays,
-            enabled = current.autofillEnabled && current.masterEnabled,
+            enabled = current.autofillEnabled,
+            effective = current.autofillEnabled && current.masterEnabled,
             detail = "Mesin mengisi formulir Monev.",
+            onToggle = { on -> save(current.copy(autofillEnabled = on)) },
         ) { editing = AlarmId.AUTOFILL }
 
         AlarmCard(
             title = "Peringatan terakhir",
             time = current.escalationTime,
             days = current.activeDays,
-            enabled = current.escalationEnabled && current.masterEnabled,
+            enabled = current.escalationEnabled,
+            effective = current.escalationEnabled && current.masterEnabled,
             detail = "Bunyi keras kalau masih kosong.",
+            onToggle = { on -> save(current.copy(escalationEnabled = on)) },
         ) { editing = AlarmId.ESCALATION }
 
         // Kebijakan isi: milik bersama ketiga alarm, satu tempat.
@@ -289,52 +295,72 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
 
 private enum class AlarmId { REMINDER, AUTOFILL, ESCALATION }
 
-/** Kartu alarm: jam besar di kiri, hari ringkas, sakelar di kanan. Satu kartu = satu alarm utuh. */
+/**
+ * Kartu alarm dengan hierarki yang benar:
+ *  - nama alarm di atas, terbaca (bukan rempah di samping sakelar);
+ *  - jam sebagai elemen terbesar;
+ *  - hari + keterangan jadi satu baris kecil tapi nyaman;
+ *  - sakelar interaktif di kanan atas: mengubah langsung, kartu diketuk untuk edit.
+ * Kartu meredup saat alarm tidak efektif (sakelar mati atau sakelar utama mati).
+ */
 @Composable
 private fun AlarmCard(
     title: String,
     time: LocalTime,
     days: Set<DayOfWeek>,
     enabled: Boolean,
+    effective: Boolean,
     detail: String,
+    onToggle: (Boolean) -> Unit,
     onOpen: () -> Unit,
 ) {
+    val strong = if (effective) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+    val accent = if (effective) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onOpen),
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 14.dp),
+            verticalAlignment = Alignment.Top,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onOpen),
+            ) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = strong,
+                )
                 Text(
                     time.format(HHMM),
-                    fontSize = 40.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 46.sp,
+                    lineHeight = 50.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = strong,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
                 )
                 Text(
-                    text = if (days.size == DayOfWeek.entries.size) "Setiap hari" else days.sorted().joinToString { DAY_SHORT[it] ?: "" },
+                    text = buildString {
+                        append(if (days.size == DayOfWeek.entries.size) "Setiap hari" else days.sorted().joinToString { DAY_SHORT[it] ?: "" })
+                        append(" · ")
+                        append(detail)
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    detail,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = accent,
                 )
             }
-            Text(
-                title,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Switch(
+                checked = enabled,
+                onCheckedChange = onToggle,
+                modifier = Modifier.padding(top = 2.dp),
             )
-            Switch(checked = enabled, onCheckedChange = null, modifier = Modifier.padding(start = 8.dp))
         }
     }
 }
