@@ -61,6 +61,8 @@ import id.ohmymonev.android.schedule.AutoFillService
 import id.ohmymonev.android.schedule.TimeSettingsStore
 import id.ohmymonev.core.enginecore.EngineOutcome
 import id.ohmymonev.core.enginecore.RunRecord
+import id.ohmymonev.core.generator.GenerationOutcome
+import id.ohmymonev.core.generator.GeneratorPipeline
 import id.ohmymonev.core.schedule.ScheduleCalculator
 import id.ohmymonev.core.schedule.ScheduleSettings
 import id.ohmymonev.core.siteprofile.DEFAULT_SITE_PROFILE
@@ -110,6 +112,8 @@ fun HomeTab(
     var checkingStatus by remember { mutableStateOf(false) }
     var tonightSkipped by remember { mutableStateOf(false) }
     var armedState by remember { mutableStateOf<AlarmScheduler.ArmedState?>(null) }
+    var pratinjau by remember { mutableStateOf<GenerationOutcome?>(null) }
+    var pratinjauLoading by remember { mutableStateOf(false) }
 
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -117,6 +121,35 @@ fun HomeTab(
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { notificationsOn = it }
+
+    /** Jalankan generator sungguhan untuk pratinjau, TANPA menggerus masa pakai kalimat (pools salinan). */
+    fun refreshPratinjau() {
+        pratinjauLoading = true
+        scope.launch {
+            pratinjau = withContext(Dispatchers.IO) {
+                val seed = appStore.loadSeed()
+                val lastUsed: Map<String, java.time.LocalDate> = appStore.poolState().lastUsed.entries
+                    .mapNotNull { (text, iso) ->
+                        runCatching { text to java.time.LocalDate.parse(iso) }.getOrNull()
+                    }.toMap()
+                val pools = id.ohmymonev.core.generator.PoolBundle(seed.pelajaran, seed.kendala, lastUsed)
+                val previous = appStore.drafts()
+                    .mapNotNull { stored ->
+                        runCatching { java.time.LocalDate.parse(stored.date) }.getOrNull()?.let {
+                            id.ohmymonev.core.generator.DatedReport(
+                                it,
+                                ReportDraft(stored.aktivitas, stored.pelajaran, stored.kendala),
+                            )
+                        }
+                    }
+                    .filter { it.date.isBefore(java.time.LocalDate.parse(todayIso)) }
+                    .maxByOrNull { it.date }
+                val history = id.ohmymonev.core.generator.ReportHistory { previous }
+                GeneratorPipeline(history = history, poolBundle = pools).generate(java.time.LocalDate.parse(todayIso))
+            }
+            pratinjauLoading = false
+        }
+    }
 
     suspend fun refresh() {
         val draft = withContext(Dispatchers.IO) { appStore.todayDraft(todayIso) }
@@ -134,6 +167,7 @@ fun HomeTab(
             // Status sesi tidak boleh mengklaim "Aktif" tanpa batas waktu.
             sessionStale = SessionFreshness.isStale(saved.checkedAtISO)
         }
+        refreshPratinjau()
     }
 
     LaunchedEffect(Unit) {
@@ -413,6 +447,12 @@ fun HomeTab(
         ) {
             Text("Tes alarm 90 detik", color = MaterialTheme.colorScheme.primary)
         }
+
+        PratinjauCard(
+            outcome = pratinjau,
+            loading = pratinjauLoading,
+            onRefresh = { refreshPratinjau() },
+        )
 
         LastRunRow(lastRecord)
         DisclaimerCard()
