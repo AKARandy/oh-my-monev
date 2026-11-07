@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
@@ -33,17 +32,15 @@ private data class TabSpec(val label: String, val icon: ImageVector)
 
 private val tabs = listOf(
     TabSpec("Beranda", Icons.Filled.Home),
-    TabSpec("Tulis", Icons.Filled.Edit),
     TabSpec("Jadwal", Icons.Filled.DateRange),
     TabSpec("Log", Icons.AutoMirrored.Filled.List),
     TabSpec("Sesi", Icons.Filled.Person),
 )
 
 private const val TAB_HOME = 0
-private const val TAB_WRITE = 1
-private const val TAB_SCHEDULE = 2
-private const val TAB_LOG = 3
-private const val TAB_SESSION = 4
+private const val TAB_SCHEDULE = 1
+private const val TAB_LOG = 2
+private const val TAB_SESSION = 3
 
 @Composable
 fun AppRoot() {
@@ -81,10 +78,8 @@ fun AppRoot() {
             ) { index ->
                 when (index) {
                     TAB_HOME -> HomeTab(
-                        onWriteReport = { selectedTab = TAB_WRITE },
                         onOpenSession = { selectedTab = TAB_SESSION },
                     )
-                    TAB_WRITE -> DraftEditorTab()
                     TAB_SCHEDULE -> ScheduleTab()
                     TAB_LOG -> LogTab()
                     else -> SessionTab()

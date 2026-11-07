@@ -83,7 +83,6 @@ private val TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm")
 
 @Composable
 fun HomeTab(
-    onWriteReport: () -> Unit = {},
     onOpenSession: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -114,6 +113,7 @@ fun HomeTab(
     var armedState by remember { mutableStateOf<AlarmScheduler.ArmedState?>(null) }
     var pratinjau by remember { mutableStateOf<GenerationOutcome?>(null) }
     var pratinjauLoading by remember { mutableStateOf(false) }
+    var editorExpanded by remember { mutableStateOf(false) }
 
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -250,7 +250,7 @@ fun HomeTab(
                         notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
                 },
-                onWriteReport = onWriteReport,
+                onOpenEditor = { editorExpanded = true },
             )
         }
 
@@ -268,18 +268,8 @@ fun HomeTab(
             Text(if (running) "Mengisi…" else "Isi sekarang", style = MaterialTheme.typography.titleMedium)
         }
 
-        // Baris sekunder: tulis/ubah laporan + buka situs. Semua aksi manual di satu tempat.
+        // Baris sekunder: buka situs + uji mesin. Menulis laporan pindah ke kartu Tulisan hari ini.
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(
-                onClick = onWriteReport,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp),
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Text(if (todayDraft == null) "Tulis" else "Ubah", maxLines = 1)
-            }
             OutlinedButton(
                 onClick = onOpenSession,
                 modifier = Modifier
@@ -301,6 +291,12 @@ fun HomeTab(
                 Text("Uji mesin", maxLines = 1)
             }
         }
+
+        DraftCard(
+            expanded = editorExpanded,
+            onExpandedChange = { editorExpanded = it },
+            onSaved = { scope.launch { refresh() } },
+        )
 
         // Ringkasan malam ini: bukti alarm + apa yang akan terjadi + jalan keluar bila ingin mandiri.
         Surface(
@@ -631,7 +627,7 @@ private fun ReadinessCard(
     onCheckSession: () -> Unit,
     onGrantLocation: () -> Unit,
     onGrantNotifications: () -> Unit,
-    onWriteReport: () -> Unit,
+    onOpenEditor: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -677,7 +673,7 @@ private fun ReadinessCard(
                     else -> "Belum ditulis"
                 },
                 action = if (draftReady && !draftInvalid) null else "Tulis",
-                onAction = onWriteReport,
+                onAction = onOpenEditor,
             )
         }
     }
