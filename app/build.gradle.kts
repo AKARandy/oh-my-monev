@@ -27,6 +27,15 @@ android {
         targetSdk = 35
         versionCode = 10
         versionName = "0.1.11"
+        // Ponsel nyata semuanya ARM64; ABI lain dibuang sesuai keputusan pemilik.
+        ndk { abiFilters += listOf("arm64-v8a") }
+    }
+
+    packagingOptions {
+        jniLibs {
+            // Penjamin ganda: pustaka ORT untuk ABI non-arm64 tidak boleh ikut terpaket.
+            excludes += listOf("**/armeabi-v7a/**", "**/x86/**", "**/x86_64/**")
+        }
     }
 
     signingConfigs {
