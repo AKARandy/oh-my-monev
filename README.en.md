@@ -23,12 +23,6 @@ The app does this:
   No words such as "saya" or "kami". 3 to 5 activity lines. No clichés.
 - The phone can be idle. The alarms stay exact. A service keeps the phone awake during the fill.
 
-## Screenshots
-
-| Home | Schedule | Content source |
-|---|---|---|
-| ![Home](screenshots/forge-home.png) | ![Schedule](screenshots/forge-schedule.png) | ![Content source](screenshots/forge-emergency-editor.png) |
-
 Status: still in development. See `docs/plan.md`.
 
 ## Structure

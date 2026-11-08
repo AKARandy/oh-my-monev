@@ -23,12 +23,6 @@ Aplikasi ini melakukan hal-hal ini:
 - Ponsel boleh dalam keadaan diam. Alarm tetap tepat waktu. Sebuah layanan menjaga ponsel tetap
   menyala selama pengisian berlangsung.
 
-## Tangkapan layar
-
-| Beranda | Jadwal | Sumber isian |
-|---|---|---|
-| ![Beranda](screenshots/forge-home.png) | ![Jadwal](screenshots/forge-schedule.png) | ![Sumber isian](screenshots/forge-emergency-editor.png) |
-
 Status: masih dalam pengembangan. Lihat `docs/plan.md`.
 
 ## Struktur
