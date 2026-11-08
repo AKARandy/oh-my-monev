@@ -42,6 +42,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -53,7 +54,7 @@ import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.data.AppStore
 import id.ohmymonev.android.data.StoredDraft
 import id.ohmymonev.android.engine.BenchStatusSite
-import id.ohmymonev.android.engine.PastReportReader
+import id.ohmymonev.android.engine.PreparedReportService
 import id.ohmymonev.android.engine.SiteStatus
 import id.ohmymonev.android.engine.SiteStatusProbe
 import id.ohmymonev.core.enginecore.TodayState
@@ -65,7 +66,6 @@ import id.ohmymonev.android.schedule.TimeSettingsStore
 import id.ohmymonev.core.enginecore.EngineOutcome
 import id.ohmymonev.core.enginecore.RunRecord
 import id.ohmymonev.core.generator.GenerationOutcome
-import id.ohmymonev.core.generator.GeneratorPipeline
 import id.ohmymonev.core.schedule.ScheduleCalculator
 import id.ohmymonev.core.schedule.ScheduleSettings
 import id.ohmymonev.core.siteprofile.DEFAULT_SITE_PROFILE
@@ -105,7 +105,13 @@ fun HomeTab(
     var statusRequest by remember { mutableStateOf(0) }
     val settings by store.settings.collectAsState(initial = null)
 
-    val todayIso = LocalDate.now(ScheduleCalculator.asiaJakarta).toString()
+    var todayIso by remember { mutableStateOf(LocalDate.now(ScheduleCalculator.asiaJakarta).toString()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000)
+            todayIso = LocalDate.now(ScheduleCalculator.asiaJakarta).toString()
+        }
+    }
     var locationGranted by remember {
         mutableStateOf(hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION))
     }
@@ -125,7 +131,6 @@ fun HomeTab(
     var pratinjauSource by remember { mutableStateOf<String?>(null) }
     var editorExpanded by remember { mutableStateOf(false) }
     var diagnosticsExpanded by remember { mutableStateOf(false) }
-    var alarmDetailsExpanded by remember { mutableStateOf(false) }
 
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -134,33 +139,16 @@ fun HomeTab(
         ActivityResultContracts.RequestPermission(),
     ) { notificationsOn = it }
 
-    /**
-     * Pratinjau dari LAPORAN ASLI situs: baca laporan kemarin lewat API dalam WebView.
-     * Kalau situs terbaca, teks di bawah adalah teks kemarin yang sebenarnya.
-     * Kalau tidak (sesi habis, belum ada laporan), pratinjau menolak dengan alasan nyata.
-     */
-    fun refreshPratinjau() {
+    fun refreshPratinjau(force: Boolean = false) {
         val request = ++previewRequest
         previewJob?.cancel()
         pratinjauLoading = true
         previewJob = scope.launch {
             try {
-                val result = PastReportReader(context).read()
-                pratinjauSource = result.source
-                pratinjau = if (result.draft != null) {
-                    withContext(Dispatchers.IO) {
-                        val seed = appStore.loadSeed()
-                        val lastUsed = appStore.poolState().lastUsed.mapNotNull { (text, iso) ->
-                            runCatching { text to LocalDate.parse(iso) }.getOrNull()
-                        }.toMap()
-                        val pools = id.ohmymonev.core.generator.PoolBundle(seed.pelajaran, seed.kendala, lastUsed)
-                        val previous = id.ohmymonev.core.generator.DatedReport(result.date, result.draft)
-                        GeneratorPipeline(
-                            history = id.ohmymonev.core.generator.ReportHistory { previous }, poolBundle = pools,
-                        ).generate(LocalDate.parse(todayIso))
-                    }
-                } else {
-                    GenerationOutcome.Failed(id.ohmymonev.core.generator.FailureReason.NO_SOURCE_MATERIAL, result.source)
+                val prepared = PreparedReportService(context).prepare(force)
+                if (request == previewRequest) {
+                    pratinjauSource = prepared.source
+                    pratinjau = prepared.outcome()
                 }
             } finally { if (request == previewRequest) pratinjauLoading = false }
         }
@@ -191,15 +179,16 @@ fun HomeTab(
     DisposableEffect(Unit) {
         onDispose { previewJob?.cancel(); statusJob?.cancel() }
     }
-    LaunchedEffect(session.version, session.initializing) {
+    LaunchedEffect(session.version, session.initializing, todayIso) {
         if (!session.initializing) {
             refresh()
             refreshSiteStatus()
-            val s = withContext(Dispatchers.IO) { store.settingsOnce() }
-            armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
         }
     }
-    LaunchedEffect(session.version, session.usable) {
+    LaunchedEffect(settings) {
+        settings?.let { s -> armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) } }
+    }
+    LaunchedEffect(session.version, session.usable, todayIso) {
         previewJob?.cancel()
         pratinjau = null
         pratinjauSource = null
@@ -326,7 +315,7 @@ fun HomeTab(
         DraftCard(
             expanded = editorExpanded,
             onExpandedChange = { editorExpanded = it },
-            onSaved = { scope.launch { refresh() } },
+            onSaved = { scope.launch { refresh(); refreshPratinjau(true) } },
         )
 
         // Ringkasan malam ini: bukti alarm + apa yang akan terjadi + jalan keluar bila ingin mandiri.
@@ -339,40 +328,8 @@ fun HomeTab(
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Malam ini", style = MaterialTheme.typography.titleMedium)
 
-                // BUKTI, bukan klaim: status alarm yang benar-benar terdaftar di OS.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Status alarm", style = MaterialTheme.typography.bodyMedium)
-                        val armed = armedState
-                        Text(
-                            text = when {
-                                armed == null -> "Memeriksa…"
-                                armed.armed -> "Terpasang · " + formatFire(armed.nextFireISO)
-                                else -> "Jadwal belum terkonfirmasi"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = when {
-                                armed == null -> MaterialTheme.colorScheme.onSurfaceVariant
-                                armed.armed -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                    }
-                    TextButton(onClick = { refreshArmed() }) { Text("Periksa") }
-                }
+                ScheduleStatus(armedState, onCheck = { refreshArmed() })
 
-                armedState?.lastError?.let { detail ->
-                    TextButton(onClick = { alarmDetailsExpanded = !alarmDetailsExpanded }) {
-                        Text(if (alarmDetailsExpanded) "Tutup detail alarm" else "Detail alarm")
-                    }
-                    if (alarmDetailsExpanded) {
-                        Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
                 settings?.let { s ->
                     Text(
                         automationSummary(s, ZonedDateTime.now(ScheduleCalculator.asiaJakarta), tonightSkipped),
@@ -385,7 +342,7 @@ fun HomeTab(
                     )
                 }
                 var confirmSkip by remember { mutableStateOf(false) }
-                if (tonightSkipped) {
+                if (settings?.masterEnabled == true && tonightSkipped) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Text(
                         "Otomatisasi malam ini dimatikan. Isi manual sebelum 23.59 WIB.",
@@ -398,7 +355,7 @@ fun HomeTab(
                             tonightSkipped = false
                         }
                     }) { Text("Nyalakan lagi") }
-                } else {
+                } else if (settings?.masterEnabled == true) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     TextButton(onClick = { confirmSkip = true }) {
                         Text("Isi sendiri malam ini (matikan otomatis)", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -446,6 +403,7 @@ fun HomeTab(
                             scope.launch {
                                 withContext(Dispatchers.IO) { appStore.clearTodayDraft() }
                                 refresh()
+                                refreshPratinjau(true)
                             }
                         }) { Text("Hapus") }
                     },
@@ -466,7 +424,8 @@ fun HomeTab(
             outcome = pratinjau,
             loading = pratinjauLoading,
             source = pratinjauSource,
-            onRefresh = { refreshPratinjau() },
+            onRefresh = { refreshPratinjau(true) },
+            holiday = siteStatus?.today == TodayState.LIBUR,
         )
 
         LastRunRow(lastRecord)
@@ -772,3 +731,31 @@ private fun formatFire(nextFireISO: String?): String {
 
 private fun hasPermission(context: Context, permission: String): Boolean =
     ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+
+@Composable
+internal fun ScheduleStatus(state: AlarmScheduler.ArmedState?, onCheck: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().testTag("schedule-status"),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Jadwal fitur berikutnya", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            when {
+                state == null -> "Memuat jadwal…"
+                state.nextFireISO == null -> state.source
+                else -> "${state.source} · ${formatFire(state.nextFireISO)} WIB"
+            },
+            fontSize = 20.sp,
+            lineHeight = 28.sp,
+        )
+        if (state?.nextFireISO != null) {
+            Text(
+                if (state.armed) "Alarm aplikasi berhasil dijadwalkan." else "Pemasangan alarm belum dikonfirmasi.",
+                fontSize = 18.sp, lineHeight = 26.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        state?.lastError?.let { Text(it, fontSize = 18.sp, lineHeight = 26.sp, color = MaterialTheme.colorScheme.error) }
+        TextButton(onClick = onCheck) { Text("Periksa jadwal", fontSize = 18.sp) }
+    }
+}

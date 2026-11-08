@@ -25,6 +25,10 @@ class PastReportReader(private val context: Context) {
         val api = MonevApiClient(context)
         val profile = api.objectData("/users/me")
             ?: return PastReportResult(api.failureState, today.minusDays(1), null, api.message)
+        return read(today, api, profile)
+    }
+
+    internal suspend fun read(today: LocalDate, api: MonevApiClient, profile: org.json.JSONObject): PastReportResult {
         val participantId = profile.optString("id")
         if (profile.isNull("id") || participantId.isBlank()) {
             api.failed("Profil peserta belum dapat dibaca.")

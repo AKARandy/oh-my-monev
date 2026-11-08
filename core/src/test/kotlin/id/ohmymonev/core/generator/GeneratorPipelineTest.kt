@@ -1,118 +1,48 @@
 package id.ohmymonev.core.generator
 
-import id.ohmymonev.core.model.GenerationTier
 import id.ohmymonev.core.model.ReportDraft
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
+import org.junit.Assert.*
 import org.junit.Test
 import java.time.LocalDate
 
 class GeneratorPipelineTest {
-
-    private val date: LocalDate = LocalDate.of(2026, 11, 6)
-    private val prevDate: LocalDate = date.minusDays(1)
-
-    private val previousDraft = ReportDraft(
-        aktivitas = "- Membuat endpoint login berbasis JWT\n- Menyusun laporan mingguan tim\n- Menguji modul kehadiran",
-        pelajaran = "x",
-        kendala = "y",
+    private val date = LocalDate.of(2026, 11, 8)
+    private val original = ReportDraft(
+        "- Memeriksa data penerbangan 123.\n- Menyusun laporan untuk tim.\n- Menguji hasil pemeriksaan data.",
+        "Pelajaran dari sumber asli.", "Kendala dari sumber asli.",
     )
+    private fun generate(draft: ReportDraft = original) = GeneratorPipeline(
+        history = ReportHistory { DatedReport(date.minusDays(1), draft) },
+    ).generate(date)
 
-    @Test
-    fun `template branch substitutes the tanggal placeholder`() {
-        val pipeline = GeneratorPipeline(
-            templates = Templates {
-                ReportDraft("Melanjutkan pekerjaan pada {tanggal}", "x".repeat(120), "y".repeat(120))
-            },
-            history = ReportHistory { null },
-            poolBundle = PoolBundle(listOf("p".repeat(120)), listOf("k".repeat(120))),
-        )
-        val outcome = pipeline.generate(date)
-        assertTrue(outcome is GenerationOutcome.Generated)
-        val generated = outcome as GenerationOutcome.Generated
-        assertEquals(GenerationTier.TEMPLATE, generated.tier)
-        assertTrue(generated.draft.aktivitas.contains("6 November 2026"))
+    @Test fun continuationPreservesSourceFactsLessonsAndObstacles() {
+        val result = generate() as GenerationOutcome.Generated
+        assertEquals("- Melanjutkan pemeriksaan data penerbangan 123.\n- Melanjutkan penyusunan laporan untuk tim.\n- Melanjutkan pengujian hasil pemeriksaan data.", result.draft.aktivitas)
+        assertEquals(original.pelajaran, result.draft.pelajaran)
+        assertEquals(original.kendala, result.draft.kendala)
     }
-
-    @Test
-    fun `continuation branch reshapes the previous report`() {
-        val pipeline = GeneratorPipeline(
-            templates = null,
-            history = ReportHistory { DatedReport(prevDate, previousDraft) },
-            poolBundle = PoolBundle(
-                listOf("Belajar lagi bahwa X penting Because".repeat(1).let { it + "nya" }.let { it.padEnd(120, '.') }),
-                listOf("Kendala panjang cocok untuk diulang minggu ini".padEnd(120, '.')),
-            ),
-        )
-        val outcome = pipeline.generate(date)
-        assertTrue(outcome is GenerationOutcome.Generated)
-        val generated = outcome as GenerationOutcome.Generated
-        assertEquals(GenerationTier.CONTINUATION_RULES, generated.tier)
-        assertTrue(generated.draft.aktivitas.startsWith("- Melanjutkan pembuatan endpoint login berbasis JWT"))
-        assertTrue(generated.notes.first().contains("2026-11-05"))
+    @Test fun noSourceRefuses() {
+        assertEquals(FailureReason.NO_SOURCE_MATERIAL,
+            (GeneratorPipeline(history = ReportHistory { null }).generate(date) as GenerationOutcome.Failed).reason)
     }
-
-    @Test
-    fun `continuation bullets all open with an active meN verb`() {
-        val pipeline = GeneratorPipeline(
-            templates = null,
-            history = ReportHistory { DatedReport(prevDate, previousDraft) },
-            poolBundle = PoolBundle(listOf("p".repeat(120)), listOf("k".repeat(120))),
-        )
-        val generated = pipeline.generate(date) as GenerationOutcome.Generated
-        for (line in generated.draft.aktivitas.lines()) {
-            assertTrue("'$line' must start with an active verb", line.startsWith("- Me"))
-        }
+    @Test fun thinSourceIsNotPadded() {
+        val result = generate(original.copy(aktivitas = "- Memeriksa data 123.")) as GenerationOutcome.Failed
+        assertEquals(FailureReason.TOO_FEW_BULLETS, result.reason)
     }
-
-    @Test
-    fun `no material means refusal, not fabrication`() {
-        val pipeline = GeneratorPipeline(
-            templates = null,
-            history = ReportHistory { null },
-            poolBundle = PoolBundle(listOf("p".repeat(120)), listOf("k".repeat(120))),
-        )
-        val outcome = pipeline.generate(date)
-        assertEquals(FailureReason.NO_SOURCE_MATERIAL, (outcome as GenerationOutcome.Failed).reason)
+    @Test fun longSourceIsNotTruncated() {
+        val result = generate(original.copy(aktivitas = (1..6).joinToString("\n") { "- Memeriksa data $it." }))
+        assertEquals(FailureReason.TOO_FEW_BULLETS, (result as GenerationOutcome.Failed).reason)
     }
-
-    @Test
-    fun `empty pelajaran pool fails cleanly`() {
-        val pipeline = GeneratorPipeline(
-            templates = null,
-            history = ReportHistory { DatedReport(prevDate, previousDraft) },
-            poolBundle = PoolBundle(emptyList(), listOf("k".repeat(120))),
-        )
-        val outcome = pipeline.generate(date)
-        assertEquals(FailureReason.PELAJARAN_POOL_EXHAUSTED, (outcome as GenerationOutcome.Failed).reason)
+    @Test fun unsupportedBulletCannotBeSilentlyDropped() {
+        val result = generate(original.copy(aktivitas = original.aktivitas + "\n- Membikin catatan."))
+        assertEquals(FailureReason.UNSAFE_ACTIVITY, (result as GenerationOutcome.Failed).reason)
     }
-}
-
-class RotatingPoolTest {
-
-    private val date: LocalDate = LocalDate.of(2026, 11, 6)
-
-    @Test
-    fun `cooldown forces rotation and eventually exhausts`() {
-        val pool = RotatingPool(listOf("a".repeat(10), "b".repeat(10)))
-        assertEquals("a".repeat(10), pool.next(date))
-        assertEquals("b".repeat(10), pool.next(date))
-        assertEquals(null, pool.next(date))
+    @Test fun duplicateActivitiesAreNotSilentlyRemoved() {
+        val draft = original.copy(aktivitas = "- Memeriksa data 123.\n".repeat(3))
+        assertEquals(3, (generate(draft) as GenerationOutcome.Generated).draft.aktivitas.lines().size)
     }
-
-    @Test
-    fun `item comes back after the cooldown`() {
-        val pool = RotatingPool(listOf("a".repeat(10)))
-        assertEquals("a".repeat(10), pool.next(date))
-        assertEquals(null, pool.next(date))
-        assertEquals("a".repeat(10), pool.next(date.plusDays(8)))
-    }
-
-    @Test
-    fun `snapshot round trips the last-used state`() {
-        val first = RotatingPool(listOf("a".repeat(10), "b".repeat(10)))
-        first.next(date)
-        val second = RotatingPool(listOf("a".repeat(10), "b".repeat(10)), initialLastUsed = first.snapshot())
-        assertEquals("b".repeat(10), second.next(date))
+    @Test fun authoredTemplatesStillSupportDates() {
+        val result = GeneratorPipeline(Templates { original.copy(pelajaran = "Tanggal {tanggal}") }, ReportHistory { null }).generate(date)
+        assertEquals("Tanggal 8 November 2026", (result as GenerationOutcome.Generated).draft.pelajaran)
     }
 }

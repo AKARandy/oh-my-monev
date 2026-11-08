@@ -1,19 +1,11 @@
 package id.ohmymonev.core.generator
 
-/**
- * Maps the leading verb of yesterday's activity bullet to its continuation form:
- *   "Melakukan aktivitas X"   -> "Melanjutkan aktivitas X"
- *   "Membuat endpoint Y"      -> "Melanjutkan pembuatan endpoint Y"
- *   "Menyusun dokumen Z"      -> "Melanjutkan penyusunan dokumen Z"
- *
- * Deterministic by design: the generator only re-shapes the previous report's own content,
- * it never invents new facts. Unknown verbs fall back to a phrasing that drops the verb and
- * keeps the object, which still satisfies DeliveryGate rule G-8 (bullet opens with an active meN- verb).
- */
+/** Bounded verb changes; unsupported text must be edited, never guessed. */
 object VerbMapper {
 
     /** verb (lowercase) -> noun phrase inserted after "Melanjutkan ". */
     private val NOUN_FORMS: Map<String, String> = mapOf(
+        "memeriksa" to "pemeriksaan",
         "membuat" to "pembuatan",
         "menyusun" to "penyusunan",
         "membangun" to "pembangunan",
@@ -38,23 +30,17 @@ object VerbMapper {
         "mengevaluasi" to "evaluasi",
     )
 
-    const val FALLBACK_PREFIX = "Melanjutkan aktivitas"
-
-    /** Non-fabrication invariant: strip every person word from inherited text before reshaping. */
-    private val PRONOUN_STRIP = Regex("""\b(saya|aku|kami|kita|penulis|anda)\b""", setOf(RegexOption.IGNORE_CASE))
-
-    /**
-     * Transforms ONE activity sentence into its continuation sentence, or null when nothing usable remains.
-     */
     fun continuation(rawSentence: String): String? {
-        val sentence = PRONOUN_STRIP.replace(rawSentence.trim(), " ").trim()
+        val sentence = rawSentence.trim()
         if (sentence.isEmpty()) return null
-        val verb = sentence.substringBefore(' ', "").lowercase()
+        val verb = sentence.substringBefore(' ').lowercase()
         val rest = sentence.substringAfter(' ', "").trim()
         return when {
+            verb == "melanjutkan" -> sentence
+            rest.isBlank() -> null
             verb == "melakukan" -> join("Melanjutkan", rest)
             NOUN_FORMS.containsKey(verb) -> join("Melanjutkan ${NOUN_FORMS.getValue(verb)}", rest)
-            else -> join(FALLBACK_PREFIX, rest)
+            else -> null
         }
     }
 

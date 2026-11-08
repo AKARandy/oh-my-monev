@@ -9,21 +9,7 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 @Serializable
-data class SeedPack(
-    val pelajaran: List<String> = emptyList(),
-    val kendala: List<String> = emptyList(),
-    /** Optional template parts; null/blank on any part means "no template" (continuation mode). */
-    val aktivitasTemplate: String? = null,
-    val pelajaranTemplate: String? = null,
-    val kendalaTemplate: String? = null,
-)
-
-@Serializable
-data class StoredDraft(val date: String, val aktivitas: String, val pelajaran: String, val kendala: String)
-
-/** text -> ISO date of last use; persisted so the rotating pools keep their cooldown across restarts. */
-@Serializable
-data class PoolState(val lastUsed: Map<String, String> = emptyMap())
+data class StoredDraft(val date: String, val aktivitas: String, val pelajaran: String, val kendala: String, val participantId: String? = null)
 
 /** Status sesi terakhir yang benar-benar diperiksa, dipakai semua layar. */
 @Serializable
@@ -40,11 +26,6 @@ data class SkipMark(val date: String)
  */
 class AppStore(private val context: Context) {
     private val json = Json { ignoreUnknownKeys = true }
-
-    fun loadSeed(): SeedPack = runCatching {
-        context.assets.open(SEED_FILE).bufferedReader().use { it.readText() }
-            .let { json.decodeFromString(SeedPack.serializer(), it) }
-    }.getOrElse { SeedPack() }
 
     fun drafts(): List<StoredDraft> = runCatching {
         historyFile().takeIf { it.exists() }
@@ -114,16 +95,6 @@ class AppStore(private val context: Context) {
         draftFile().delete()
     }
 
-    fun poolState(): PoolState = runCatching {
-        poolFile().takeIf { it.exists() }
-            ?.readUtf8()
-            ?.let { json.decodeFromString(PoolState.serializer(), it) }
-    }.getOrNull() ?: PoolState()
-
-    fun savePoolState(state: PoolState) {
-        poolFile().writeText(json.encodeToString(state))
-    }
-
     fun appendRecord(record: RunRecord) {
         recordFile().appendText(json.encodeToString(record) + "\n")
     }
@@ -138,16 +109,13 @@ class AppStore(private val context: Context) {
     }.getOrElse { emptyList() }
 
     private fun historyFile() = File(context.filesDir, HISTORY_FILE)
-    private fun poolFile() = File(context.filesDir, POOL_FILE)
     private fun recordFile() = File(context.filesDir, RECORDS_FILE)
     private fun draftFile() = File(context.filesDir, DRAFT_FILE)
     private fun sessionFile() = File(context.filesDir, SESSION_FILE)
     private fun skipFile() = File(context.filesDir, SKIP_FILE)
 
     private companion object {
-        const val SEED_FILE = "generator-seed.json"
         const val HISTORY_FILE = "history.jsonl"
-        const val POOL_FILE = "pool-state.json"
         const val RECORDS_FILE = "records.jsonl"
         const val DRAFT_FILE = "today-draft.json"
         const val SESSION_FILE = "session.json"

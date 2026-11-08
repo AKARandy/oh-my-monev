@@ -13,6 +13,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -46,18 +48,19 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
-/** Render-only fixtures: no taps, typing, scrolling, or interaction assertions. */
+/** Render-only fixtures: no taps, typing, or scrolling. */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], application = Application::class, qualifiers = "w411dp-h891dp-xhdpi")
 class UiRenderTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun capture(name: String, readyText: String, fontScale: Float = 1f, captureCards: Boolean = false, captureTag: String? = null, content: @Composable () -> Unit) {
+    private fun capture(name: String, readyText: String, fontScale: Float = 1f, captureCards: Boolean = false, captureTag: String? = null, masterEnabled: Boolean = true, content: @Composable () -> Unit) {
         RuntimeEnvironment.setFontScale(fontScale)
         val context = ApplicationProvider.getApplicationContext<Context>()
         runBlocking {
             TimeSettingsStore(context).save(ScheduleSettings(
+                masterEnabled = masterEnabled,
                 reminderDays = setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY),
                 autofillDays = setOf(DayOfWeek.TUESDAY, DayOfWeek.THURSDAY),
                 escalationDays = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
@@ -80,6 +83,13 @@ class UiRenderTest {
             compose.onAllNodesWithText(readyText, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
         compose.waitForIdle()
+        if (!masterEnabled) {
+            compose.onNodeWithTag("master-toggle").assertIsEnabled()
+            for (title in listOf("Pengingat", "Pengisian", "Peringatan terakhir")) {
+                compose.onNodeWithTag("alarm-toggle-$title").assertIsNotEnabled()
+                compose.onNodeWithTag("alarm-edit-$title").assertIsNotEnabled()
+            }
+        }
         val root = requireNotNull(File(requireNotNull(System.getProperty("user.dir"))).parentFile)
         val output = File(root, "screenshots/$name.png")
         requireNotNull(output.parentFile).mkdirs()
@@ -88,7 +98,7 @@ class UiRenderTest {
         if (captureCards) {
             listOf("Pengingat", "Pengisian", "Peringatan terakhir").forEachIndexed { index, title ->
                 compose.onNodeWithTag("alarm-card-$title")
-                    .captureRoboImage(File(root, "screenshots/forge-card-${index + 1}.png").absolutePath)
+                    .captureRoboImage(File(root, "screenshots/forge-card-${index + 1}${if (masterEnabled) "" else "-disabled"}${if (fontScale > 1f) "-large-text" else ""}.png").absolutePath)
             }
         }
     }
@@ -142,12 +152,39 @@ class UiRenderTest {
         SessionStatusCard(SessionSnapshot(SessionRecord(false, "2026-11-07T10:00:00+07:00"), issue = "Sesi berakhir. Login kembali."), false, {})
     }
 
-    @Test fun automaticPreviewReady() = capture("forge-preview-ready", "Pratinjau otomatis", captureTag = "automatic-preview") {
+    @Test @Config(qualifiers = "w411dp-h1800dp-xhdpi")
+    fun automaticPreviewReady() = capture("forge-preview-ready", "Pratinjau otomatis", captureTag = "automatic-preview") {
         PratinjauCard(GenerationOutcome.Generated(ReportDraft(
             "- Melanjutkan pemeriksaan kelengkapan data.\n- Melanjutkan validasi hasil pemeriksaan.\n- Melanjutkan penyusunan catatan hasil.",
-            "Memahami cara memeriksa kelengkapan data dan mencatat hasil pemeriksaan.",
-            "Sebagian data memerlukan pemeriksaan lanjutan sebelum hasil dapat dirangkum.",
+            "Memahami urutan pemeriksaan kelengkapan data dan cara mencatat hasil pemeriksaan agar setiap perubahan dapat ditelusuri kembali.",
+            "Sebagian data masih memerlukan pemeriksaan lanjutan karena rincian sumber belum lengkap dan perlu dibandingkan dengan dokumen pendukung.",
         ), GenerationTier.CONTINUATION_RULES, emptyList()), false, "Dari laporan situs tanggal 6 November 2026.", {})
     }
+
+
+    @Test @Config(qualifiers = "w411dp-h2400dp-xhdpi")
+    fun scheduleDisabled() = capture("forge-schedule-disabled", "Aktifkan semua fitur", captureCards = true, masterEnabled = false) { ScheduleTab() }
+
+    @Test @Config(qualifiers = "w360dp-h3200dp-xhdpi")
+    fun scheduleDisabledLargeText() = capture("forge-schedule-disabled-large-text", "Aktifkan semua fitur", 1.3f, captureCards = true, masterEnabled = false) { ScheduleTab() }
+
+    @Test fun configuredSchedule() = capture("forge-schedule-status", "Jadwal fitur berikutnya", captureTag = "schedule-status") {
+        id.ohmymonev.android.ui.ScheduleStatus(
+            id.ohmymonev.android.schedule.AlarmScheduler.ArmedState(true, "2026-11-07T14:00:00Z", "Pengisian"), {})
+    }
+    @Test fun disabledScheduleStatus() = capture("forge-schedule-status-disabled", "Semua fitur nonaktif", captureTag = "schedule-status") {
+        id.ohmymonev.android.ui.ScheduleStatus(
+            id.ohmymonev.android.schedule.AlarmScheduler.ArmedState(false, null, "Semua fitur nonaktif"), {})
+    }
+    @Test @Config(qualifiers = "w411dp-h1800dp-xhdpi")
+    fun holidayPreview() = capture("forge-preview-holiday", "Laporan tidak diperlukan", captureTag = "automatic-preview") {
+        PratinjauCard(GenerationOutcome.Generated(ReportDraft(
+            "- Melanjutkan pemeriksaan kelengkapan data.\n- Melanjutkan validasi hasil pemeriksaan.\n- Melanjutkan penyusunan catatan hasil.",
+            "Memahami urutan pemeriksaan kelengkapan data dan cara mencatat hasil pemeriksaan agar setiap perubahan dapat ditelusuri kembali.",
+            "Sebagian data masih memerlukan pemeriksaan lanjutan karena rincian sumber belum lengkap dan perlu dibandingkan dengan dokumen pendukung.",
+        ), GenerationTier.CONTINUATION_RULES, emptyList()), false, "Dari laporan situs tanggal 6 November 2026.", {}, holiday = true)
+    }
+    @Test @Config(qualifiers = "w360dp-h3200dp-xhdpi")
+    fun scheduleLargeTextExplained() = capture("forge-schedule-explained-large-text", "Aktifkan semua fitur", 1.3f, captureCards = true) { ScheduleTab() }
 
 }

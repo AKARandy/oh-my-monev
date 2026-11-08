@@ -79,10 +79,10 @@ class GuardService : Service() {
     /** Perbarui isi notifikasi dari keadaan sesungguhnya (alarm OS + pilihan skip malam ini). */
     fun refreshContent() {
         val factory = NotificationFactory(this)
-        val next = (getSystemService(android.app.AlarmManager::class.java))?.nextAlarmClock
-        val nextISO = next?.triggerTime?.let(java.time.Instant::ofEpochMilli)?.toString()
+        val settings = runBlocking { TimeSettingsStore(this@GuardService).settingsOnce() }
+        val state = AlarmScheduler.ensureArmed(this, settings)
         val skipped = AppStoreBridge.isTodaySkipped(this)
-        val notification: Notification = factory.guard(nextFireISO = nextISO, skipped = skipped)
+        val notification: Notification = factory.guard(nextFireISO = state.nextFireISO, skipped = skipped, feature = state.source, error = state.lastError)
         androidx.core.app.NotificationManagerCompat.from(this)
             .notify(NotificationFactory.NOTIF_ID_GUARD, notification)
     }

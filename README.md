@@ -5,6 +5,8 @@ mencatat kehadiran harian di https://monev.maganghub.kemnaker.go.id.
 
 English version: [README.en.md](README.en.md).
 
+[Download here](https://github.com/AKARandy/oh-my-monev/releases/latest).
+
 MagangHub memberi uang kepada peserta magang. Tetapi peserta wajib mencatat kehadiran setiap hari.
 Jika peserta tidak mengirim catatan sebelum pukul 23.59 WIB, peserta kehilangan uang untuk hari itu.
 

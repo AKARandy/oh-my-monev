@@ -89,14 +89,15 @@ class NotificationFactory(private val context: Context) {
             .build()
 
     /** Notifikasi penjaga (permanen): bukti status otomatisasi. Tanpa suara, tanpa badge. */
-    fun guard(nextFireISO: String?, skipped: Boolean): Notification {
+    fun guard(nextFireISO: String?, skipped: Boolean, feature: String = "Jadwal fitur", error: String? = null): Notification {
         val (title, text) = when {
             skipped -> "oh-my-monev: otomatis malam ini dimatikan" to
                 "Kamu memilih isi sendiri malam ini. Alarm menyala lagi besok."
-            nextFireISO != null -> "oh-my-monev: alarm aktif" to
-                "Pengisian berikutnya " + formatFire(nextFireISO) + " WIB. Aplikasi boleh ditutup."
-            else -> "oh-my-monev: menyiapkan alarm" to
-                "Alarm berikutnya akan terpasang sesuai jadwal."
+            error != null -> "oh-my-monev: periksa alarm" to error
+            nextFireISO != null -> "oh-my-monev: jadwal fitur berikutnya" to
+                "$feature · " + formatFire(nextFireISO) + " WIB."
+            else -> "oh-my-monev: tidak ada jadwal aktif" to
+                "Periksa pilihan fitur dan hari di Jadwal."
         }
         return builder(CHANNEL_GUARD)
             .setContentTitle(title)

@@ -5,7 +5,6 @@ import id.ohmymonev.core.enginecore.TodayState
 import id.ohmymonev.core.generator.DatedReport
 import id.ohmymonev.core.generator.GenerationOutcome
 import id.ohmymonev.core.generator.GeneratorPipeline
-import id.ohmymonev.core.generator.PoolBundle
 import id.ohmymonev.core.generator.ReportHistory
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -44,8 +43,7 @@ class MonevReadContractTest {
 
     @Test fun validApiMaterialCanGenerateAPreview() {
         val material = requireNotNull(PastReportReader.exactReport(JSONArray().put(row(date.toString())), date))
-        val pipeline = GeneratorPipeline(history = ReportHistory { DatedReport(date, material) },
-            poolBundle = PoolBundle(listOf("Materi untuk hari ini"), listOf("Kendala untuk hari ini")))
+        val pipeline = GeneratorPipeline(history = ReportHistory { DatedReport(date, material) })
         assertTrue(pipeline.generate(date.plusDays(1)) is GenerationOutcome.Generated)
     }
 

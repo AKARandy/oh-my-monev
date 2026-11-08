@@ -5,6 +5,8 @@ their daily attendance on https://monev.maganghub.kemnaker.go.id.
 
 Read this file in Indonesian: [README.md](README.md).
 
+[Download here](https://github.com/AKARandy/oh-my-monev/releases/latest).
+
 MagangHub gives money to interns. But the participant must record attendance every day.
 If the participant does not send the record before 23:59 WIB, the participant loses the money
 for that day.
@@ -20,7 +22,7 @@ The app does this:
   No words such as "saya" or "kami". 3 to 5 activity lines. No clichés.
 - The phone can be idle. The alarms stay exact. A service keeps the phone awake during the fill.
 
-Status: version 0.1 is in development. See `docs/plan.md`.
+Status: still in development. See `docs/plan.md`.
 
 ## Structure
 

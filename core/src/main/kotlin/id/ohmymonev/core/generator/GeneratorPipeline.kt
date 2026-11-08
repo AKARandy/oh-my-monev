@@ -12,8 +12,8 @@ data class DatedReport(val date: LocalDate, val draft: ReportDraft)
 enum class FailureReason {
     NO_SOURCE_MATERIAL,
     TOO_FEW_BULLETS,
-    PELAJARAN_POOL_EXHAUSTED,
-    KENDALA_POOL_EXHAUSTED,
+    UNSAFE_ACTIVITY,
+    INVALID_REPORT,
 }
 
 sealed interface GenerationOutcome {
@@ -33,21 +33,10 @@ fun interface ReportHistory {
     fun latestBefore(date: LocalDate): DatedReport?
 }
 
-/**
- * The deterministic flagship generator.
- *
- * Tier 0 (TEMPLATE): user's template with placeholder substitution.
- * Tier 1 (CONTINUATION_RULES): reshape the previous working day's report via [VerbMapper];
- * pelajaran/kendala come from rotating user pools.
- *
- * It never invents facts: with no template and no history, or exhausted pools, it refuses with
- * a failure reason rather than fabricating content. The [id.ohmymonev.core.validator.DeliveryGate]
- * still applies downstream before anything is written into the site form.
- */
+/** Prepare a continuation from the original report without adding or dropping content. */
 class GeneratorPipeline(
     private val templates: Templates? = null,
     private val history: ReportHistory,
-    private val poolBundle: PoolBundle,
     private val engine: ContinuationRuleEngine = ContinuationRuleEngine(),
 ) {
     fun generate(date: LocalDate): GenerationOutcome {
@@ -65,22 +54,19 @@ class GeneratorPipeline(
             )
 
         val bullets = engine.bullets(previous.draft.aktivitas)
-        if (bullets.size < 3) {
+            ?: return GenerationOutcome.Failed(FailureReason.UNSAFE_ACTIVITY,
+                "Ada aktivitas yang tidak dapat diubah dengan aman. Tulis laporan hari ini untuk memperbaikinya.")
+        if (bullets.size !in 3..5) {
             return GenerationOutcome.Failed(
                 FailureReason.TOO_FEW_BULLETS,
-                "continuation yields only ${bullets.size} bullets from ${previous.date}",
+                "Aktivitas memiliki ${bullets.size} butir. Tulis 3 sampai 5 butir tanpa menambah kegiatan rekaan.",
             )
         }
 
-        val pelajaran = poolBundle.pelajaran.next(date)
-            ?: return GenerationOutcome.Failed(FailureReason.PELAJARAN_POOL_EXHAUSTED, "pelajaran pool exhausted for $date")
-        val kendala = poolBundle.kendala.next(date)
-            ?: return GenerationOutcome.Failed(FailureReason.KENDALA_POOL_EXHAUSTED, "kendala pool exhausted for $date")
-
         val draft = ReportDraft(
             aktivitas = bullets.joinToString("\n") { "- $it" },
-            pelajaran = pelajaran,
-            kendala = kendala,
+            pelajaran = previous.draft.pelajaran,
+            kendala = previous.draft.kendala,
         )
         return GenerationOutcome.Generated(
             draft,
@@ -99,14 +85,4 @@ class GeneratorPipeline(
             kendala = template.kendala.replace("{tanggal}", date.format(DATE_FORMAT)),
         )
     }
-}
-
-/** Two pools (pelajaran, kendala) sharing one last-used snapshot for simple persistence. */
-class PoolBundle(
-    pelajaranItems: List<String>,
-    kendalaItems: List<String>,
-    lastUsed: Map<String, LocalDate> = emptyMap(),
-) {
-    val pelajaran = RotatingPool(pelajaranItems, initialLastUsed = lastUsed)
-    val kendala = RotatingPool(kendalaItems, initialLastUsed = lastUsed)
 }

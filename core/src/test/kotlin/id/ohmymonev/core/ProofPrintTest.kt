@@ -1,10 +1,8 @@
 package id.ohmymonev.core
 
-import id.ohmymonev.core.generator.ContinuationRuleEngine
 import id.ohmymonev.core.generator.DatedReport
 import id.ohmymonev.core.generator.GenerationOutcome
 import id.ohmymonev.core.generator.GeneratorPipeline
-import id.ohmymonev.core.generator.PoolBundle
 import id.ohmymonev.core.generator.ReportHistory
 import id.ohmymonev.core.model.ReportDraft
 import id.ohmymonev.core.schedule.ScheduleCalculator
@@ -32,17 +30,7 @@ class ProofPrintTest {
                 kendala = "y",
             ),
         )
-        val pools = PoolBundle(
-            listOf(
-                "Struktur data yang rapi mempercepat penelusuran kesalahan saat pengujian dan membuat serah terima pekerjaan menjadi lebih mudah dipahami.",
-                "Menulis catatan singkat setiap kali menyelesaikan satu bagian pekerjaan membuat revisi berikutnya jauh lebih cepat dikerjakan.",
-            ),
-            listOf(
-                "Akses lingkungan pengujian yang terbatas memaksa urutan pengujian disusun ulang setiap hari kerja agar bagian penting selesai lebih dulu.",
-                "Dokumentasi lama yang belum lengkap membuat pembacaan alur memerlukan waktu tambahan sebelum perbaikan bisa dikerjakan.",
-            ),
-        )
-        val pipeline = GeneratorPipeline(history = ReportHistory { yesterday }, poolBundle = pools)
+        val pipeline = GeneratorPipeline(history = ReportHistory { yesterday })
         val outcome = pipeline.generate(today)
 
         println("=== GENERATOR (laporan kemarin -> laporan hari ini) ===")
@@ -64,7 +52,7 @@ class ProofPrintTest {
 
         println()
         println("=== BUKTI TANPA BAHAN: TIDAK MENGARANG ===")
-        val empty = GeneratorPipeline(history = ReportHistory { null }, poolBundle = PoolBundle(emptyList(), emptyList()))
+        val empty = GeneratorPipeline(history = ReportHistory { null })
             .generate(today)
         println("hasil: $empty")
 
@@ -94,6 +82,6 @@ class ProofPrintTest {
             "Membuat endpoint login",
             "Menyusun laporan mingguan",
             "Menganalisis data media",
-        ).forEach { println("$it -> ${ContinuationRuleEngine.DEFAULT_EXTRA_BULLETS.let { _ -> id.ohmymonev.core.generator.VerbMapper.continuation(it) }}") }
+        ).forEach { println("$it -> ${id.ohmymonev.core.generator.VerbMapper.continuation(it)}") }
     }
 }

@@ -32,6 +32,7 @@ fun PratinjauCard(
     source: String?,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
+    holiday: Boolean = false,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth().testTag("automatic-preview"),
@@ -48,7 +49,7 @@ fun PratinjauCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Pratinjau otomatis", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Laporan hari ini dari laporan pada hari kerja sebelumnya.",
+                        "Teks yang akan digunakan untuk mengisi formulir.",
                         fontSize = 18.sp,
                         lineHeight = 26.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -57,6 +58,7 @@ fun PratinjauCard(
                 TextButton(onClick = onRefresh, enabled = !loading) { Text("Perbarui", fontSize = 18.sp) }
             }
 
+            if (holiday) Text("Laporan tidak diperlukan hari ini. Pratinjau ini hanya untuk referensi.", fontSize = 20.sp, lineHeight = 28.sp)
             when {
                 loading -> Text(
                     "Menyusun dari laporan sebelumnya…",
@@ -64,18 +66,7 @@ fun PratinjauCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 outcome is GenerationOutcome.Failed -> Text(
-                    text = when {
-                        // Alasan dari pembaca situs ditampilkan apa adanya (sesi habis, hari libur, dll).
-                        outcome.detail.contains("sesi") || outcome.detail.contains("gagal") ||
-                            outcome.detail.contains("halaman") || outcome.detail.contains("situs") -> outcome.detail
-                        outcome.reason.name == "NO_SOURCE_MATERIAL" ->
-                            source ?: "Belum ada laporan sebelumnya. Tulis laporan hari ini."
-                        outcome.reason.name == "TOO_FEW_BULLETS" ->
-                            "Laporan kemarin terlalu pendek untuk ditiru menjadi 3 butir."
-                        outcome.reason.name == "PELAJARAN_POOL_EXHAUSTED" || outcome.reason.name == "KENDALA_POOL_EXHAUSTED" ->
-                            "Kalimat cadangan sudah terpakai semua. Tambah lewat editor Tulisan hari ini."
-                        else -> "Tidak bisa menyusun: " + outcome.detail
-                    },
+                    text = outcome.detail,
                     fontSize = 18.sp,
                     lineHeight = 26.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -93,7 +84,7 @@ fun PratinjauCard(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     PreviewPart("Kendala", outcome.draft.kendala)
                     Text(
-                        "Pratinjau saja. Teks final diperiksa ulang sebelum dikirim.",
+                        "Pengisian memakai teks ini. Aplikasi memeriksa teks sebelum mengisi formulir.",
                         fontSize = 18.sp,
                         lineHeight = 26.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -117,8 +108,6 @@ private fun PreviewPart(label: String, text: String) {
             text,
             fontSize = 18.sp,
             lineHeight = 26.sp,
-            maxLines = 6,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
     }
 }

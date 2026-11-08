@@ -29,6 +29,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -145,6 +146,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                     )
                 }
                 Switch(
+                    modifier = Modifier.testTag("master-toggle"),
                     checked = current.masterEnabled,
                     onCheckedChange = { on ->
                         if (on) save { it.copy(masterEnabled = true) } else confirmMasterOff = true
@@ -158,6 +160,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             time = current.reminderTime,
             days = current.reminderDays,
             enabled = current.reminderEnabled,
+            controlsEnabled = current.masterEnabled,
             effective = current.reminderEnabled && current.masterEnabled,
             detail = "Aplikasi mengirim notifikasi.\nIsi formulir melalui situs.\nKirim laporan melalui situs.",
             onToggle = { on -> save { it.copy(reminderEnabled = on) } },
@@ -170,6 +173,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             time = current.autofillTime,
             days = current.autofillDays,
             enabled = current.autofillEnabled,
+            controlsEnabled = current.masterEnabled,
             effective = current.autofillEnabled && current.masterEnabled,
             detail = when (current.autofillPolicy) {
                 ScheduleSettings.Policy.REMIND_ONLY -> "Aplikasi mengirim notifikasi.\nIsi formulir melalui situs.\nKirim laporan melalui situs."
@@ -186,6 +190,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             time = current.escalationTime,
             days = current.escalationDays,
             enabled = current.escalationEnabled,
+            controlsEnabled = current.masterEnabled,
             effective = current.escalationEnabled && current.masterEnabled,
             detail = when {
                 current.escalationAction == ScheduleSettings.Policy.REMIND_ONLY ->
@@ -378,14 +383,16 @@ private fun AlarmCard(
     days: Set<DayOfWeek>,
     enabled: Boolean,
     effective: Boolean,
+    controlsEnabled: Boolean,
     detail: String,
     onToggle: (Boolean) -> Unit,
     onOpen: () -> Unit,
 ) {
+    val textColor = if (controlsEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
     Surface(
         modifier = Modifier.fillMaxWidth().testTag("alarm-card-$title"),
         shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
+        color = if (controlsEnabled) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(
@@ -398,9 +405,9 @@ private fun AlarmCard(
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = textColor,
                 )
-                Switch(checked = enabled, onCheckedChange = onToggle)
+                Switch(checked = enabled, onCheckedChange = onToggle, enabled = controlsEnabled, modifier = Modifier.testTag("alarm-toggle-$title"))
             }
             androidx.compose.foundation.layout.FlowRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -413,22 +420,25 @@ private fun AlarmCard(
                     lineHeight = 56.sp,
                     maxLines = 1,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = textColor,
                 )
-                TextButton(onClick = onOpen, modifier = Modifier.align(Alignment.CenterVertically)) {
+                TextButton(onClick = onOpen, enabled = controlsEnabled,
+                    colors = ButtonDefaults.textButtonColors(disabledContentColor = textColor),
+                    modifier = Modifier.align(Alignment.CenterVertically).testTag("alarm-edit-$title")) {
                     Text("Atur fitur", fontSize = 18.sp)
                 }
             }
             Text(
                 if (days.size == DayOfWeek.entries.size) "Setiap hari" else days.sortedBy { it.value }.joinToString(", ") { DAY_SHORT.getValue(it) },
                 fontSize = 18.sp,
+                color = textColor,
                 fontWeight = FontWeight.Medium,
             )
             if (!effective) {
                 Text(
-                    if (enabled) "Aktifkan ketiga fitur untuk menjalankan fitur ini." else "Fitur ini nonaktif.",
+                    if (enabled) "Semua fitur nonaktif." else "Fitur ini nonaktif.",
                     style = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp, lineHeight = 26.sp),
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = textColor,
                 )
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -437,7 +447,7 @@ private fun AlarmCard(
                     instruction,
                     fontSize = 20.sp,
                     lineHeight = 28.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = textColor,
                 )
             }
         }

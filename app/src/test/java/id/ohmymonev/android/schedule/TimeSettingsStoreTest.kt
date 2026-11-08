@@ -87,4 +87,21 @@ class TimeSettingsStoreTest {
         assertEquals(emptySet<DayOfWeek>(), store.settingsOnce().autofillDays)
         assertEquals(DayOfWeek.entries.toSet(), store.settingsOnce().reminderDays)
     }
+
+    @Test fun pausingAndResumingPreservesEveryFeatureChoice() = runBlocking {
+        val original = ScheduleSettings(
+            reminderEnabled = false,
+            reminderDays = setOf(DayOfWeek.MONDAY),
+            autofillDays = setOf(DayOfWeek.TUESDAY),
+            escalationDays = setOf(DayOfWeek.FRIDAY),
+            autofillTime = java.time.LocalTime.of(20, 45),
+            autofillPolicy = ScheduleSettings.Policy.FILL_AND_SUBMIT,
+            escalationAction = ScheduleSettings.Policy.REMIND_ONLY,
+        )
+        store.save(original)
+        store.save(store.settingsOnce().copy(masterEnabled = false))
+        assertEquals(original.copy(masterEnabled = false), store.settingsOnce())
+        store.save(store.settingsOnce().copy(masterEnabled = true))
+        assertEquals(original, store.settingsOnce())
+    }
 }

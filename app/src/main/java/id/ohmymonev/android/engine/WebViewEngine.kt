@@ -69,6 +69,7 @@ class WebViewEngine(
         val liveSubmit: Boolean,
         val attempt: Int,
         val attemptedAtISO: String,
+        val expectedSessionVersion: Long?,
     ) {
         lateinit var webView: WebView
         var httpStatusCode: Int = 200
@@ -77,9 +78,10 @@ class WebViewEngine(
         var sessionVersion = 0L
     }
 
-    fun runAutomation(dateISO: String, draft: ReportDraft, liveSubmit: Boolean, attempt: Int) {
+    fun runAutomation(dateISO: String, draft: ReportDraft, liveSubmit: Boolean, attempt: Int, expectedSessionVersion: Long? = null) {
         val state = RunState(
             dateISO = dateISO,
+            expectedSessionVersion = expectedSessionVersion,
             draft = draft,
             liveSubmit = liveSubmit,
             attempt = attempt,
@@ -141,6 +143,10 @@ class WebViewEngine(
             val session = SessionRepository.get(appContext)
             val credentials = session.credentials()
             if (state.finished) return@launch
+            if (state.expectedSessionVersion != null && credentials?.version != state.expectedSessionVersion) {
+                finish(state, EngineOutcome.LOGIN_REQUIRED, "Sesi berubah. Perbarui pratinjau sebelum mengisi.")
+                return@launch
+            }
             state.sessionVersion = credentials?.version ?: session.state.value.version
             SessionWebView.load(state.webView, credentials?.token, profile.dashboardUrl())
             val deadline = SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs
@@ -236,6 +242,7 @@ class WebViewEngine(
     }
 
     private fun fillForm(state: RunState) {
+        if (!currentDraftScope(state)) return
         val js = JsSnippets.fillTextareas(
             profile,
             aktivitas = state.draft.aktivitas,
@@ -276,6 +283,20 @@ class WebViewEngine(
         }
     }
 
+    private fun currentDraftScope(state: RunState): Boolean {
+        // Bench runs have no participant-bound draft and stay on the local fixture.
+        if (state.expectedSessionVersion == null) return true
+        if (java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta).toString() != state.dateISO) {
+            finish(state, EngineOutcome.DAY_NOT_FILLABLE, "Tanggal berubah. Perbarui pratinjau.")
+            return false
+        }
+        if (SessionRepository.get(appContext).state.value.version != state.expectedSessionVersion) {
+            finish(state, EngineOutcome.LOGIN_REQUIRED, "Sesi berubah. Perbarui pratinjau.")
+            return false
+        }
+        return true
+    }
+
     private fun mismatch(intended: ReportDraft, back: ReportDraft): String? {
         val partNames = listOf("aktivitas", "pelajaran", "kendala")
         val a = listOf(intended.aktivitas, intended.pelajaran, intended.kendala)
@@ -290,6 +311,7 @@ class WebViewEngine(
 
     /** liveSubmit only: tick the confirmation checkbox, then click 'Simpan dan Kirim'. */
     private fun tickAndSubmit(state: RunState) {
+        if (!currentDraftScope(state)) return
         val webView = state.webView
         webView.evaluateJavascript(JsSnippets.tickCheckbox(profile)) { raw ->
             if (state.finished) return@evaluateJavascript
@@ -297,6 +319,7 @@ class WebViewEngine(
                 finish(state, EngineOutcome.SUBMIT_FAILED, "kotak konfirmasi tidak ditemukan")
                 return@evaluateJavascript
             }
+            if (!currentDraftScope(state)) return@evaluateJavascript
             webView.evaluateJavascript(JsSnippets.clickSubmit(profile)) { raw2 ->
                 if (state.finished) return@evaluateJavascript
                 if (unwrapObject(raw2)?.optBoolean("clicked") != true) {

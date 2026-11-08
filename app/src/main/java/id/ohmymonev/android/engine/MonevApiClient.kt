@@ -24,6 +24,10 @@ internal class MonevApiClient(
     var message: String = "Situs belum dapat diperiksa."
         private set
 
+    val credentialVersion: Long? get() = access?.version
+
+    suspend fun isCurrent(): Boolean = access?.let { session.matches(it) } == true
+
     suspend fun confirmActive() { access?.let { session.confirm(it) } }
 
     suspend fun failed(reason: String) {

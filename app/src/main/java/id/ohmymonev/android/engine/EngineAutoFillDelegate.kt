@@ -5,8 +5,6 @@ import android.content.Context
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import id.ohmymonev.android.data.AppStore
-import id.ohmymonev.android.data.PoolState
-import id.ohmymonev.android.data.SeedPack
 import id.ohmymonev.android.data.StoredDraft
 import id.ohmymonev.android.schedule.AlarmScheduler
 import id.ohmymonev.android.schedule.AutoFillDelegate
@@ -15,12 +13,7 @@ import id.ohmymonev.android.schedule.NotificationFactory
 import id.ohmymonev.android.schedule.TimeSettingsStore
 import id.ohmymonev.core.enginecore.EngineOutcome
 import id.ohmymonev.core.enginecore.RunRecord
-import id.ohmymonev.core.generator.DatedReport
 import id.ohmymonev.core.generator.GenerationOutcome
-import id.ohmymonev.core.generator.GeneratorPipeline
-import id.ohmymonev.core.generator.PoolBundle
-import id.ohmymonev.core.generator.ReportHistory
-import id.ohmymonev.core.generator.Templates
 import id.ohmymonev.core.model.ReportDraft
 import id.ohmymonev.core.schedule.ScheduleCalculator
 import id.ohmymonev.core.schedule.ScheduleSettings
@@ -88,29 +81,27 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             return
         }
 
-        val seed = store.loadSeed()
-        val poolState = store.poolState()
-        val pools = PoolBundle(seed.pelajaran, seed.kendala, poolState.lastUsed.lastUsedDates())
-        // Prioritas: laporan yang ditulis pengguna di aplikasi hari ini, lalu template bawaan.
-        val written = store.todayDraft(todayIso)?.toReportDraft()
-        Log.d(
-            "ohmymonev",
-            "MODE tanggal=$todayIso laporan-hari-ini=${written != null} template-seed=${seed.asTemplateOrNull() != null}",
+        val status = SiteStatusProbe(appContext).check()
+        if (status.sessionActive != true || status.today != id.ohmymonev.core.enginecore.TodayState.UNFILLED) {
+            val outcome = when {
+                status.sessionActive == false -> EngineOutcome.LOGIN_REQUIRED
+                status.today == id.ohmymonev.core.enginecore.TodayState.LIBUR ||
+                    status.today == id.ohmymonev.core.enginecore.TodayState.FILLED -> EngineOutcome.DAY_NOT_FILLABLE
+                else -> EngineOutcome.RETRYABLE_ERROR
+            }
+            val record = RunRecord(todayIso, nowIso(), outcome, attemptToday(store, todayIso),
+                detail = status.error ?: "Laporan hari ini tidak perlu diisi.")
+            store.appendRecord(record)
+            if (outcome == EngineOutcome.RETRYABLE_ERROR) maybeScheduleRetry(record, store, settings, lastChance)
+            if (outcome != EngineOutcome.DAY_NOT_FILLABLE) post(factory, NotificationFactory.NOTIF_ID_REMINDER,
+                factory.info("Laporan belum diisi", status.error ?: "Periksa sesi di aplikasi."))
+            AutoFillService.finished(appContext)
+            return
+        }
+        val prepared = PreparedReportService(appContext).prepare()
+        val outcome = if (prepared.date == todayIso) prepared.outcome() else GenerationOutcome.Failed(
+            id.ohmymonev.core.generator.FailureReason.INVALID_REPORT, "Tanggal berubah. Perbarui pratinjau.",
         )
-        val templates: Templates? = if (written != null) {
-            Templates { written }
-        } else {
-            seed.asTemplateOrNull()
-        }
-        val history = ReportHistory { lastBefore(store, today) }
-
-        val outcome = GeneratorPipeline(templates, history, pools).generate(today)
-
-        if (outcome is GenerationOutcome.Generated) {
-            store.savePoolState(
-                PoolState((pools.pelajaran.snapshot() + pools.kendala.snapshot()).mapValues { it.value.toString() }),
-            )
-        }
 
         when (outcome) {
             is GenerationOutcome.Generated -> {
@@ -118,6 +109,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                 engine.runAutomation(
                     dateISO = todayIso,
                     draft = outcome.draft,
+                    expectedSessionVersion = prepared.sessionVersion,
                     // Setiap fitur memakai persetujuan pengiriman otomatisnya sendiri.
                     liveSubmit = settings.policyFor(lastChance) == ScheduleSettings.Policy.FILL_AND_SUBMIT,
                     attempt = attemptToday(store, todayIso),
@@ -134,21 +126,11 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                         detail = "generator: ${outcome.reason.name} (${outcome.detail})",
                     ),
                 )
-                post(factory, NotificationFactory.NOTIF_ID_ESCALATION, factory.escalation())
+                post(factory, NotificationFactory.NOTIF_ID_ESCALATION, factory.info("Perbaiki laporan hari ini", outcome.detail))
                 AutoFillService.finished(appContext)
             }
         }
     }
-
-    private fun lastBefore(store: AppStore, today: LocalDate): DatedReport? =
-        store.drafts()
-            .mapNotNull { stored ->
-                runCatching { LocalDate.parse(stored.date) }.getOrNull()?.let {
-                    DatedReport(it, stored.toReportDraft())
-                }
-            }
-            .filter { it.date.isBefore(today) }
-            .maxByOrNull { it.date }
 
     /** Uji mesin terhadap halaman tiruan lokal: membuktikan jalur isi, centang, klik kirim. */
     private fun runBench(
@@ -270,20 +252,4 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
     private fun nowIso(): String = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(OffsetDateTime.now())
 
-    private fun Map<String, String>.lastUsedDates(): Map<String, LocalDate> =
-        entries.mapNotNull { (text, iso) ->
-            runCatching { text to LocalDate.parse(iso) }.getOrNull()
-        }.toMap()
 }
-
-private fun SeedPack.asTemplateOrNull(): Templates? {
-    val aktivitasTemplate = aktivitasTemplate
-    val pelajaranTemplate = pelajaranTemplate
-    val kendalaTemplate = kendalaTemplate
-    if (aktivitasTemplate.isNullOrBlank() || pelajaranTemplate.isNullOrBlank() || kendalaTemplate.isNullOrBlank()) {
-        return null
-    }
-    return Templates { ReportDraft(aktivitasTemplate, pelajaranTemplate, kendalaTemplate) }
-}
-
-private fun StoredDraft.toReportDraft(): ReportDraft = ReportDraft(aktivitas, pelajaran, kendala)

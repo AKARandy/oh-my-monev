@@ -26,7 +26,9 @@ object AlarmScheduler {
     private const val TAG = "AlarmScheduler"
 
     /** requestCode tetap tiap alarm supaya setAlarmClock menggantikan alarm lama. */
+    @Synchronized
     fun armAll(context: Context, settings: ScheduleSettings): ArmReport {
+        lastArmError = null
         val am = context.getSystemService(AlarmManager::class.java)
             ?: return ArmReport(emptyList(), listOf("AlarmManager tidak tersedia"))
         // Android 14+ menolak setAlarmClock tanpa izin exact. Coba exact dulu;
@@ -51,9 +53,16 @@ object AlarmScheduler {
                 pending.cancel()
             }
         }
-        if (fires.isEmpty()) {
-            return ArmReport(emptyList(), listOf("tidak ada jadwal aktif (otomatis nonaktif atau tidak ada hari aktif)"))
+        if (!settings.masterEnabled) {
+            for (code in listOf(REQUEST_CODE_RETRY, REQUEST_CODE_TEST)) {
+                val intent = Intent(context, AutoFillReceiver::class.java).setAction(AutoFillReceiver.ACTION_AUTOFILL)
+                PendingIntent.getBroadcast(context, code, intent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)?.let {
+                    am.cancel(it)
+                    it.cancel()
+                }
+            }
         }
+        if (fires.isEmpty()) return ArmReport(emptyList(), emptyList())
         val armedKeys = mutableListOf<String>()
         val errors = mutableListOf<String>()
         for ((key, fire) in fires) {
@@ -70,7 +79,7 @@ object AlarmScheduler {
                 )
                 val triggerAt = fire.toInstant().toEpochMilli()
                 if (exactAllowed) {
-                    am.setAlarmClock(AlarmManager.AlarmClockInfo(triggerAt, pending), pending)
+                    am.setAlarmClock(AlarmManager.AlarmClockInfo(triggerAt, showApp(context)), pending)
                 } else {
                     am.setWindow(AlarmManager.RTC_WAKEUP, triggerAt, 10 * 60 * 1000L, pending)
                 }
@@ -89,7 +98,9 @@ object AlarmScheduler {
     }
 
     /** Alarm uji cepat: autofill penuh menyala [inSeconds] dari sekarang. */
+    @Synchronized
     fun quickFireForTest(context: Context, inSeconds: Int = 90) {
+        if (!kotlinx.coroutines.runBlocking { TimeSettingsStore(context).settingsOnce() }.masterEnabled) return
         val am = context.getSystemService(AlarmManager::class.java) ?: return
         val intent = Intent(context, AutoFillReceiver::class.java)
             .setAction(AutoFillReceiver.ACTION_AUTOFILL)
@@ -100,14 +111,17 @@ object AlarmScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val triggerAt = System.currentTimeMillis() + inSeconds * 1000L
-        am.setAlarmClock(AlarmManager.AlarmClockInfo(triggerAt, pending), pending)
+        am.setAlarmClock(AlarmManager.AlarmClockInfo(triggerAt, showApp(context)), pending)
     }
 
     /**
      * Percobaan ulang berikutnya pada [at] (tangga +5/+20/+60 dari ScheduleCalculator).
      * requestCode tetap: percobaan berikutnya menggantikan yang lama.
      */
+    @Synchronized
     fun scheduleRetry(context: Context, at: ZonedDateTime, lastChance: Boolean = false) {
+        val settings = kotlinx.coroutines.runBlocking { TimeSettingsStore(context).settingsOnce() }
+        if (!settings.masterEnabled || !(if (lastChance) settings.escalationEnabled else settings.autofillEnabled)) return
         val am = context.getSystemService(AlarmManager::class.java) ?: return
         val intent = Intent(context, AutoFillReceiver::class.java)
             .setAction(AutoFillReceiver.ACTION_AUTOFILL)
@@ -118,56 +132,43 @@ object AlarmScheduler {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        am.setAlarmClock(AlarmManager.AlarmClockInfo(at.toInstant().toEpochMilli(), pending), pending)
+        am.setAlarmClock(AlarmManager.AlarmClockInfo(at.toInstant().toEpochMilli(), showApp(context)), pending)
     }
 
     // ------------------------------------------------------------- internal
 
-    /**
-     * Perbaiki lalu buktikan: pasang ulang alarm sesuai [settings], lalu baca keadaan dari OS.
-     * Dipakai oleh layar Beranda agar "Periksa" tidak pernah membaca keadaan sebelum perbaikan selesai.
-     */
+    /** The next configured feature is independent of alarms owned by other applications. */
     fun ensureArmed(context: Context, settings: ScheduleSettings): ArmedState {
-        val report = if (settings.masterEnabled) armAll(context, settings) else null
+        val report = armAll(context, settings)
         val state = readArmedState(context, settings)
-        val errors = report?.errors.orEmpty()
-        val emptySchedule = report != null && report.armedKeys.isEmpty() && errors.isEmpty()
-        return when {
-            state.armed -> state
-            errors.isNotEmpty() -> state.copy(lastError = errors.joinToString("; "))
-            emptySchedule -> state.copy(lastError = "tidak ada jadwal yang bisa dipasang")
-            else -> state
-        }
+        return state.copy(
+            armed = report.armedKeys.isNotEmpty() && report.errors.isEmpty(),
+            lastError = report.errors.takeIf { it.isNotEmpty() }?.joinToString("; ") ?: lastArmError,
+        )
     }
 
-    /**
-     * Bukti dari sistem, bukan klaim: baca alarm berikutnya yang benar-benar terdaftar di OS.
-     * Null = tidak ada alarm terpasang (berarti otomatis nonaktif / OS menghapusnya).
-     */
-    fun readArmedState(context: Context, settings: ScheduleSettings): ArmedState {
-        val am = context.getSystemService(AlarmManager::class.java)
-            ?: return ArmedState(armed = false, nextFireISO = null, source = "AlarmManager tidak tersedia")
-        // nextAlarmClock bersifat global: alarm jam bawaan bisa menutupi milik aplikasi.
-        // Karena itu verifikasi kedua: cek PendingIntent milik kita masih terdaftar.
-        val next = am.nextAlarmClock
-        val oursIsNext = next != null && next.showIntent != null && next.triggerTime > 0
-        if (next == null) {
-            val reason = if (!settings.masterEnabled) "otomatis nonaktif" else "belum terbaca di OS"
-            return ArmedState(armed = false, nextFireISO = null, source = reason, lastError = lastArmError)
-        }
-        val whenISO = java.time.Instant.ofEpochMilli(next.triggerTime).toString()
-        val now = ZonedDateTime.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
-        val fires = id.ohmymonev.core.schedule.ScheduleCalculator.nextFires(now, settings, horizonDays = 7)
-        val matched = fires.entries.minByOrNull { it.value.toInstant().toEpochMilli() }
-        val label = if (matched != null &&
-            kotlin.math.abs(matched.value.toInstant().toEpochMilli() - next.triggerTime) < 120_000
-        ) {
-            matched.key
-        } else {
-            "lain (kemungkinan percobaan ulang)"
-        }
-        return ArmedState(armed = true, nextFireISO = whenISO, source = label)
+    fun readArmedState(
+        context: Context,
+        settings: ScheduleSettings,
+        now: ZonedDateTime = ZonedDateTime.now(ScheduleCalculator.asiaJakarta),
+    ): ArmedState {
+        if (!settings.masterEnabled) return ArmedState(false, null, "Semua fitur nonaktif")
+        val next = ScheduleCalculator.nextFires(now.withZoneSameInstant(ScheduleCalculator.asiaJakarta), settings)
+            .entries.minByOrNull { it.value.toInstant() }
+            ?: return ArmedState(false, null, "Tidak ada jadwal aktif")
+        return ArmedState(false, next.value.toInstant().toString(), featureLabel(next.key))
     }
+
+    private fun featureLabel(key: String): String = when (key) {
+        ScheduleCalculator.KEY_REMINDER -> "Pengingat"
+        ScheduleCalculator.KEY_AUTOFILL -> "Pengisian"
+        else -> "Peringatan terakhir"
+    }
+
+    private fun showApp(context: Context): PendingIntent = PendingIntent.getActivity(
+        context, 0, Intent(context, id.ohmymonev.android.MainActivity::class.java),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
 
     data class ArmedState(
         val armed: Boolean,

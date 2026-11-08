@@ -28,13 +28,13 @@ class VerbMapperTest {
     }
 
     @Test
-    fun `person words are stripped before reshaping`() {
-        assertEquals("Melanjutkan pembuatan fitur radio", VerbMapper.continuation("Saya membuat fitur radio"))
+    fun `person words require a manual edit`() {
+        assertNull(VerbMapper.continuation("Saya membuat fitur radio"))
     }
 
     @Test
-    fun `unknown verb falls back to a generic activity continuation`() {
-        assertEquals("Melanjutkan aktivitas kue", VerbMapper.continuation("Membikin kue"))
+    fun `unknown verb is rejected`() {
+        assertNull(VerbMapper.continuation("Membikin kue"))
     }
 
     @Test
@@ -46,4 +46,8 @@ class VerbMapperTest {
     fun `empty input returns null`() {
         assertNull(VerbMapper.continuation("   "))
     }
+    @Test fun `continued activity keeps its complete wording`() {
+        assertEquals("Melanjutkan pemeriksaan data 123.", VerbMapper.continuation("Melanjutkan pemeriksaan data 123."))
+    }
+    @Test fun `a known verb without an object is rejected`() { assertNull(VerbMapper.continuation("Membuat")) }
 }
