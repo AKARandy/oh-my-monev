@@ -160,6 +160,16 @@ class UiRenderTest {
             onDismiss = {}, onSave = { _, _, _, _ -> },
         )
     }
+    @Test @Config(qualifiers = "w411dp-h2400dp-xhdpi")
+    fun emergencyEditorDownloadModel() = capture("forge-emergency-editor-download", "Unduh model") {
+        AlarmEditor(
+            title = "Pengisian darurat", initialTime = LocalTime.of(22, 30), initialEnabled = true,
+            initialDays = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
+            initialSource = ScheduleSettings.ContentSource.AUTOMATIC, autoReady = false,
+            onDownloadModel = {},
+            onDismiss = {}, onSave = { _, _, _, _ -> },
+        )
+    }
     @Test fun templateDialog() = capture("forge-template-dialog", "Teks ini menjadi isi laporan") {
         id.ohmymonev.android.ui.TemplateEditor(
             current = null, clearBlocked = false,

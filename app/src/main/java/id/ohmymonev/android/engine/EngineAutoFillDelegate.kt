@@ -107,7 +107,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                 // Asal isian menentukan notifikasi setelah terkirim: templat minta
                 // ditinjau ulang; lanjutan otomatis harus selalu disebut terang-terangan.
                 val fromTemplate = outcome.tier == GenerationTier.TEMPLATE && prepared.written == null
-                val fromContinuation = outcome.tier == GenerationTier.CONTINUATION_RULES
+                val fromContinuation = outcome.tier != GenerationTier.TEMPLATE
                 val engine = WebViewEngine(appContext, DEFAULT_SITE_PROFILE, runCallbacks(todayIso, store, factory, settings, usedTemplate = fromTemplate, usedContinuation = fromContinuation))
                 engine.runAutomation(
                     dateISO = todayIso,

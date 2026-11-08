@@ -19,4 +19,7 @@ enum class GenerationTier {
 
     /** Rule-based continuation of the previous working day's report. */
     CONTINUATION_RULES,
+
+    /** Continuation where sentences the rule map does not know were paraphrased by the on-device model. */
+    NEURAL,
 }

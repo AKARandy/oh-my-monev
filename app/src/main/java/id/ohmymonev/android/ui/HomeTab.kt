@@ -59,6 +59,7 @@ import id.ohmymonev.android.engine.PreparedReportService
 import id.ohmymonev.android.engine.SiteStatus
 import id.ohmymonev.android.engine.SiteStatusProbe
 import id.ohmymonev.core.enginecore.TodayState
+import id.ohmymonev.core.schedule.ScheduleSettings
 import id.ohmymonev.core.model.ReportDraft
 import id.ohmymonev.core.validator.DeliveryGate
 import id.ohmymonev.android.schedule.AlarmScheduler
@@ -137,13 +138,13 @@ fun HomeTab(
         ActivityResultContracts.RequestPermission(),
     ) { notificationsOn = it }
 
-    fun refreshPratinjau(force: Boolean = false) {
+    fun refreshPratinjau(force: Boolean = false, allowModelRun: Boolean = true) {
         val request = ++previewRequest
         previewJob?.cancel()
         pratinjauLoading = true
         previewJob = scope.launch {
             try {
-                val prepared = PreparedReportService(context).prepare(force)
+                val prepared = PreparedReportService(context).prepare(force, allowModelRun)
                 if (request == previewRequest) {
                     pratinjau = prepared
                 }
@@ -193,13 +194,13 @@ fun HomeTab(
         previewJob?.cancel()
         pratinjau = null
         pratinjauLoading = false
-        if (session.usable) refreshPratinjau()
+        if (session.usable) refreshPratinjau(allowModelRun = false)
     }
     LaunchedEffect(running) {
         if (running) {
             delay(15_000)
             refresh()
-            if (session.usable) refreshPratinjau()
+            if (session.usable) refreshPratinjau(allowModelRun = false)
             val s = withContext(Dispatchers.IO) { store.settingsOnce() }
             armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
             running = false
@@ -321,6 +322,11 @@ fun HomeTab(
             loading = pratinjauLoading,
             onRefresh = { refreshPratinjau(true) },
             holiday = siteStatus?.today == TodayState.LIBUR,
+            loadingText = if (settings?.escalationSource == ScheduleSettings.ContentSource.AUTOMATIC) {
+                "Membuat draf otomatis…"
+            } else {
+                "Mencari laporan Hadir…"
+            },
         )
 
         DraftCard(

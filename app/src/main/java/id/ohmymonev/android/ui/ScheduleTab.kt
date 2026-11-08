@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import id.ohmymonev.android.data.AppStore
+import id.ohmymonev.android.data.ModelStore
 import id.ohmymonev.android.data.ReportTemplate
 import id.ohmymonev.android.engine.PreparedReportService
 import id.ohmymonev.android.schedule.AlarmScheduler
@@ -96,6 +97,10 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
     var editing by remember { mutableStateOf<AlarmId?>(null) }
     var editingTemplate by remember { mutableStateOf(false) }
     var template by remember { mutableStateOf<ReportTemplate?>(null) }
+    var modelReady by remember { mutableStateOf(false) }
+    var modelProgress by remember { mutableStateOf<Int?>(null) }
+    var modelBusy by remember { mutableStateOf(false) }
+    var modelError by remember { mutableStateOf<String?>(null) }
     // Draf editor: hanya ditulis ke penyimpanan saat Simpan ditekan.
     var pendingSubmit by remember { mutableStateOf<(() -> Unit)?>(null) }
     var pendingAuto by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -103,6 +108,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
 
     LaunchedEffect(Unit) {
         template = withContext(Dispatchers.IO) { appStore.template() }
+        modelReady = withContext(Dispatchers.IO) { ModelStore(context).present() }
         loaded = store.settingsOnce()
     }
 
@@ -239,6 +245,28 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 AlarmId.ESCALATION -> current.escalationSource
             },
             templateReady = template != null,
+            autoReady = modelReady && modelProgress == null,
+            modelProgress = modelProgress,
+            modelError = modelError,
+            onDownloadModel = {
+                if (!modelBusy) {
+                    modelBusy = true
+                    modelError = null
+                    modelProgress = 0
+                    scope.launch {
+                        try {
+                            ModelStore(context).download { percent -> modelProgress = percent }
+                            modelReady = true
+                            Toast.makeText(context, "Model terunduh", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            modelError = e.message ?: "Unduhan gagal. Coba lagi."
+                        } finally {
+                            modelBusy = false
+                            modelProgress = null
+                        }
+                    }
+                }
+            },
             onDismiss = { editing = null },
             onSave = { time, enabled, days, source ->
                 val persist: () -> Unit = {
@@ -359,6 +387,10 @@ internal fun AlarmEditor(
     initialDays: Set<DayOfWeek>,
     initialSource: ScheduleSettings.ContentSource? = null,
     templateReady: Boolean = true,
+    autoReady: Boolean = true,
+    modelProgress: Int? = null,
+    modelError: String? = null,
+    onDownloadModel: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onSave: (LocalTime, Boolean, Set<DayOfWeek>, ScheduleSettings.ContentSource) -> Unit,
 ) {
@@ -373,6 +405,8 @@ internal fun AlarmEditor(
     val selectedTime = parseTimeParts(hour, minute)
     val templateBlocked = initialSource != null &&
         source == ScheduleSettings.ContentSource.TEMPLATE && !templateReady
+    val autoBlocked = initialSource != null &&
+        source == ScheduleSettings.ContentSource.AUTOMATIC && !autoReady
     AlertDialog(
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).windowInsetsPadding(WindowInsets.safeDrawing),
@@ -421,12 +455,36 @@ internal fun AlarmEditor(
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
+                    if (source == ScheduleSettings.ContentSource.AUTOMATIC && !autoReady) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Text(
+                            "Model otomatis belum diunduh. Ukuran ~500 MB.",
+                            fontSize = 18.sp,
+                            lineHeight = 26.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        when {
+                            modelProgress != null -> Text(
+                                "Mengunduh… $modelProgress%",
+                                fontSize = 18.sp,
+                                lineHeight = 26.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            onDownloadModel != null -> Button(
+                                onClick = onDownloadModel,
+                                modifier = Modifier.fillMaxWidth().testTag("download-model"),
+                            ) { Text("Unduh model", fontSize = 18.sp) }
+                        }
+                        modelError?.let {
+                            Text(it, fontSize = 18.sp, lineHeight = 26.sp, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 }
             }
         },
         confirmButton = {
             Button(
-                enabled = days.isNotEmpty() && selectedTime != null && !templateBlocked,
+                enabled = days.isNotEmpty() && selectedTime != null && !templateBlocked && !autoBlocked,
                 onClick = { editorView.clearFocus(); parseTimeParts(hour, minute)?.let { onSave(it, enabled, days, source) } },
             ) { Text("Simpan", fontSize = 18.sp) }
         },

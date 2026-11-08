@@ -5,8 +5,10 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.test.core.app.ApplicationProvider
 import id.ohmymonev.android.data.*
+import id.ohmymonev.android.engine.t5.NeuralParaphraser
 import id.ohmymonev.android.schedule.TimeSettingsStore
 import id.ohmymonev.core.generator.GenerationOutcome
+import id.ohmymonev.core.model.GenerationTier
 import id.ohmymonev.core.schedule.ScheduleSettings
 import java.io.File
 import java.time.LocalDate
@@ -37,6 +39,13 @@ class PreparedReportServiceTest {
     private var logCalls = 0
     private var unavailable = false
     private var afterLogs: (suspend () -> Unit)? = null
+    private var paraphraseCalls = 0
+    private var useFakeParaphraser = true
+    private val fakeParaphraser = object : NeuralParaphraser {
+        override suspend fun paraphrase(sentences: List<String>): List<String> =
+            sentences.map { sentence -> paraphraseCalls++.let { "Melanjutkan $sentence" } }
+        override fun close() {}
+    }
     private var activity = "- Memeriksa data penerbangan 123 dengan hasil pemeriksaan awal.\n- Menyusun laporan hasil pemeriksaan untuk tim pengolah data.\n- Menguji hasil pemeriksaan data sebelum pekerjaan dilanjutkan."
     private var lesson = "Memahami urutan pemeriksaan kelengkapan data dan cara mencatat hasil pemeriksaan agar setiap perubahan dapat ditelusuri kembali."
     private val obstacle = "Sebagian data masih memerlukan pemeriksaan lanjutan karena rincian sumber belum lengkap dan perlu dibandingkan dengan dokumen pendukung."
@@ -73,7 +82,9 @@ class PreparedReportServiceTest {
                 else -> error("Unexpected API path: $path")
             }
         }
-    }, { date })
+    }, { date }, {
+        if (useFakeParaphraser) fakeParaphraser else null
+    })
 
     @Test fun workerReusesPersistedPreviewTextUntilExplicitRefresh() = runBlocking {
         val session = session()
@@ -159,15 +170,17 @@ class PreparedReportServiceTest {
         assertNull(context.getSharedPreferences("prepared_report", Context.MODE_PRIVATE).getString("draft", null))
     }
 
-    @Test fun unsupportedActivityKeepsTheOriginalSourceAcrossRestarts() = runBlocking {
+    @Test fun unknownVerbsAreParaphrasedByTheModelAndTheSourceStaysCached() = runBlocking {
         val session = session()
         activity = activity.replace("Memeriksa", "Membikin")
         val result = service(session).prepare()
-        assertTrue(result.outcome() is GenerationOutcome.Failed)
+        val outcome = result.outcome()
+        assertTrue(outcome is GenerationOutcome.Generated)
+        assertEquals(GenerationTier.NEURAL, (outcome as GenerationOutcome.Generated).tier)
         assertEquals(activity, result.sourceReport?.aktivitas)
-        assertTrue(result.issues.any { it.contains("Butir 1") })
         assertEquals(result.sourceReport, service(session).prepare().sourceReport)
         assertEquals(1, logCalls)
+        assertEquals(1, paraphraseCalls)
     }
     @Test fun oldPreparedCacheWithoutSourceMetadataIsRebuilt() = runBlocking {
         val session = session()
@@ -175,6 +188,40 @@ class PreparedReportServiceTest {
             """{"date":"2026-11-09","participantId":"participant-a","sourceDate":"2026-11-06","source":"legacy","draft":null,"issues":[]}""").commit()
         assertNotNull(service(session).prepare().sourceReport)
         assertEquals(1, logCalls)
+    }
+
+    @Test fun neuralModeParaphrasesUnknownVerbsAndMarksTheDayDone() = runBlocking {
+        val session = session()
+        activity = "Mengikuti apel akhir minggu dan menandati daftar hadir peserta magang dengan lengkap. " +
+            "Menjadwalkan pengolahan otomatis pada Windows agar pemeriksaan bulanan berjalan sesuai jadwal. " +
+            "Memperbarui panduan operasi agar sesuai kondisi terbaru."
+        val result = service(session).prepare()
+        val outcome = result.outcome()
+        assertTrue(outcome is GenerationOutcome.Generated)
+        assertEquals(GenerationTier.NEURAL, (outcome as GenerationOutcome.Generated).tier)
+        assertTrue(result.draft!!.aktivitas.startsWith("- Melanjutkan Mengikuti"))
+        assertEquals(3, paraphraseCalls)
+        // Perbarui lagi di hari yang sama tidak menjalankan model kedua kali.
+        val second = service(session).prepare(force = true)
+        assertEquals(result.draft, second.draft)
+        assertEquals(3, paraphraseCalls)
+    }
+    @Test fun previewWithoutModelRunReturnsSentinelAndNeverTouchesTheModel() = runBlocking {
+        val session = session()
+        val sentinel = service(session).prepare(allowModelRun = false)
+        assertNull(sentinel.draft)
+        assertTrue(sentinel.issues.single().contains("Pratinjau otomatis belum dibuat hari ini"))
+        // Sentinel tidak ter-cache: panggilan penuh berikutnya benar-benar membuat draf.
+        val full = service(session).prepare()
+        assertTrue(full.outcome() is GenerationOutcome.Generated)
+    }
+    @Test fun automaticModeWithoutTheModelFailsHonestly() = runBlocking {
+        val session = session()
+        useFakeParaphraser = false
+        val result = service(session).prepare()
+        assertTrue(result.outcome() is GenerationOutcome.Failed)
+        assertTrue(result.issues.single().contains("Model otomatis belum diunduh"))
+        assertEquals(0, logCalls)
     }
 
     @Test fun templateModeUsesTheStoredTemplateWithoutReadingHistory() = runBlocking {

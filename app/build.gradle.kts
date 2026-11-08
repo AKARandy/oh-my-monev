@@ -84,6 +84,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
 
+    // Mesin neural mode Otomatis: runtime ONNX di perangkat.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)

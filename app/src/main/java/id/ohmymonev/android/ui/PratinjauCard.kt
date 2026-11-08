@@ -46,6 +46,7 @@ internal fun PratinjauCard(
     loading: Boolean,
     onRefresh: () -> Unit,
     holiday: Boolean = false,
+    loadingText: String = "Mencari laporan Hadir…",
     modifier: Modifier = Modifier,
 ) {
     var open by remember(prepared) { mutableStateOf(false) }
@@ -65,7 +66,7 @@ internal fun PratinjauCard(
                 TextButton(onClick = onRefresh, enabled = !loading) { Text("Perbarui", fontSize = 18.sp) }
             }
             when {
-                loading -> Text("Mencari laporan Hadir…", fontSize = 20.sp, lineHeight = 28.sp)
+                loading -> Text(loadingText, fontSize = 20.sp, lineHeight = 28.sp)
                 prepared == null -> Text("Login untuk melihat laporan.", fontSize = 20.sp, lineHeight = 28.sp)
                 !hasText -> {
                     // Sebut penyebab sebenarnya: pesan generik menyembunyikan perbedaan mode.
