@@ -55,7 +55,7 @@ class GeneratorPipeline(
 
         val bullets = engine.bullets(previous.draft.aktivitas)
             ?: return GenerationOutcome.Failed(FailureReason.UNSAFE_ACTIVITY,
-                "Ada aktivitas yang tidak dapat diubah dengan aman. Tulis laporan hari ini untuk memperbaikinya.")
+                "Periksa aktivitas berikut:\n" + engine.unsupported(previous.draft.aktivitas).joinToString("\n") { (line, text) -> "Butir $line: $text" })
         if (bullets.size !in 3..5) {
             return GenerationOutcome.Failed(
                 FailureReason.TOO_FEW_BULLETS,

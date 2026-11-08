@@ -50,4 +50,12 @@ class VerbMapperTest {
         assertEquals("Melanjutkan pemeriksaan data 123.", VerbMapper.continuation("Melanjutkan pemeriksaan data 123."))
     }
     @Test fun `a known verb without an object is rejected`() { assertNull(VerbMapper.continuation("Membuat")) }
+    @Test fun `list markers are normalized without changing facts or order`() {
+        val input = "- Memeriksa data 123.\n• Menguji modul A.\n1. Menyusun laporan B.\n2) Melanjutkan pemeriksaan C."
+        assertEquals(listOf("Melanjutkan pemeriksaan data 123.", "Melanjutkan pengujian modul A.",
+            "Melanjutkan penyusunan laporan B.", "Melanjutkan pemeriksaan C."), ContinuationRuleEngine().bullets(input))
+    }
+    @Test fun `unsupported lines retain their number and complete source text`() {
+        assertEquals(listOf(2 to "Membikin data 123."), ContinuationRuleEngine().unsupported("1. Memeriksa data.\n2) Membikin data 123."))
+    }
 }

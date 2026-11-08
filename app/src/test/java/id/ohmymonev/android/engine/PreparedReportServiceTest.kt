@@ -38,6 +38,9 @@ class PreparedReportServiceTest {
     private var lesson = "Memahami urutan pemeriksaan kelengkapan data dan cara mencatat hasil pemeriksaan agar setiap perubahan dapat ditelusuri kembali."
     private val obstacle = "Sebagian data masih memerlukan pemeriksaan lanjutan karena rincian sumber belum lengkap dan perlu dibandingkan dengan dokumen pendukung."
 
+    private fun sourceDate(): String = (1L..7L).map { date.minusDays(it) }
+        .first { it.dayOfWeek !in setOf(java.time.DayOfWeek.SATURDAY, java.time.DayOfWeek.SUNDAY) }.toString()
+
     private suspend fun session(): SessionRepository {
         val vault = SessionTokenStore(context) { SecretKeySpec(ByteArray(16) { 1 }, "AES") }
         vault.save("synthetic-token")
@@ -48,14 +51,16 @@ class PreparedReportServiceTest {
             when {
                 unavailable -> ApiResponse(503, "{}")
                 path == "/users/me" -> ApiResponse(200, JSONObject().put("data", JSONObject()
-                    .put("id", participant).put("off_days", JSONArray().put("SATURDAY").put("SUNDAY"))).toString())
+                    .put("id", participant).put("internship_start_date", "2026-11-01").put("off_days", JSONArray().put("SATURDAY").put("SUNDAY"))).toString())
+                path.startsWith("/attendances?") -> ApiResponse(200, JSONObject().put("data", JSONArray().put(JSONObject()
+                    .put("date", sourceDate()).put("status", "PRESENT").put("approval_status", "SUBMITTED"))).put("page", 1).put("page_size", 100).toString())
                 path.startsWith("/daily-logs?") -> {
                     logCalls++
                     afterLogs?.invoke()
-                    val source = PastReportReader.previousWorkday(date, setOf(java.time.DayOfWeek.SATURDAY, java.time.DayOfWeek.SUNDAY))
+                    val source = sourceDate()
                     ApiResponse(200, JSONObject().put("data", JSONArray().put(JSONObject()
                         .put("date", source.toString()).put("state", "SUBMITTED").put("activity_log", activity)
-                        .put("lesson_learned", lesson).put("obstacles", obstacle))).toString())
+                        .put("lesson_learned", lesson).put("obstacles", obstacle))).put("page", 1).put("page_size", 100).toString())
                 }
                 else -> error("Unexpected API path: $path")
             }
@@ -144,5 +149,23 @@ class PreparedReportServiceTest {
         afterLogs = { session.capture("replacement-token", session.state.value.version) }
         assertTrue(service(session).prepare().outcome() is GenerationOutcome.Failed)
         assertNull(context.getSharedPreferences("prepared_report", Context.MODE_PRIVATE).getString("draft", null))
+    }
+
+    @Test fun unsupportedActivityKeepsTheOriginalSourceAcrossRestarts() = runBlocking {
+        val session = session()
+        activity = activity.replace("Memeriksa", "Membikin")
+        val result = service(session).prepare()
+        assertTrue(result.outcome() is GenerationOutcome.Failed)
+        assertEquals(activity, result.sourceReport?.aktivitas)
+        assertTrue(result.issues.any { it.contains("Butir 1") })
+        assertEquals(result.sourceReport, service(session).prepare().sourceReport)
+        assertEquals(1, logCalls)
+    }
+    @Test fun oldPreparedCacheWithoutSourceMetadataIsRebuilt() = runBlocking {
+        val session = session()
+        context.getSharedPreferences("prepared_report", Context.MODE_PRIVATE).edit().putString("draft",
+            """{"date":"2026-11-09","participantId":"participant-a","sourceDate":"2026-11-06","source":"legacy","draft":null,"issues":[]}""").commit()
+        assertNotNull(service(session).prepare().sourceReport)
+        assertEquals(1, logCalls)
     }
 }

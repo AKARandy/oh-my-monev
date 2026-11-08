@@ -4,70 +4,96 @@ import android.content.Context
 import id.ohmymonev.core.enginecore.SessionState
 import id.ohmymonev.core.model.ReportDraft
 import id.ohmymonev.core.schedule.ScheduleCalculator
+import kotlinx.serialization.Serializable
 import java.net.URLEncoder
-import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import org.json.JSONArray
+import org.json.JSONObject
 
-/** Read real report text using the participant UUID and an exact report date. */
-class PastReportReader(private val context: Context) {
+@Serializable
+internal data class SourceReport(
+    val participantId: String,
+    val date: String,
+    val attendanceStatus: String,
+    val reportStatus: String,
+    val aktivitas: String,
+    val pelajaran: String,
+    val kendala: String,
+) {
+    fun report() = ReportDraft(aktivitas, pelajaran, kendala)
+    fun label(): String = LocalDate.parse(date).format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.forLanguageTag("id-ID")))
+}
+
+/** Join attendance and submitted work reports by participant and date, newest month first. */
+internal class PastReportReader(private val context: Context) {
     data class PastReportResult(
         val sessionState: SessionState,
-        val date: LocalDate,
-        val draft: ReportDraft?,
-        val source: String,
+        val material: SourceReport?,
+        val message: String,
+        val unavailable: Boolean = false,
     )
 
     suspend fun read(): PastReportResult {
-        val today = LocalDate.now(ScheduleCalculator.asiaJakarta)
         val api = MonevApiClient(context)
-        val profile = api.objectData("/users/me")
-            ?: return PastReportResult(api.failureState, today.minusDays(1), null, api.message)
-        return read(today, api, profile)
+        val profile = api.objectData("/users/me") ?: return PastReportResult(api.failureState, null, api.message, true)
+        return read(LocalDate.now(ScheduleCalculator.asiaJakarta), api, profile)
     }
 
-    internal suspend fun read(today: LocalDate, api: MonevApiClient, profile: org.json.JSONObject): PastReportResult {
-        val participantId = profile.optString("id")
-        if (profile.isNull("id") || participantId.isBlank()) {
-            api.failed("Profil peserta belum dapat dibaca.")
-            return PastReportResult(SessionState.UNKNOWN, today.minusDays(1), null, api.message)
+    internal suspend fun read(today: LocalDate, api: MonevApiClient, profile: JSONObject): PastReportResult {
+        suspend fun unavailable(reason: String): PastReportResult {
+            api.failed(reason)
+            return PastReportResult(api.failureState, null, reason, true)
         }
+        val id = profile.optString("id").takeUnless { profile.isNull("id") }.orEmpty()
+        val start = runCatching { LocalDate.parse(profile.getString("internship_start_date").take(10)) }.getOrNull()
+        if (id.isBlank() || start == null) return unavailable("Periode magang belum dapat dibaca.")
         api.confirmActive()
-        val offDays = profile.optJSONArray("off_days")?.let { rows ->
-            (0 until rows.length()).mapNotNull { runCatching { DayOfWeek.valueOf(rows.getString(it)) }.getOrNull() }.toSet()
-        }.orEmpty()
-        val date = previousWorkday(today, offDays)
-            ?: return PastReportResult(SessionState.ACTIVE, today.minusDays(1), null, "Profil tidak memiliki hari kerja.")
-        val month = date.withDayOfMonth(1)
-        val id = URLEncoder.encode(participantId, "UTF-8")
-        val logs = api.arrayData("/daily-logs?participant_id=$id&date=$month&limit=100")
-            ?: return PastReportResult(api.failureState, date, null, api.message)
-        api.confirmActive()
-        val draft = exactReport(logs, date)
-        val label = date.format(DateTimeFormatter.ofPattern("d MMMM yyyy", Locale("id", "ID")))
-        return PastReportResult(SessionState.ACTIVE, date, draft,
-            if (draft == null) "Situs tidak memiliki laporan lengkap untuk $label." else "Dari laporan situs tanggal $label.")
+        val encodedId = URLEncoder.encode(id, "UTF-8")
+        var end = today.minusDays(1)
+        while (!end.isBefore(start)) {
+            val month = end.withDayOfMonth(1)
+            val from = maxOf(start, month)
+            val attendances = api.allPages("/attendances?participant_id=$encodedId&start_date=$from&end_date=$end&limit=100")
+                ?: return PastReportResult(api.failureState, null, api.message, true)
+            if ((0 until attendances.length()).any { parseDate(attendances.getJSONObject(it)) == null })
+                return unavailable("Tanggal kehadiran belum dapat dibaca.")
+            val present = (0 until attendances.length()).map { attendances.getJSONObject(it) }
+                .filter { belongsTo(it, id) && it.optString("status") == "PRESENT" }
+                .mapNotNull { row -> parseDate(row)?.takeIf { it >= from && it <= end } }.toSet()
+            if (present.isNotEmpty()) {
+                val logs = api.allPages("/daily-logs?participant_id=$encodedId&date=$month&limit=100")
+                    ?: return PastReportResult(api.failureState, null, api.message, true)
+                if ((0 until logs.length()).any { parseDate(logs.getJSONObject(it)) == null })
+                    return unavailable("Tanggal laporan belum dapat dibaca.")
+                val source = latestReport(logs, present, id)
+                if (source != null) {
+                    api.confirmActive()
+                    return PastReportResult(SessionState.ACTIVE, source, "Hadir · ${source.label()}")
+                }
+            }
+            end = month.minusDays(1)
+        }
+        return PastReportResult(SessionState.ACTIVE, null, "Belum ada laporan Hadir yang dapat digunakan")
     }
 
     companion object {
-        internal fun previousWorkday(today: LocalDate, offDays: Set<DayOfWeek>): LocalDate? =
-            (1L..7L).map { today.minusDays(it) }.firstOrNull { it.dayOfWeek !in offDays }
+        private val submittedStates = setOf("SUBMITTED", "REVISION_SUBMITTED", "APPROVED", "COMPLETED")
+        private fun parseDate(row: JSONObject): LocalDate? = runCatching { LocalDate.parse(row.getString("date").take(10)) }.getOrNull()
+        private fun belongsTo(row: JSONObject, id: String) = !row.has("participant_id") || row.optString("participant_id") == id
 
-        internal fun exactReport(logs: JSONArray, date: LocalDate): ReportDraft? {
-            for (i in 0 until logs.length()) {
-                val row = logs.optJSONObject(i) ?: continue
-                if (row.optString("date").take(10) != date.toString() || row.optString("state") == "DRAFT") continue
-                fun text(key: String) = if (row.isNull(key)) "" else row.optString(key).trim()
-                val activity = text("activity_log")
-                val lesson = text("lesson_learned")
-                val obstacle = text("obstacles")
-                if (activity.isNotBlank() && lesson.isNotBlank() && obstacle.isNotBlank()) {
-                    return ReportDraft(activity, lesson, obstacle)
+        internal fun latestReport(logs: JSONArray, present: Set<LocalDate>, id: String): SourceReport? =
+            (0 until logs.length()).map { logs.getJSONObject(it) }
+                .filter { belongsTo(it, id) && parseDate(it) in present && it.optString("state") in submittedStates }
+                .sortedByDescending { parseDate(it) }
+                .firstNotNullOfOrNull { row ->
+                    fun text(key: String) = if (row.isNull(key)) "" else row.optString(key)
+                    val activity = text("activity_log")
+                    val lesson = text("lesson_learned")
+                    val obstacle = text("obstacles")
+                    if (activity.isBlank() || lesson.isBlank() || obstacle.isBlank()) null
+                    else SourceReport(id, requireNotNull(parseDate(row)).toString(), "PRESENT", row.getString("state"), activity, lesson, obstacle)
                 }
-            }
-            return null
-        }
     }
 }

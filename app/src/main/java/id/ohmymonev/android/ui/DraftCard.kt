@@ -25,6 +25,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
 import id.ohmymonev.android.data.AppStore
 import id.ohmymonev.android.data.StoredDraft
 import id.ohmymonev.core.model.ReportDraft
@@ -50,6 +54,7 @@ fun DraftCard(
     val context = LocalContext.current
     val store = remember { AppStore(context) }
     val scope = rememberCoroutineScope()
+    val editorScrollState = rememberScrollState()
     val todayIso = LocalDate.now(ScheduleCalculator.asiaJakarta).toString()
 
     var aktivitas by remember { mutableStateOf("") }
@@ -82,7 +87,7 @@ fun DraftCard(
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.heightIn(max = if (expanded) 620.dp else 200.dp).scrollIndicator(editorScrollState).verticalScroll(editorScrollState).padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -92,11 +97,11 @@ fun DraftCard(
                     Text("Tulisan hari ini", style = MaterialTheme.typography.titleMedium)
                     Text(
                         text = when {
-                            isEmpty -> "Kosong. Mesin akan memakai laporan kemarin bila ada."
-                            !gate.passed -> "Tertulis, belum memenuhi aturan situs."
-                            else -> "Tertulis dan siap diisi ke situs."
+                            isEmpty -> "Belum ditulis."
+                            !gate.passed -> "Perlu diperiksa."
+                            else -> "Siap digunakan."
                         },
-                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 18.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }

@@ -4,6 +4,13 @@ import android.app.Application
 import android.content.Context
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Text
+import androidx.compose.ui.unit.sp
+import id.ohmymonev.android.ui.scrollIndicator
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
@@ -152,15 +159,40 @@ class UiRenderTest {
         SessionStatusCard(SessionSnapshot(SessionRecord(false, "2026-11-07T10:00:00+07:00"), issue = "Sesi berakhir. Login kembali."), false, {})
     }
 
-    @Test @Config(qualifiers = "w411dp-h1800dp-xhdpi")
-    fun automaticPreviewReady() = capture("forge-preview-ready", "Pratinjau otomatis", captureTag = "automatic-preview") {
-        PratinjauCard(GenerationOutcome.Generated(ReportDraft(
-            "- Melanjutkan pemeriksaan kelengkapan data.\n- Melanjutkan validasi hasil pemeriksaan.\n- Melanjutkan penyusunan catatan hasil.",
+    private fun preview(issues: List<String> = emptyList()): id.ohmymonev.android.engine.PreparedReport {
+        val original = id.ohmymonev.android.engine.SourceReport("participant", "2026-11-06", "PRESENT", "SUBMITTED",
+            "- Memeriksa kelengkapan data penerbangan untuk laporan mingguan.\n- Menguji hasil pemeriksaan dengan dokumen pendukung.\n- Menyusun catatan hasil pemeriksaan untuk tim.",
             "Memahami urutan pemeriksaan kelengkapan data dan cara mencatat hasil pemeriksaan agar setiap perubahan dapat ditelusuri kembali.",
-            "Sebagian data masih memerlukan pemeriksaan lanjutan karena rincian sumber belum lengkap dan perlu dibandingkan dengan dokumen pendukung.",
-        ), GenerationTier.CONTINUATION_RULES, emptyList()), false, "Dari laporan situs tanggal 6 November 2026.", {})
+            "Sebagian data masih memerlukan pemeriksaan lanjutan karena rincian sumber belum lengkap dan perlu dibandingkan dengan dokumen pendukung.")
+        val source = if (issues.isEmpty()) original else original.copy(aktivitas = original.aktivitas.replace("Memeriksa", "Membikin"))
+        val generated = id.ohmymonev.core.generator.ContinuationRuleEngine().bullets(source.aktivitas)?.joinToString("\n") { "- $it" }
+        return id.ohmymonev.android.engine.PreparedReport("2026-11-08", "participant", source.date, "Hadir · ${source.label()}",
+            if (issues.isEmpty()) id.ohmymonev.android.data.StoredDraft("2026-11-08", requireNotNull(generated), source.pelajaran, source.kendala) else null,
+            issues, sourceReport = source, sourceReadComplete = true)
     }
 
+    @Test fun automaticPreviewReady() = capture("forge-preview-ready", "Pratinjau", captureTag = "automatic-preview") {
+        PratinjauCard(preview(), false, {})
+    }
+    @Test fun sourceSurvivesFailedGeneration() = capture("forge-preview-needs-edit", "Draf perlu diperiksa", captureTag = "automatic-preview") {
+        PratinjauCard(preview(listOf("Butir 1: Membikin ringkasan data.")), false, {})
+    }
+    @Test fun missingSource() = capture("forge-preview-empty", "Belum ada laporan Hadir", captureTag = "automatic-preview") {
+        PratinjauCard(id.ohmymonev.android.engine.PreparedReport("2026-11-08", "participant", "", "", null,
+            listOf("Belum ada laporan Hadir yang dapat digunakan"), sourceReadComplete = true), false, {})
+    }
+    @Test fun unavailableSource() = capture("forge-preview-unavailable", "Sumber belum terbaca", captureTag = "automatic-preview") {
+        PratinjauCard(id.ohmymonev.android.engine.PreparedReport("2026-11-08", "participant", "", "", null,
+            listOf("Situs belum dapat dihubungi. Coba Perbarui kembali."), sourceUnavailable = true), false, {})
+    }
+    @Test @Config(qualifiers = "w360dp-h1100dp-xhdpi")
+    fun previewLargeText() = capture("forge-preview-large-text", "Pratinjau", 1.3f, captureTag = "automatic-preview") {
+        PratinjauCard(preview(), false, {}, holiday = true)
+    }
+    @Test @Config(qualifiers = "w411dp-h1800dp-xhdpi")
+    fun fullSourceDetails() = capture("forge-preview-source-full", "Laporan sumber", captureTag = "report-details") {
+        id.ohmymonev.android.ui.ReportDetails(requireNotNull(preview().sourceReport).report(), "Laporan sumber")
+    }
 
     @Test @Config(qualifiers = "w411dp-h2400dp-xhdpi")
     fun scheduleDisabled() = capture("forge-schedule-disabled", "Aktifkan semua fitur", captureCards = true, masterEnabled = false) { ScheduleTab() }
@@ -176,15 +208,21 @@ class UiRenderTest {
         id.ohmymonev.android.ui.ScheduleStatus(
             id.ohmymonev.android.schedule.AlarmScheduler.ArmedState(false, null, "Semua fitur nonaktif"), {})
     }
-    @Test @Config(qualifiers = "w411dp-h1800dp-xhdpi")
-    fun holidayPreview() = capture("forge-preview-holiday", "Laporan tidak diperlukan", captureTag = "automatic-preview") {
-        PratinjauCard(GenerationOutcome.Generated(ReportDraft(
-            "- Melanjutkan pemeriksaan kelengkapan data.\n- Melanjutkan validasi hasil pemeriksaan.\n- Melanjutkan penyusunan catatan hasil.",
-            "Memahami urutan pemeriksaan kelengkapan data dan cara mencatat hasil pemeriksaan agar setiap perubahan dapat ditelusuri kembali.",
-            "Sebagian data masih memerlukan pemeriksaan lanjutan karena rincian sumber belum lengkap dan perlu dibandingkan dengan dokumen pendukung.",
-        ), GenerationTier.CONTINUATION_RULES, emptyList()), false, "Dari laporan situs tanggal 6 November 2026.", {}, holiday = true)
+    @Test fun holidayPreview() = capture("forge-preview-holiday", "Hari libur", captureTag = "automatic-preview") {
+        PratinjauCard(preview(), false, {}, holiday = true)
     }
     @Test @Config(qualifiers = "w360dp-h3200dp-xhdpi")
     fun scheduleLargeTextExplained() = capture("forge-schedule-explained-large-text", "Aktifkan semua fitur", 1.3f, captureCards = true) { ScheduleTab() }
 
+
+    @androidx.compose.runtime.Composable
+    private fun ScrollFixture(initial: Int) {
+        val scroll = rememberScrollState(initial)
+        Column(Modifier.fillMaxWidth().height(440.dp).scrollIndicator(scroll).verticalScroll(scroll).padding(20.dp)) {
+            repeat(25) { Text("Baris laporan ${it + 1}", fontSize = 20.sp, modifier = Modifier.padding(bottom = 20.dp)) }
+        }
+    }
+    @Test fun scrollbarTop() = capture("forge-scrollbar-top", "Baris laporan") { ScrollFixture(0) }
+    @Test fun scrollbarMiddle() = capture("forge-scrollbar-middle", "Baris laporan") { ScrollFixture(600) }
+    @Test fun scrollbarBottom() = capture("forge-scrollbar-bottom", "Baris laporan") { ScrollFixture(100000) }
 }

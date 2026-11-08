@@ -31,6 +31,9 @@ internal data class PreparedReport(
     val draft: StoredDraft?,
     val issues: List<String>,
     val written: StoredDraft? = null,
+    val sourceReport: SourceReport? = null,
+    val sourceReadComplete: Boolean = false,
+    val sourceUnavailable: Boolean = false,
     @kotlinx.serialization.Transient val sessionVersion: Long? = null,
 ) {
     fun outcome(): GenerationOutcome {
@@ -71,7 +74,7 @@ internal class PreparedReportService(
         val cached = withContext(Dispatchers.IO) { runCatching {
             preferences.getString("draft", null)?.let { json.decodeFromString<PreparedReport>(it) }
         }.getOrNull() }
-        if (!force && today() == date && cached?.date == date.toString() && cached.participantId == id && cached.written == written && api.isCurrent()) {
+        if (!force && today() == date && cached?.date == date.toString() && cached.participantId == id && cached.written == written && cached.sourceReadComplete && api.isCurrent()) {
             return cached.copy(sessionVersion = api.credentialVersion)
         }
         // A failed refresh must not leave an older preview available to the worker.
@@ -79,25 +82,29 @@ internal class PreparedReportService(
         val sourceDate: LocalDate
         val source: String
         val outcome: GenerationOutcome
+        var material: SourceReport? = null
+        var sourceUnavailable = false
         if (written != null) {
             sourceDate = date
             source = "Dari tulisan Anda untuk hari ini."
             outcome = GenerationOutcome.Generated(written.report(), GenerationTier.TEMPLATE, emptyList())
         } else {
             val previous = PastReportReader(context).read(date, api, profile)
-            sourceDate = previous.date
-            source = previous.source
-            outcome = previous.draft?.let { material ->
-                GeneratorPipeline(history = ReportHistory { DatedReport(previous.date, material) }).generate(date)
-            } ?: GenerationOutcome.Failed(FailureReason.NO_SOURCE_MATERIAL, previous.source)
+            material = previous.material
+            sourceDate = material?.date?.let(LocalDate::parse) ?: date
+            source = previous.message
+            sourceUnavailable = previous.unavailable
+            outcome = material?.let { report ->
+                GeneratorPipeline(history = ReportHistory { DatedReport(LocalDate.parse(report.date), report.report()) }).generate(date)
+            } ?: GenerationOutcome.Failed(FailureReason.NO_SOURCE_MATERIAL, previous.message)
         }
         if (today() != date || !api.isCurrent() || withContext(Dispatchers.IO) { store.todayDraft(date.toString()) } != writtenSnapshot) return failed(today(), "Tanggal atau peserta berubah. Perbarui pratinjau.")
         val draft = (outcome as? GenerationOutcome.Generated)?.draft
         val issues = if (outcome is GenerationOutcome.Failed) listOf(outcome.detail) else validationIssues(requireNotNull(draft))
         val prepared = PreparedReport(date.toString(), id, sourceDate.toString(), source,
-            draft?.let { StoredDraft(date.toString(), it.aktivitas, it.pelajaran, it.kendala) }, issues, written)
+            draft?.let { StoredDraft(date.toString(), it.aktivitas, it.pelajaran, it.kendala) }, issues, written, material, !sourceUnavailable, sourceUnavailable)
         // Transient API failures are retryable; only material-backed results are cached.
-        if (draft != null) withContext(Dispatchers.IO) {
+        if (!sourceUnavailable) withContext(Dispatchers.IO) {
             val owned = written?.copy(participantId = id)
             if (owned != null) store.saveTodayDraft(owned)
             save(prepared.copy(written = owned))
@@ -105,7 +112,7 @@ internal class PreparedReportService(
         return prepared.copy(sessionVersion = api.credentialVersion)
     }
 
-    private fun failed(date: LocalDate, message: String) = PreparedReport(date.toString(), "", "", "", null, listOf(message))
+    private fun failed(date: LocalDate, message: String) = PreparedReport(date.toString(), "", "", message, null, listOf(message), sourceUnavailable = true)
 
     private fun save(report: PreparedReport?) {
         val edit = preferences.edit()

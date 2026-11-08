@@ -1,9 +1,13 @@
 package id.ohmymonev.core.generator
 
-/** Preserve every source activity. Refuse the whole conversion if any verb is unsupported. */
+/** Normalize list markers only; every activity and its position are preserved. */
 class ContinuationRuleEngine {
-    fun bullets(previousAktivitas: String): List<String>? {
-        val lines = previousAktivitas.lines().map { it.trim() }.filter { it.isNotEmpty() }
-        return lines.map { VerbMapper.continuation(it.removePrefix("- ")) ?: return null }
+    fun activities(text: String): List<String> = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        .map { it.replaceFirst(Regex("""^(?:[-•]\s*|\d+[.)]\s+)"""), "") }
+
+    fun unsupported(text: String): List<Pair<Int, String>> = activities(text).mapIndexedNotNull { index, line ->
+        if (VerbMapper.continuation(line) == null) index + 1 to line else null
     }
+
+    fun bullets(text: String): List<String>? = activities(text).map { VerbMapper.continuation(it) ?: return null }
 }

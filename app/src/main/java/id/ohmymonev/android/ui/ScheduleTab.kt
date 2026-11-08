@@ -114,17 +114,19 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
         }
     }
 
+    val scrollState = rememberScrollState()
     Column(
         modifier = modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .scrollIndicator(scrollState)
+            .verticalScroll(scrollState)
             .padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Jadwal", style = MaterialTheme.typography.headlineMedium)
             Text(
-                "Anda dapat mengaktifkan setiap fitur secara terpisah. Semua jam memakai WIB. Tekan Atur fitur untuk mengubah hari, jam, dan tindakan.",
+                "Semua jam memakai WIB.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -140,7 +142,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Aktifkan semua fitur", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        if (current.masterEnabled) "Setiap fitur memakai hari dan jamnya sendiri." else "Semua fitur sedang dijeda.",
+                        if (current.masterEnabled) "Jadwal aktif" else "Jadwal nonaktif",
                         fontSize = 18.sp,
                         lineHeight = 26.sp,
                     )
@@ -162,7 +164,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             enabled = current.reminderEnabled,
             controlsEnabled = current.masterEnabled,
             effective = current.reminderEnabled && current.masterEnabled,
-            detail = "Aplikasi mengirim notifikasi.\nIsi formulir melalui situs.\nKirim laporan melalui situs.",
+            detail = "Mengingatkan Anda untuk mengisi laporan.",
             onToggle = { on -> save { it.copy(reminderEnabled = on) } },
         ) {
             editing = AlarmId.REMINDER
@@ -176,9 +178,9 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             controlsEnabled = current.masterEnabled,
             effective = current.autofillEnabled && current.masterEnabled,
             detail = when (current.autofillPolicy) {
-                ScheduleSettings.Policy.REMIND_ONLY -> "Aplikasi mengirim notifikasi.\nIsi formulir melalui situs.\nKirim laporan melalui situs."
-                ScheduleSettings.Policy.FILL_ONLY -> "Aplikasi mengisi formulir.\nPeriksa formulir di situs.\nKirim laporan dari situs."
-                ScheduleSettings.Policy.FILL_AND_SUBMIT -> "Aplikasi mengisi formulir.\nAplikasi mengirim laporan."
+                ScheduleSettings.Policy.REMIND_ONLY -> "Mengirim pengingat saja."
+                ScheduleSettings.Policy.FILL_ONLY -> "Mengisi formulir; Anda yang mengirim."
+                ScheduleSettings.Policy.FILL_AND_SUBMIT -> "Mengisi dan mengirim laporan."
             },
             onToggle = { on -> save { it.copy(autofillEnabled = on) } },
         ) {
@@ -194,11 +196,11 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             effective = current.escalationEnabled && current.masterEnabled,
             detail = when {
                 current.escalationAction == ScheduleSettings.Policy.REMIND_ONLY ->
-                    "Aplikasi mengirim notifikasi lagi.\nIsi formulir melalui situs.\nKirim laporan melalui situs."
+                    "Mengirim pengingat terakhir."
                 current.escalationAction == ScheduleSettings.Policy.FILL_AND_SUBMIT ->
-                    "Aplikasi mengirim notifikasi lagi.\nJika laporan belum terisi, aplikasi mencoba mengisi formulir.\nAplikasi lalu mengirim laporan."
+                    "Mencoba isi dan kirim jika belum tercatat."
                 else ->
-                    "Aplikasi mengirim notifikasi lagi.\nJika laporan belum terisi, aplikasi mencoba mengisi formulir.\nPeriksa formulir di situs.\nKirim laporan dari situs."
+                    "Mencoba mengisi; Anda yang mengirim."
             },
             onToggle = { on -> save { it.copy(escalationEnabled = on) } },
         ) {
@@ -318,6 +320,7 @@ internal fun AlarmEditor(
     var enabled by remember { mutableStateOf(initialEnabled) }
     var days by remember { mutableStateOf(initialDays) }
     var action by remember { mutableStateOf(initialAction ?: ScheduleSettings.Policy.REMIND_ONLY) }
+    val editorScrollState = rememberScrollState()
     val timeState = androidx.compose.material3.rememberTimePickerState(
         initialHour = initialTime.hour,
         initialMinute = initialTime.minute,
@@ -330,7 +333,7 @@ internal fun AlarmEditor(
         title = { Text(title) },
         text = {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
+                modifier = Modifier.scrollIndicator(editorScrollState).verticalScroll(editorScrollState).padding(end = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text("Jam (WIB, 24 jam)", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)

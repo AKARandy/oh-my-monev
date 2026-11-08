@@ -54,6 +54,7 @@ import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.data.AppStore
 import id.ohmymonev.android.data.StoredDraft
 import id.ohmymonev.android.engine.BenchStatusSite
+import id.ohmymonev.android.engine.PreparedReport
 import id.ohmymonev.android.engine.PreparedReportService
 import id.ohmymonev.android.engine.SiteStatus
 import id.ohmymonev.android.engine.SiteStatusProbe
@@ -65,7 +66,6 @@ import id.ohmymonev.android.schedule.AutoFillService
 import id.ohmymonev.android.schedule.TimeSettingsStore
 import id.ohmymonev.core.enginecore.EngineOutcome
 import id.ohmymonev.core.enginecore.RunRecord
-import id.ohmymonev.core.generator.GenerationOutcome
 import id.ohmymonev.core.schedule.ScheduleCalculator
 import id.ohmymonev.core.schedule.ScheduleSettings
 import id.ohmymonev.core.siteprofile.DEFAULT_SITE_PROFILE
@@ -126,10 +126,10 @@ fun HomeTab(
     var checkingStatus by remember { mutableStateOf(false) }
     var tonightSkipped by remember { mutableStateOf(false) }
     var armedState by remember { mutableStateOf<AlarmScheduler.ArmedState?>(null) }
-    var pratinjau by remember { mutableStateOf<GenerationOutcome?>(null) }
+    var pratinjau by remember { mutableStateOf<PreparedReport?>(null) }
     var pratinjauLoading by remember { mutableStateOf(false) }
-    var pratinjauSource by remember { mutableStateOf<String?>(null) }
     var editorExpanded by remember { mutableStateOf(false) }
+    var infoExpanded by remember { mutableStateOf(false) }
     var diagnosticsExpanded by remember { mutableStateOf(false) }
 
     val locationLauncher = rememberLauncherForActivityResult(
@@ -147,8 +147,7 @@ fun HomeTab(
             try {
                 val prepared = PreparedReportService(context).prepare(force)
                 if (request == previewRequest) {
-                    pratinjauSource = prepared.source
-                    pratinjau = prepared.outcome()
+                    pratinjau = prepared
                 }
             } finally { if (request == previewRequest) pratinjauLoading = false }
         }
@@ -191,7 +190,6 @@ fun HomeTab(
     LaunchedEffect(session.version, session.usable, todayIso) {
         previewJob?.cancel()
         pratinjau = null
-        pratinjauSource = null
         pratinjauLoading = false
         if (session.usable) refreshPratinjau()
     }
@@ -222,19 +220,23 @@ fun HomeTab(
     val noReportRequired = siteStatus?.sessionActive == true &&
         (siteStatus?.today == TodayState.FILLED || siteStatus?.today == TodayState.LIBUR)
 
+    val needsDraftCorrection = pratinjau != null && !pratinjauLoading && !pratinjau!!.sourceUnavailable &&
+        pratinjau!!.outcome() is id.ohmymonev.core.generator.GenerationOutcome.Failed
+    val previewReady = pratinjau?.outcome() is id.ohmymonev.core.generator.GenerationOutcome.Generated
     val scrollState = rememberScrollState()
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .scrollIndicator(scrollState)
                 .verticalScroll(scrollState)
                 .padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
                 text = ZonedDateTime.now(ScheduleCalculator.asiaJakarta).format(DATE_FORMAT).uppercase(ID_LOCALE),
-                style = MaterialTheme.typography.labelSmall,
+                fontSize = 18.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text("Laporan hari ini", style = MaterialTheme.typography.headlineMedium)
@@ -243,16 +245,17 @@ fun HomeTab(
                     confirmingSession -> "Memeriksa login tersimpan…"
                     settings == null -> "Memuat jadwal…"
                     siteStatus?.sessionActive == true && siteStatus?.today == TodayState.FILLED ->
-                        "Laporan hari ini sudah tercatat di situs."
+                        "Sudah tercatat"
                     siteStatus?.sessionActive == true && siteStatus?.today == TodayState.LIBUR ->
-                        "Hari libur. Tidak perlu laporan hari ini."
+                        "Hari libur"
                     !sessionReadyForAutomation() && session.hasToken -> "Login tersimpan. Pemeriksaan belum berhasil."
-                    !sessionReadyForAutomation() -> "Login untuk menyiapkan laporan hari ini."
+                    !sessionReadyForAutomation() -> "Login untuk melanjutkan."
                     todayDraft != null && !draftValid -> "Perbaiki laporan sebelum mengisi formulir."
                     draftValid -> "Laporan siap diisi ke formulir."
                     else -> "Siapkan laporan hari ini, lalu isi formulir."
                 },
-                style = MaterialTheme.typography.bodyMedium,
+                fontSize = 20.sp,
+                lineHeight = 28.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -264,11 +267,12 @@ fun HomeTab(
                 when {
                     noReportRequired -> onOpenSession()
                     !sessionReadyForAutomation() -> onOpenSession()
-                    todayDraft != null && !draftValid -> editorExpanded = true
+                    (todayDraft != null && !draftValid) || needsDraftCorrection -> editorExpanded = true
+                    !previewReady -> refreshPratinjau(true)
                     else -> { AutoFillService.start(context, lastChance = false); running = true }
                 }
             },
-            enabled = !running && !confirmingSession && (noReportRequired || !sessionReadyForAutomation() || !needSetup),
+            enabled = !running && !pratinjauLoading && !confirmingSession && (noReportRequired || !sessionReadyForAutomation() || !needSetup),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp)
@@ -284,7 +288,8 @@ fun HomeTab(
                     !sessionReadyForAutomation() && session.hasToken -> "Cek sesi tersimpan"
                     !sessionReadyForAutomation() -> "Login ke Monev"
                     needSetup -> "Lengkapi izin di bawah"
-                    todayDraft != null && !draftValid -> "Perbaiki laporan"
+                    (todayDraft != null && !draftValid) || needsDraftCorrection -> "Tulis laporan hari ini"
+                    !previewReady -> "Perbarui pratinjau"
                     settings?.autofillPolicy == ScheduleSettings.Policy.FILL_AND_SUBMIT -> "Isi dan kirim sekarang"
                     else -> "Isi formulir sekarang"
                 },
@@ -293,9 +298,8 @@ fun HomeTab(
         }
 
         // Satu kartu persiapan: tutorial dan status digabung; langkah mencentang dari keadaan nyata.
-        if (needSetup && !confirmingSession) {
+        if ((!locationGranted || !notificationsOn) && !confirmingSession) {
             ReadinessCard(
-                sessionActive = if (session.hasToken) sessionActive else null,
                 locationGranted = locationGranted,
                 notificationsOn = notificationsOn,
                 // Satu fungsi satu tombol: memeriksa sesi hanya ada di tab Sesi.
@@ -308,9 +312,12 @@ fun HomeTab(
             )
         }
 
-        if (sessionReadyForAutomation() && !noReportRequired) {
-            TextButton(onClick = onOpenSession) { Text("Buka situs Monev") }
-        }
+        PratinjauCard(
+            prepared = pratinjau,
+            loading = pratinjauLoading,
+            onRefresh = { refreshPratinjau(true) },
+            holiday = siteStatus?.today == TodayState.LIBUR,
+        )
 
         DraftCard(
             expanded = editorExpanded,
@@ -325,27 +332,14 @@ fun HomeTab(
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Malam ini", style = MaterialTheme.typography.titleMedium)
-
+            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 ScheduleStatus(armedState, onCheck = { refreshArmed() })
 
-                settings?.let { s ->
-                    Text(
-                        automationSummary(s, ZonedDateTime.now(ScheduleCalculator.asiaJakarta), tonightSkipped),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        "Periksa tindakan setiap fitur di Jadwal.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
                 var confirmSkip by remember { mutableStateOf(false) }
                 if (settings?.masterEnabled == true && tonightSkipped) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Text(
-                        "Otomatisasi malam ini dimatikan. Isi manual sebelum 23.59 WIB.",
+                        "Dijeda untuk malam ini.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -358,7 +352,7 @@ fun HomeTab(
                 } else if (settings?.masterEnabled == true) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     TextButton(onClick = { confirmSkip = true }) {
-                        Text("Isi sendiri malam ini (matikan otomatis)", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Jeda malam ini", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 if (confirmSkip) {
@@ -396,7 +390,7 @@ fun HomeTab(
                 AlertDialog(
                     onDismissRequest = { confirmDelete = false },
                     title = { Text("Hapus tulisan hari ini?") },
-                    text = { Text("Kalau malam tiba tanpa tulisan, mesin akan memakai laporan kemarin (bila ada).") },
+                    text = { Text("Aplikasi akan memakai laporan Hadir terbaru jika tersedia.") },
                     confirmButton = {
                         TextButton(onClick = {
                             confirmDelete = false
@@ -420,16 +414,9 @@ fun HomeTab(
             }
         }
 
-        PratinjauCard(
-            outcome = pratinjau,
-            loading = pratinjauLoading,
-            source = pratinjauSource,
-            onRefresh = { refreshPratinjau(true) },
-            holiday = siteStatus?.today == TodayState.LIBUR,
-        )
-
         LastRunRow(lastRecord)
-        DisclaimerCard()
+        TextButton(onClick = { infoExpanded = !infoExpanded }) { Text("Tentang aplikasi", fontSize = 18.sp) }
+        if (infoExpanded) DisclaimerCard()
         TextButton(onClick = { diagnosticsExpanded = !diagnosticsExpanded }) {
             Text(if (diagnosticsExpanded) "Tutup alat pengujian" else "Alat pengujian")
         }
@@ -617,7 +604,6 @@ private fun TimeSlot(label: String, time: LocalTime, modifier: Modifier = Modifi
 
 @Composable
 private fun ReadinessCard(
-    sessionActive: Boolean?,
     locationGranted: Boolean,
     notificationsOn: Boolean,
     onGrantLocation: () -> Unit,
@@ -631,15 +617,6 @@ private fun ReadinessCard(
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Persiapan", style = MaterialTheme.typography.titleMedium)
-            if (sessionActive != true) {
-                ReadyRow(
-                    label = "Sesi login",
-                    ok = sessionActive,
-                    detail = "Gunakan tombol di atas untuk memeriksa login",
-                    action = null,
-                    onAction = {},
-                )
-            }
             if (!locationGranted) {
                 ReadyRow("Izin lokasi", false, "Dibutuhkan situs", "Izinkan", onGrantLocation)
             }
@@ -751,7 +728,7 @@ internal fun ScheduleStatus(state: AlarmScheduler.ArmedState?, onCheck: () -> Un
         )
         if (state?.nextFireISO != null) {
             Text(
-                if (state.armed) "Alarm aplikasi berhasil dijadwalkan." else "Pemasangan alarm belum dikonfirmasi.",
+                if (state.armed) "Alarm dijadwalkan" else "Alarm belum terkonfirmasi",
                 fontSize = 18.sp, lineHeight = 26.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

@@ -64,7 +64,7 @@ private fun dotColor(outcome: EngineOutcome): Color = when (outcome) {
     EngineOutcome.READBACK_MISMATCH,
     EngineOutcome.SUBMIT_FAILED,
     EngineOutcome.RETRYABLE_ERROR,
-    -> Color(0xFFC5221F)
+    -> Color(0xFFDB162F)
     EngineOutcome.UNKNOWN -> Color(0xFF8A8F98)
 }
 
@@ -85,10 +85,12 @@ fun LogTab(modifier: Modifier = Modifier) {
         loading = false
     }
 
+    val scrollState = rememberScrollState()
     Column(
         modifier = modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .scrollIndicator(scrollState)
+            .verticalScroll(scrollState)
             .padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {

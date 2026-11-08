@@ -42,12 +42,7 @@ class SiteStatusProbe(private val context: Context) {
         val days = attendances?.let { rows ->
             (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }.sortedBy { it.optString("date") }.mapNotNull { row ->
                 val date = runCatching { LocalDate.parse(row.optString("date").take(10)) }.getOrNull() ?: return@mapNotNull null
-                val state = when {
-                    row.optString("status") == "DAYOFF" -> "Jadwal libur posisi"
-                    row.optString("approval_status") == "APPROVED" -> if (row.optString("status") == "ON_LEAVE") "Izin disetujui" else "Hadir disetujui"
-                    row.optString("approval_status") == "SUBMITTED" -> "Menunggu Persetujuan"
-                    else -> "Belum Diisi"
-                }
+                val state = attendanceLabel(row)
                 DayEntry(date.format(format), state)
             }
         }.orEmpty()
@@ -57,6 +52,23 @@ class SiteStatusProbe(private val context: Context) {
     }
 
     companion object {
+        internal fun attendanceLabel(row: JSONObject): String {
+            val kind = when (row.optString("status")) {
+                "PRESENT" -> "Hadir"
+                "ON_LEAVE" -> "Tidak hadir dengan keterangan"
+                "ABSENT" -> "Tidak hadir tanpa keterangan"
+                "DAYOFF" -> return "Hari libur"
+                else -> return "Status belum dikenali"
+            }
+            val approval = when (row.optString("approval_status")) {
+                "APPROVED" -> "disetujui"
+                "SUBMITTED" -> "menunggu persetujuan"
+                "REJECTED" -> "ditolak"
+                else -> "status persetujuan belum diketahui"
+            }
+            return "$kind · $approval"
+        }
+
         internal fun todayState(home: JSONObject): TodayState = when {
             home.optBoolean("is_holiday") || home.optBoolean("is_scheduled_off_day") -> TodayState.LIBUR
             home.optBoolean("has_attendance") -> TodayState.FILLED

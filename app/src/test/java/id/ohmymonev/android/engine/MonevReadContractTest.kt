@@ -27,22 +27,17 @@ class MonevReadContractTest {
 
     @Test fun previewUsesOnlyTheExactRequestedDate() {
         val rows = JSONArray().put(row("2026-11-05").put("lesson_learned", "wrong row")).put(row("2026-11-06"))
-        assertEquals("Materi dari laporan asli", PastReportReader.exactReport(rows, date)?.pelajaran)
-        assertNull(PastReportReader.exactReport(JSONArray().put(row("2026-11-05")), date))
+        assertEquals("Materi dari laporan asli", PastReportReader.latestReport(rows, setOf(date), "participant")?.pelajaran)
+        assertNull(PastReportReader.latestReport(JSONArray().put(row("2026-11-05")), setOf(date), "participant"))
     }
 
     @Test fun draftOrNullMaterialCannotBecomePreviewSource() {
-        assertNull(PastReportReader.exactReport(JSONArray().put(row(date.toString()).put("state", "DRAFT")), date))
-        assertNull(PastReportReader.exactReport(JSONArray().put(row(date.toString()).put("activity_log", JSONObject.NULL)), date))
-    }
-
-    @Test fun mondayUsesFridayAcrossTheMonthBoundary() {
-        assertEquals(LocalDate.parse("2026-10-30"), PastReportReader.previousWorkday(
-            LocalDate.parse("2026-11-02"), setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)))
+        assertNull(PastReportReader.latestReport(JSONArray().put(row(date.toString()).put("state", "DRAFT")), setOf(date), "participant"))
+        assertNull(PastReportReader.latestReport(JSONArray().put(row(date.toString()).put("activity_log", JSONObject.NULL)), setOf(date), "participant"))
     }
 
     @Test fun validApiMaterialCanGenerateAPreview() {
-        val material = requireNotNull(PastReportReader.exactReport(JSONArray().put(row(date.toString())), date))
+        val material = requireNotNull(PastReportReader.latestReport(JSONArray().put(row(date.toString())), setOf(date), "participant")?.report())
         val pipeline = GeneratorPipeline(history = ReportHistory { DatedReport(date, material) })
         assertTrue(pipeline.generate(date.plusDays(1)) is GenerationOutcome.Generated)
     }

@@ -51,6 +51,48 @@ internal class MonevApiClient(
         } catch (_: JSONException) { failed("Situs mengirim data laporan yang tidak dikenali."); null }
     }
 
+    /** Site list responses expose data, page and page_size (chunk-YWtjk5YC.js). */
+    suspend fun allPages(path: String): JSONArray? {
+        val result = JSONArray()
+        var page = 1
+        var previous: String? = null
+        while (true) {
+            val body = get("$path&page=$page") ?: return null
+            try {
+                val root = JSONTokener(body).nextValue()
+                val objectRoot = root as? JSONObject
+                val rows = if (root is JSONArray) root else objectRoot?.optJSONArray("data")
+                if (rows == null) { failed("Data riwayat belum dapat dibaca."); return null }
+                if (rows.length() > 0 && (objectRoot?.has("page") != true || !objectRoot.has("page_size"))) {
+                    failed("Informasi halaman riwayat belum dapat dibaca."); return null
+                }
+                val pageSize = if (objectRoot?.has("page_size") == true) objectRoot.optInt("page_size", -1) else 100
+                if (pageSize <= 0 || objectRoot?.has("page") == true && objectRoot.optInt("page") != page ||
+                    rows.length() > 0 && rows.toString() == previous) {
+                    failed("Halaman riwayat tidak sesuai. Coba Perbarui kembali."); return null
+                }
+                for (i in 0 until rows.length()) {
+                    val row = rows.optJSONObject(i)
+                    if (row == null) { failed("Data riwayat belum dapat dibaca."); return null }
+                    result.put(row)
+                }
+                val total = if (objectRoot?.has("total") == true) objectRoot.optInt("total", -1) else -1
+                if (objectRoot?.has("total") == true && total < 0) { failed("Jumlah riwayat belum dapat dibaca."); return null }
+                if (total >= 0 && result.length() > total) { failed("Jumlah riwayat tidak sesuai."); return null }
+                if (total >= 0 && result.length() == total) return result
+                if (rows.length() < pageSize) {
+                    if (total > result.length()) { failed("Riwayat belum terbaca seluruhnya."); return null }
+                    return result
+                }
+                if (objectRoot?.has("page") != true || !objectRoot.has("page_size")) {
+                    failed("Informasi halaman riwayat belum dapat dibaca."); return null
+                }
+                previous = rows.toString()
+                page++
+            } catch (_: JSONException) { failed("Data riwayat belum dapat dibaca."); return null }
+        }
+    }
+
     private suspend fun get(path: String): String? {
         if (access == null) access = session.credentials()
         val credential = access ?: run { failed("Login melalui halaman situs pada tab Sesi."); return null }
@@ -75,7 +117,7 @@ internal class MonevApiClient(
             }
             if (!session.matches(access ?: return null)) return null
             if (response.status !in 200..299) { failed("Situs belum dapat memproses permintaan. Coba lagi."); return null }
-            return response.body
+            return if (response.status == 204) "[]" else response.body
         } catch (_: IOException) {
             failed("Aplikasi belum dapat menghubungi situs. Status login terakhir tidak berubah.")
         } catch (_: JSONException) {

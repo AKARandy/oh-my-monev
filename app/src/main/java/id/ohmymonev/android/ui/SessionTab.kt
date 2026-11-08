@@ -109,6 +109,8 @@ fun SessionTab(modifier: Modifier = Modifier) {
             AndroidView(
                 factory = { ctx ->
                     WebView(ctx).apply {
+                        isVerticalScrollBarEnabled = true
+                        isScrollbarFadingEnabled = false
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         webViewClient = object : WebViewClient() {
