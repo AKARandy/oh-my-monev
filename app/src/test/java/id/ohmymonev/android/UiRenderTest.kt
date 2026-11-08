@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.isRoot
@@ -90,6 +91,11 @@ class UiRenderTest {
             compose.onAllNodesWithText(readyText, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
         compose.waitForIdle()
+        if (captureTag == "automatic-preview") {
+            for (label in listOf("Rincian", "Tutup rincian", "Tutup laporan", "Lihat laporan")) {
+                compose.onAllNodesWithText(label).assertCountEquals(0)
+            }
+        }
         if (!masterEnabled) {
             compose.onNodeWithTag("master-toggle").assertIsEnabled()
             for (title in listOf("Pengingat", "Pengisian", "Peringatan terakhir")) {
@@ -171,10 +177,12 @@ class UiRenderTest {
             issues, sourceReport = source, sourceReadComplete = true)
     }
 
-    @Test fun automaticPreviewReady() = capture("forge-preview-ready", "Pratinjau", captureTag = "automatic-preview") {
+    @Test @Config(qualifiers = "w411dp-h1800dp-xhdpi")
+    fun automaticPreviewReady() = capture("forge-preview-ready", "Pratinjau", captureTag = "automatic-preview") {
         PratinjauCard(preview(), false, {})
     }
-    @Test fun sourceSurvivesFailedGeneration() = capture("forge-preview-needs-edit", "Draf perlu diperiksa", captureTag = "automatic-preview") {
+    @Test @Config(qualifiers = "w411dp-h1800dp-xhdpi")
+    fun sourceSurvivesFailedGeneration() = capture("forge-preview-needs-edit", "Buka pratinjau", captureTag = "automatic-preview") {
         PratinjauCard(preview(listOf("Butir 1: Membikin ringkasan data.")), false, {})
     }
     @Test fun missingSource() = capture("forge-preview-empty", "Belum ada laporan Hadir", captureTag = "automatic-preview") {
@@ -185,7 +193,7 @@ class UiRenderTest {
         PratinjauCard(id.ohmymonev.android.engine.PreparedReport("2026-11-08", "participant", "", "", null,
             listOf("Situs belum dapat dihubungi. Coba Perbarui kembali."), sourceUnavailable = true), false, {})
     }
-    @Test @Config(qualifiers = "w360dp-h1100dp-xhdpi")
+    @Test @Config(qualifiers = "w360dp-h2200dp-xhdpi")
     fun previewLargeText() = capture("forge-preview-large-text", "Pratinjau", 1.3f, captureTag = "automatic-preview") {
         PratinjauCard(preview(), false, {}, holiday = true)
     }
@@ -208,7 +216,8 @@ class UiRenderTest {
         id.ohmymonev.android.ui.ScheduleStatus(
             id.ohmymonev.android.schedule.AlarmScheduler.ArmedState(false, null, "Semua fitur nonaktif"), {})
     }
-    @Test fun holidayPreview() = capture("forge-preview-holiday", "Hari libur", captureTag = "automatic-preview") {
+    @Test @Config(qualifiers = "w411dp-h1800dp-xhdpi")
+    fun holidayPreview() = capture("forge-preview-holiday", "Hari libur", captureTag = "automatic-preview") {
         PratinjauCard(preview(), false, {}, holiday = true)
     }
     @Test @Config(qualifiers = "w360dp-h3200dp-xhdpi")
@@ -225,4 +234,20 @@ class UiRenderTest {
     @Test fun scrollbarTop() = capture("forge-scrollbar-top", "Baris laporan") { ScrollFixture(0) }
     @Test fun scrollbarMiddle() = capture("forge-scrollbar-middle", "Baris laporan") { ScrollFixture(600) }
     @Test fun scrollbarBottom() = capture("forge-scrollbar-bottom", "Baris laporan") { ScrollFixture(100000) }
+
+    @Test @Config(qualifiers = "w411dp-h1800dp-xhdpi")
+    fun paragraphSourceIsVisibleOnceWithoutOpeningAnything() {
+        val paragraph = "Mengikuti apel akhir minggu. Menjadwalkan pengolahan otomatis pada Windows agar pemeriksaan bulanan berjalan sesuai jadwal. Memperbarui panduan operasi agar sesuai kondisi terbaru."
+        val original = preview(listOf("Butir 1: $paragraph"))
+        capture("forge-preview-paragraph", "Pratinjau laporan", captureTag = "preview-page") {
+            id.ohmymonev.android.ui.PreviewPage(original.copy(sourceReport = original.sourceReport!!.copy(aktivitas = paragraph)), {})
+        }
+        compose.onAllNodesWithText(paragraph).assertCountEquals(1)
+        compose.onAllNodesWithText("Butir 1: $paragraph").assertCountEquals(0)
+        org.junit.Assert.assertEquals("Butir 1 belum dapat diolah otomatis.", id.ohmymonev.android.ui.previewIssueSummary(listOf("Periksa aktivitas berikut:\nButir 1: $paragraph")))
+    }
+
+    @Test fun separateTimeTyping() = capture("forge-time-typing", "Menit") {
+        id.ohmymonev.android.ui.TimeWheels("05", "00", {}, {})
+    }
 }

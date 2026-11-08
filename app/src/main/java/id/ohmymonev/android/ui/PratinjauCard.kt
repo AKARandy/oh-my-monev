@@ -9,6 +9,20 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -21,7 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import id.ohmymonev.android.engine.PreparedReport
@@ -35,8 +48,7 @@ internal fun PratinjauCard(
     holiday: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    var detail by remember(prepared) { mutableStateOf<String?>(null) }
-    var showIssues by remember(prepared) { mutableStateOf(false) }
+    var open by remember(prepared) { mutableStateOf(false) }
     val source = prepared?.sourceReport
     val written = prepared?.written
     val hasText = source != null || written != null
@@ -52,7 +64,6 @@ internal fun PratinjauCard(
                     color = MaterialTheme.colorScheme.secondary)
                 TextButton(onClick = onRefresh, enabled = !loading) { Text("Perbarui", fontSize = 18.sp) }
             }
-            if (holiday) PreviewBadge("Hari libur")
             when {
                 loading -> Text("Mencari laporan Hadir…", fontSize = 20.sp, lineHeight = 28.sp)
                 prepared == null -> Text("Login untuk melihat laporan.", fontSize = 20.sp, lineHeight = 28.sp)
@@ -63,51 +74,84 @@ internal fun PratinjauCard(
                     if (prepared.sourceUnavailable) Text(prepared.issues.joinToString("\n"), fontSize = 18.sp, lineHeight = 26.sp)
                 }
                 else -> {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PreviewBadge(if (source != null) "Hadir · ${source.label()}" else "Tulisan hari ini")
-                        PreviewBadge(if (prepared.issues.isEmpty()) "Draf siap" else "Draf perlu diperiksa", attention = prepared.issues.isNotEmpty())
-                    }
+                    Text(
+                        (if (source != null) "Hadir · ${source.label()}" else "Tulisan hari ini") + if (holiday) " · Hari libur" else "",
+                        fontSize = 18.sp, lineHeight = 26.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Text(source?.aktivitas ?: written!!.aktivitas, fontSize = 20.sp, lineHeight = 28.sp,
                         maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    if (prepared.issues.isNotEmpty()) {
-                        Text("Perbaiki tulisan hari ini.", fontSize = 18.sp, lineHeight = 26.sp)
-                        TextButton(onClick = { showIssues = !showIssues }) {
-                            Text(if (showIssues) "Tutup rincian" else "Rincian", fontSize = 18.sp)
-                        }
-                        if (showIssues) Text(prepared.issues.joinToString("\n"), fontSize = 20.sp, lineHeight = 28.sp)
-                    }
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { detail = if (detail == "source") null else "source" }) {
-                            Text(if (detail == "source") "Tutup laporan" else "Lihat laporan", fontSize = 18.sp)
-                        }
-                        if (prepared.draft != null) TextButton(onClick = { detail = if (detail == "draft") null else "draft" }) {
-                            Text(if (detail == "draft") "Tutup draf" else "Lihat draf", fontSize = 18.sp)
-                        }
-                    }
-                    if (detail != null) {
-                        val text = if (detail == "source") source?.report() ?: written!!.let { ReportDraft(it.aktivitas, it.pelajaran, it.kendala) }
-                            else prepared.draft!!.let { ReportDraft(it.aktivitas, it.pelajaran, it.kendala) }
-                        ReportDetails(text, if (detail == "source") "Laporan sumber" else "Draf hari ini")
+                    Button(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Buka pratinjau", fontSize = 18.sp)
                     }
                 }
             }
         }
     }
+    if (open && prepared != null) Dialog(onDismissRequest = { open = false },
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        PreviewPage(prepared, onBack = { open = false })
+    }
+
 }
 
 @Composable
-private fun PreviewBadge(label: String, attention: Boolean = false) {
-    Surface(color = if (attention) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.primaryContainer,
-        contentColor = if (attention) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onPrimaryContainer,
-        shape = RoundedCornerShape(10.dp)) {
-        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 18.sp, lineHeight = 26.sp)
+internal fun PreviewPage(prepared: PreparedReport, onBack: () -> Unit) {
+    var showDraft by remember(prepared) { mutableStateOf(false) }
+    var showCause by remember { mutableStateOf(false) }
+    val scroll = rememberScrollState()
+    val source = prepared.sourceReport
+    val written = prepared.written
+    Surface(Modifier.fillMaxSize().testTag("preview-page"), color = MaterialTheme.colorScheme.surface) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali") }
+                Text("Pratinjau laporan", fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.secondary)
+            }
+            Column(Modifier.weight(1f).scrollIndicator(scroll).verticalScroll(scroll).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                Text(if (source != null) "Hadir · ${source.label()}" else "Tulisan hari ini", fontSize = 18.sp)
+                if (prepared.issues.isNotEmpty()) {
+                    Surface(color = MaterialTheme.colorScheme.tertiaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onTertiaryContainer, shape = RoundedCornerShape(12.dp)) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("Draf otomatis belum siap", fontSize = 18.sp)
+                            TextButton(onClick = { showCause = true }) { Text("Lihat penyebab", fontSize = 18.sp) }
+                        }
+                    }
+                }
+                if (prepared.draft != null && prepared.issues.isEmpty() && source != null) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !showDraft, onClick = { showDraft = false }, label = { Text("Sumber", fontSize = 18.sp) })
+                        FilterChip(selected = showDraft, onClick = { showDraft = true }, label = { Text("Draf otomatis", fontSize = 18.sp) })
+                    }
+                }
+                val text = if (showDraft) prepared.draft!!.let { ReportDraft(it.aktivitas, it.pelajaran, it.kendala) }
+                    else source?.report() ?: written!!.let { ReportDraft(it.aktivitas, it.pelajaran, it.kendala) }
+                ReportDetails(text, "")
+            }
+        }
     }
+    if (showCause) AlertDialog(onDismissRequest = { showCause = false },
+        title = { Text("Mengapa draf belum siap?") },
+        text = { Text(previewIssueSummary(prepared.issues), fontSize = 20.sp, lineHeight = 28.sp) },
+        confirmButton = { TextButton(onClick = { showCause = false }) { Text("Mengerti") } })
 }
+
+internal fun previewIssueSummary(issues: List<String>): String = issues.flatMap { it.lines() }
+    .filter { it.isNotBlank() && it != "Periksa aktivitas berikut:" }
+    .map { line ->
+        val number = Regex("^Butir (\\d+):").find(line)?.groupValues?.get(1)
+        if (number != null) "Butir $number belum dapat diolah otomatis."
+        else if (line.length > 160) "Format sumber belum sesuai aturan draf otomatis."
+        else line
+    }.distinct().take(3).joinToString("\n")
 
 @Composable
 internal fun ReportDetails(draft: ReportDraft, title: String) {
     Column(Modifier.fillMaxWidth().testTag("report-details"), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Text(title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.secondary)
+        if (title.isNotEmpty()) Text(title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.secondary)
         for ((label, text) in listOf("Aktivitas" to draft.aktivitas, "Pelajaran" to draft.pelajaran, "Kendala" to draft.kendala)) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(label, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.secondary)

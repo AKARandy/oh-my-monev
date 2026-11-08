@@ -321,11 +321,10 @@ internal fun AlarmEditor(
     var days by remember { mutableStateOf(initialDays) }
     var action by remember { mutableStateOf(initialAction ?: ScheduleSettings.Policy.REMIND_ONLY) }
     val editorScrollState = rememberScrollState()
-    val timeState = androidx.compose.material3.rememberTimePickerState(
-        initialHour = initialTime.hour,
-        initialMinute = initialTime.minute,
-        is24Hour = true,
-    )
+    var hour by remember { mutableStateOf(initialTime.hour.toString().padStart(2, '0')) }
+    var minute by remember { mutableStateOf(initialTime.minute.toString().padStart(2, '0')) }
+    val editorView = androidx.compose.ui.platform.LocalView.current
+    val selectedTime = parseTimeParts(hour, minute)
     AlertDialog(
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
@@ -337,7 +336,7 @@ internal fun AlarmEditor(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text("Jam (WIB, 24 jam)", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
-                androidx.compose.material3.TimeInput(state = timeState)
+                TimeWheels(hour, minute, { hour = it }, { minute = it })
                 Text("Hari untuk fitur ini", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 DayChipsRow(days) { day -> days = if (day in days) days - day else days + day }
                 if (days.isEmpty()) Text("Pilih minimal satu hari.", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
@@ -368,8 +367,8 @@ internal fun AlarmEditor(
         },
         confirmButton = {
             Button(
-                enabled = days.isNotEmpty(),
-                onClick = { onSave(LocalTime.of(timeState.hour, timeState.minute), enabled, days, action) },
+                enabled = days.isNotEmpty() && selectedTime != null,
+                onClick = { editorView.clearFocus(); parseTimeParts(hour, minute)?.let { onSave(it, enabled, days, action) } },
             ) { Text("Simpan", fontSize = 18.sp) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Batal", fontSize = 18.sp) } },
