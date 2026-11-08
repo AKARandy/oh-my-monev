@@ -68,10 +68,10 @@ internal fun PratinjauCard(
                 loading -> Text("Mencari laporan Hadir…", fontSize = 20.sp, lineHeight = 28.sp)
                 prepared == null -> Text("Login untuk melihat laporan.", fontSize = 20.sp, lineHeight = 28.sp)
                 !hasText -> {
-                    Text(if (prepared.sourceUnavailable) "Sumber belum terbaca" else "Belum ada laporan Hadir yang dapat digunakan",
+                    // Sebut penyebab sebenarnya: pesan generik menyembunyikan perbedaan mode.
+                    Text(prepared.issues.joinToString("\n").ifBlank { "Belum ada laporan Hadir yang dapat digunakan" },
                         fontSize = 20.sp, lineHeight = 28.sp,
                         color = if (prepared.sourceUnavailable) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
-                    if (prepared.sourceUnavailable) Text(prepared.issues.joinToString("\n"), fontSize = 18.sp, lineHeight = 26.sp)
                 }
                 else -> {
                     Text(

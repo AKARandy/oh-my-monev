@@ -200,7 +200,11 @@ class UiRenderTest {
         PratinjauCard(id.ohmymonev.android.engine.PreparedReport("2026-11-08", "participant", "", "", null,
             listOf("Belum ada laporan Hadir yang dapat digunakan"), sourceReadComplete = true), false, {})
     }
-    @Test fun unavailableSource() = capture("forge-preview-unavailable", "Sumber belum terbaca", captureTag = "automatic-preview") {
+    @Test fun templateMissingReasonIsVisible() = capture("forge-preview-template-missing", "Templat belum dibuat", captureTag = "automatic-preview") {
+        PratinjauCard(id.ohmymonev.android.engine.PreparedReport("2026-11-08", "participant", "", "", null,
+            listOf("Templat belum dibuat. Buka tab Jadwal, kartu Templat laporan."), sourceReadComplete = true), false, {})
+    }
+    @Test fun unavailableSource() = capture("forge-preview-unavailable", "Situs belum dapat dihubungi", captureTag = "automatic-preview") {
         PratinjauCard(id.ohmymonev.android.engine.PreparedReport("2026-11-08", "participant", "", "", null,
             listOf("Situs belum dapat dihubungi. Coba Perbarui kembali."), sourceUnavailable = true), false, {})
     }
