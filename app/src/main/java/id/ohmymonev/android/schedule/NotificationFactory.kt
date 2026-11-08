@@ -36,7 +36,7 @@ class NotificationFactory(private val context: Context) {
 
         val autofill = NotificationChannel(
             CHANNEL_AUTOFILL,
-            "Pengisian otomatis",
+            "Pengisian darurat",
             NotificationManager.IMPORTANCE_LOW,
         ).apply { description = "Notifikasi layar depan (foreground service) saat mesin mengisi laporan" }
 

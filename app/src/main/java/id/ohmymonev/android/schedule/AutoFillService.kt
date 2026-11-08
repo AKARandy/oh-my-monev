@@ -18,7 +18,6 @@ import androidx.core.app.ServiceCompat
 class AutoFillService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val lastChance = intent?.getBooleanExtra(EXTRA_LAST_CHANCE, false) ?: false
         val factory = NotificationFactory(this)
         factory.ensureChannels()
         val notification: Notification = factory.autofillProgress()
@@ -48,7 +47,7 @@ class AutoFillService : Service() {
             }
             stopSelf()
         } else {
-            delegate.startAutoFill(applicationContext, lastChance)
+            delegate.startAutoFill(applicationContext)
         }
         return START_NOT_STICKY
     }
@@ -56,18 +55,15 @@ class AutoFillService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
-        const val EXTRA_LAST_CHANCE = "last_chance"
-
-        fun start(context: Context, lastChance: Boolean) {
+        fun start(context: Context) {
             val intent = Intent(context, AutoFillService::class.java)
-                .putExtra(EXTRA_LAST_CHANCE, lastChance)
             context.startForegroundService(intent)
         }
 
         /** Satu putaran uji mesin terhadap halaman tiruan di dalam aplikasi (debug). */
         fun startBench(context: Context) {
             id.ohmymonev.android.engine.DebugBench.pending = true
-            start(context, lastChance = false)
+            start(context)
         }
 
         /** Dipanggil mesin saat satu siklus autofill selesai (sukses maupun gagal). */

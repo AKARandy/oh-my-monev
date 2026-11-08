@@ -5,7 +5,9 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.test.core.app.ApplicationProvider
 import id.ohmymonev.android.data.*
+import id.ohmymonev.android.schedule.TimeSettingsStore
 import id.ohmymonev.core.generator.GenerationOutcome
+import id.ohmymonev.core.schedule.ScheduleSettings
 import java.io.File
 import java.time.LocalDate
 import java.util.UUID
@@ -14,6 +16,7 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -37,6 +40,11 @@ class PreparedReportServiceTest {
     private var activity = "- Memeriksa data penerbangan 123 dengan hasil pemeriksaan awal.\n- Menyusun laporan hasil pemeriksaan untuk tim pengolah data.\n- Menguji hasil pemeriksaan data sebelum pekerjaan dilanjutkan."
     private var lesson = "Memahami urutan pemeriksaan kelengkapan data dan cara mencatat hasil pemeriksaan agar setiap perubahan dapat ditelusuri kembali."
     private val obstacle = "Sebagian data masih memerlukan pemeriksaan lanjutan karena rincian sumber belum lengkap dan perlu dibandingkan dengan dokumen pendukung."
+
+    /** Jalur lanjutan otomatis hanya berlaku di mode AUTOMATIC; mode bawaan adalah templat. */
+    @Before fun automaticMode() = runBlocking {
+        TimeSettingsStore(context).save(ScheduleSettings(escalationSource = ScheduleSettings.ContentSource.AUTOMATIC))
+    }
 
     private fun sourceDate(): String = (1L..7L).map { date.minusDays(it) }
         .first { it.dayOfWeek !in setOf(java.time.DayOfWeek.SATURDAY, java.time.DayOfWeek.SUNDAY) }.toString()
@@ -167,5 +175,47 @@ class PreparedReportServiceTest {
             """{"date":"2026-11-09","participantId":"participant-a","sourceDate":"2026-11-06","source":"legacy","draft":null,"issues":[]}""").commit()
         assertNotNull(service(session).prepare().sourceReport)
         assertEquals(1, logCalls)
+    }
+
+    @Test fun templateModeUsesTheStoredTemplateWithoutReadingHistory() = runBlocking {
+        val session = session()
+        TimeSettingsStore(context).save(ScheduleSettings(escalationSource = ScheduleSettings.ContentSource.TEMPLATE))
+        store.saveTemplate(ReportTemplate(activity, lesson, obstacle))
+        val result = service(session).prepare()
+        assertTrue(result.outcome() is GenerationOutcome.Generated)
+        assertEquals(activity, result.draft?.aktivitas)
+        assertEquals(lesson, result.draft?.pelajaran)
+        assertEquals("Dari templat Anda.", result.source)
+        assertEquals(0, logCalls)
+    }
+    @Test fun templatePlaceholderTanggalIsSubstituted() = runBlocking {
+        val session = session()
+        TimeSettingsStore(context).save(ScheduleSettings(escalationSource = ScheduleSettings.ContentSource.TEMPLATE))
+        val templated = "- Melanjutkan pekerjaan tanggal {tanggal} dengan pemeriksaan data terjadwal.\n" +
+            "- Menyusun catatan hasil pemeriksaan untuk tim pengolah data yang membutuhkan.\n" +
+            "- Menguji hasil pemeriksaan data sebelum pekerjaan dilanjutkan ke tahap berikutnya."
+        store.saveTemplate(ReportTemplate(templated, lesson, obstacle))
+        val result = service(session).prepare()
+        assertTrue(result.outcome() is GenerationOutcome.Generated)
+        assertEquals(false, result.draft?.aktivitas?.contains("{tanggal}"))
+        assertTrue(result.draft?.aktivitas?.contains("9 November 2026") == true)
+    }
+    @Test fun templateModeWithoutTemplateFailsWithoutFallback() = runBlocking {
+        val session = session()
+        TimeSettingsStore(context).save(ScheduleSettings(escalationSource = ScheduleSettings.ContentSource.TEMPLATE))
+        val result = service(session).prepare()
+        assertTrue(result.outcome() is GenerationOutcome.Failed)
+        assertTrue(result.issues.single().contains("Templat"))
+        assertEquals(0, logCalls)
+    }
+    @Test fun changingTemplateInvalidatesThePreparedCache() = runBlocking {
+        val session = session()
+        TimeSettingsStore(context).save(ScheduleSettings(escalationSource = ScheduleSettings.ContentSource.TEMPLATE))
+        store.saveTemplate(ReportTemplate(activity, lesson, obstacle))
+        val first = service(session).prepare()
+        assertEquals(0, logCalls)
+        store.saveTemplate(ReportTemplate(activity, lesson.replace("Memahami", "Mempelajari"), obstacle))
+        val second = service(session).prepare()
+        assertNotEquals(first.draft?.pelajaran, second.draft?.pelajaran)
     }
 }

@@ -15,7 +15,7 @@ import java.time.ZonedDateTime
 data class ArmReport(val armedKeys: List<String>, val errors: List<String>)
 
 /**
- * Menjaga ketiga alarm malam tetap terpasang: aplikasi direstart/berhenti?
+ * Menjaga kedua alarm malam tetap terpasang: aplikasi direstart/berhenti?
  * BootReceiver + PackageReplacedReceiver memanggil [armAll].
  * Menggunakan AlarmManager.setAlarmClock (AlarmClockInfo) — tahan Doze serta
  * bebas izin SCHEDULE_EXACT_ALARM, dan menampilkan ikon alarm di status bar
@@ -39,8 +39,10 @@ object AlarmScheduler {
             true
         }
         val now = ZonedDateTime.now(ScheduleCalculator.asiaJakarta)
-        val fires = ScheduleCalculator.nextFires(now, settings, horizonDays = 7)
-        for (key in listOf(ScheduleCalculator.KEY_REMINDER, ScheduleCalculator.KEY_AUTOFILL, ScheduleCalculator.KEY_ESCALATION)) {
+        val fires = ScheduleCalculator.nextFires(now, WorkDaysStore(context).restrict(settings), horizonDays = 7)
+        // LEGACY_KEY_AUTOFILL tidak pernah dijadwalkan lagi; tetap di daftar agar
+        // alarm warisan 21:00 dari versi lama ikut dibatalkan.
+        for (key in listOf(ScheduleCalculator.KEY_REMINDER, LEGACY_KEY_AUTOFILL, ScheduleCalculator.KEY_ESCALATION)) {
             if (key in fires) continue
             val intent = Intent(context, receiverFor(key)).apply { action = actionFor(key) }
             PendingIntent.getBroadcast(
@@ -53,7 +55,7 @@ object AlarmScheduler {
                 pending.cancel()
             }
         }
-        if (!settings.masterEnabled) {
+        if (!settings.masterEnabled || !WorkDaysStore(context).isWorkday(now.toLocalDate())) {
             for (code in listOf(REQUEST_CODE_RETRY, REQUEST_CODE_TEST)) {
                 val intent = Intent(context, AutoFillReceiver::class.java).setAction(AutoFillReceiver.ACTION_AUTOFILL)
                 PendingIntent.getBroadcast(context, code, intent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)?.let {
@@ -119,13 +121,12 @@ object AlarmScheduler {
      * requestCode tetap: percobaan berikutnya menggantikan yang lama.
      */
     @Synchronized
-    fun scheduleRetry(context: Context, at: ZonedDateTime, lastChance: Boolean = false) {
+    fun scheduleRetry(context: Context, at: ZonedDateTime) {
         val settings = kotlinx.coroutines.runBlocking { TimeSettingsStore(context).settingsOnce() }
-        if (!settings.masterEnabled || !(if (lastChance) settings.escalationEnabled else settings.autofillEnabled)) return
+        if (!settings.masterEnabled) return
         val am = context.getSystemService(AlarmManager::class.java) ?: return
         val intent = Intent(context, AutoFillReceiver::class.java)
             .setAction(AutoFillReceiver.ACTION_AUTOFILL)
-            .putExtra(AutoFillService.EXTRA_LAST_CHANCE, lastChance)
         val pending = PendingIntent.getBroadcast(
             context,
             REQUEST_CODE_RETRY,
@@ -153,7 +154,8 @@ object AlarmScheduler {
         now: ZonedDateTime = ZonedDateTime.now(ScheduleCalculator.asiaJakarta),
     ): ArmedState {
         if (!settings.masterEnabled) return ArmedState(false, null, "Semua fitur nonaktif")
-        val next = ScheduleCalculator.nextFires(now.withZoneSameInstant(ScheduleCalculator.asiaJakarta), settings)
+        if (WorkDaysStore(context).days() == null) return ArmedState(false, null, "Hari kerja belum dimuat. Periksa sesi.")
+        val next = ScheduleCalculator.nextFires(now.withZoneSameInstant(ScheduleCalculator.asiaJakarta), WorkDaysStore(context).restrict(settings))
             .entries.minByOrNull { it.value.toInstant() }
             ?: return ArmedState(false, null, "Tidak ada jadwal aktif")
         return ArmedState(false, next.value.toInstant().toString(), featureLabel(next.key))
@@ -161,8 +163,7 @@ object AlarmScheduler {
 
     private fun featureLabel(key: String): String = when (key) {
         ScheduleCalculator.KEY_REMINDER -> "Pengingat"
-        ScheduleCalculator.KEY_AUTOFILL -> "Pengisian"
-        else -> "Peringatan terakhir"
+        else -> "Pengisian darurat"
     }
 
     private fun showApp(context: Context): PendingIntent = PendingIntent.getActivity(
@@ -185,21 +186,21 @@ object AlarmScheduler {
 
     private fun receiverFor(key: String): Class<out BroadcastReceiver> = when (key) {
         ScheduleCalculator.KEY_REMINDER -> ReminderReceiver::class.java
-        ScheduleCalculator.KEY_AUTOFILL -> AutoFillReceiver::class.java
+        LEGACY_KEY_AUTOFILL -> AutoFillReceiver::class.java
         ScheduleCalculator.KEY_ESCALATION -> EscalationReceiver::class.java
         else -> throw IllegalArgumentException("kunci alarm tak dikenal: $key")
     }
 
     private fun actionFor(key: String): String = when (key) {
         ScheduleCalculator.KEY_REMINDER -> ReminderReceiver.ACTION_REMINDER
-        ScheduleCalculator.KEY_AUTOFILL -> AutoFillReceiver.ACTION_AUTOFILL
+        LEGACY_KEY_AUTOFILL -> AutoFillReceiver.ACTION_AUTOFILL
         ScheduleCalculator.KEY_ESCALATION -> EscalationReceiver.ACTION_ESCALATION
         else -> throw IllegalArgumentException("kunci alarm tak dikenal: $key")
     }
 
     private fun requestCodeFor(key: String): Int = when (key) {
         ScheduleCalculator.KEY_REMINDER -> REQUEST_CODE_REMINDER
-        ScheduleCalculator.KEY_AUTOFILL -> REQUEST_CODE_AUTOFILL
+        LEGACY_KEY_AUTOFILL -> REQUEST_CODE_AUTOFILL
         ScheduleCalculator.KEY_ESCALATION -> REQUEST_CODE_ESCALATION
         else -> throw IllegalArgumentException("kunci alarm tak dikenal: $key")
     }
@@ -209,4 +210,6 @@ object AlarmScheduler {
     private const val REQUEST_CODE_ESCALATION = 13
     private const val REQUEST_CODE_RETRY = 21
     private const val REQUEST_CODE_TEST = 99
+
+    private const val LEGACY_KEY_AUTOFILL = "autofill"
 }

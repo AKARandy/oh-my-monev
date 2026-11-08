@@ -42,10 +42,18 @@ class MonevReadContractTest {
         assertTrue(pipeline.generate(date.plusDays(1)) is GenerationOutcome.Generated)
     }
 
-    @Test fun siteStatusUsesApiFlagsInsteadOfRenderedTabText() {
-        assertEquals(TodayState.LIBUR, SiteStatusProbe.todayState(JSONObject().put("is_scheduled_off_day", true).put("has_attendance", false)))
-        assertEquals(TodayState.FILLED, SiteStatusProbe.todayState(JSONObject().put("is_holiday", false).put("has_attendance", true)))
-        assertEquals(TodayState.UNFILLED, SiteStatusProbe.todayState(JSONObject().put("is_scheduled_off_day", false).put("has_attendance", false)))
+    @Test fun siteStatusVerifiesTheSubmittedLogInsteadOfHasAttendance() {
+        val home = JSONObject().put("is_holiday", false).put("is_scheduled_off_day", false)
+        assertEquals(TodayState.LIBUR, SiteStatusProbe.todayState(JSONObject().put("is_scheduled_off_day", true), "PRESENT", "SUBMITTED"))
+        assertEquals(TodayState.LEAVE, SiteStatusProbe.todayState(home, "ON_LEAVE", null))
+        assertEquals(TodayState.LEAVE, SiteStatusProbe.todayState(home, "ABSENT", null))
+        assertEquals(TodayState.LEAVE, SiteStatusProbe.todayState(home, "DAYOFF", null))
+        assertEquals(TodayState.FILLED, SiteStatusProbe.todayState(home, "PRESENT", "SUBMITTED"))
+        assertEquals(TodayState.UNFILLED, SiteStatusProbe.todayState(home, "PRESENT", "DRAFT"))
+        assertEquals(TodayState.UNFILLED, SiteStatusProbe.todayState(home, "PRESENT", null))
+        assertEquals(TodayState.UNFILLED, SiteStatusProbe.todayState(home, null, null))
+        // has_attendance tidak lagi dipakai: kehadiran tanpa laporan terkirim tetap dianggap belum diisi.
+        assertEquals(TodayState.UNFILLED, SiteStatusProbe.todayState(home.put("has_attendance", true), "PRESENT", null))
     }
 
     @Test fun restorationNeverSeedsCredentialsIntoAnotherOrigin() {

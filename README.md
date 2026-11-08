@@ -13,14 +13,21 @@ Jika peserta tidak mengirim catatan sebelum pukul 23.59 WIB, peserta kehilangan 
 Aplikasi ini melakukan hal-hal ini:
 
 - Aplikasi memberi alarm pada jam yang ditetapkan (bawaan: 20.00) jika kehadiran belum tercatat.
-- Aplikasi dapat mengisi formulir laporan. Aplikasi juga dapat mengirim formulir itu. Anda memilih
-  jamnya. Anda dapat menghentikan otomatisasi untuk satu malam.
-- Jika Anda tidak menulis laporan, aplikasi membuatnya. Aplikasi memakai laporan hari sebelumnya.
+- Aplikasi dapat mengisi formulir laporan, lalu mengirimnya pada jam yang Anda pilih. Sumber isian
+  wajib dipilih satu: templat buatan Anda, atau lanjutan otomatis dari laporan hari sebelumnya.
+- Lanjutan otomatis itu eksperimen dan berisiko. Aplikasi meminta konfirmasi sebelum menyalakannya.
   Contoh: "Melakukan aktivitas X" menjadi "Melanjutkan aktivitas X". Aplikasi tidak mengarang kata.
+  Pratinjau menunjukkan teks yang akan dikirim.
 - Aplikasi memeriksa semua teks sebelum mengisi formulir. Setiap bagian wajib memiliki 100 karakter
   atau lebih. Tanpa kata seperti "saya" atau "kami". 3 sampai 5 baris aktivitas. Tanpa klise.
 - Ponsel boleh dalam keadaan diam. Alarm tetap tepat waktu. Sebuah layanan menjaga ponsel tetap
   menyala selama pengisian berlangsung.
+
+## Tangkapan layar
+
+| Beranda | Jadwal | Sumber isian |
+|---|---|---|
+| ![Beranda](screenshots/forge-home.png) | ![Jadwal](screenshots/forge-schedule.png) | ![Sumber isian](screenshots/forge-emergency-editor.png) |
 
 Status: masih dalam pengembangan. Lihat `docs/plan.md`.
 

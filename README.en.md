@@ -14,13 +14,20 @@ for that day.
 The app does this:
 
 - It gives an alarm at a set time (default: 20:00) if attendance is not recorded.
-- It can fill the report form. It can also send the form. You choose the time.
-  You can stop the automation for one night.
-- If you did not write a report, the app makes one. It uses the report from the previous day.
-  Example: "Melakukan aktivitas X" becomes "Melanjutkan aktivitas X". It does not invent words.
+- The app can fill the report form, then send it at the time you choose. You must pick one content
+  source: your own template, or an automatic continuation of the previous day's report.
+- The automatic continuation is experimental and risky. The app asks for confirmation before you
+  can turn it on. Example: "Melakukan aktivitas X" becomes "Melanjutkan aktivitas X". It does not
+  invent words. The preview shows the exact text that will be sent.
 - The app checks all text before it fills the form. Each part must have 100 or more characters.
   No words such as "saya" or "kami". 3 to 5 activity lines. No clichés.
 - The phone can be idle. The alarms stay exact. A service keeps the phone awake during the fill.
+
+## Screenshots
+
+| Home | Schedule | Content source |
+|---|---|---|
+| ![Home](screenshots/forge-home.png) | ![Schedule](screenshots/forge-schedule.png) | ![Content source](screenshots/forge-emergency-editor.png) |
 
 Status: still in development. See `docs/plan.md`.
 

@@ -5,7 +5,6 @@ import android.content.Context
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import id.ohmymonev.android.data.AppStore
-import id.ohmymonev.android.data.StoredDraft
 import id.ohmymonev.android.schedule.AlarmScheduler
 import id.ohmymonev.android.schedule.AutoFillDelegate
 import id.ohmymonev.android.schedule.AutoFillService
@@ -14,6 +13,7 @@ import id.ohmymonev.android.schedule.TimeSettingsStore
 import id.ohmymonev.core.enginecore.EngineOutcome
 import id.ohmymonev.core.enginecore.RunRecord
 import id.ohmymonev.core.generator.GenerationOutcome
+import id.ohmymonev.core.model.GenerationTier
 import id.ohmymonev.core.model.ReportDraft
 import id.ohmymonev.core.schedule.ScheduleCalculator
 import id.ohmymonev.core.schedule.ScheduleSettings
@@ -29,23 +29,21 @@ import java.time.format.DateTimeFormatter
 
 /**
  * Kombinasi mesin + penyimpanan untuk AutoFillService (plan.md §5).
- *
- * v0.1 berjalan dalam Mode Uji (D8): `liveSubmit = false` — form terisi namun kotak konfirmasi
- * dan tombol Kirim tidak pernah disentuh. Pengiriman otomatis aktif setelah M0 recon + konfirmasi
- * pengguna pada pengaturan.
+ * Selalu isi lalu kirim: baca-kembali divalidasi, kotak pernyataan dicentang,
+ * lalu tombol Kirim ditekan.
  */
 class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    override fun startAutoFill(context: Context, lastChance: Boolean) {
+    override fun startAutoFill(context: Context) {
         val factory = NotificationFactory(appContext)
         factory.ensureChannels()
-        scope.launch { runCycle(factory, lastChance) }
+        scope.launch { runCycle(factory) }
     }
 
-    private suspend fun runCycle(factory: NotificationFactory, lastChance: Boolean) {
+    private suspend fun runCycle(factory: NotificationFactory) {
         val store = AppStore(appContext)
         val settings = TimeSettingsStore(appContext).settingsOnce()
         val today = LocalDate.now(ScheduleCalculator.asiaJakarta)
@@ -76,7 +74,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                     "Laporan belum bisa diisi sekarang. Akan dicoba lagi otomatis.",
                 ),
             )
-            maybeScheduleRetry(record, store, settings, lastChance)
+            maybeScheduleRetry(record, store, settings)
             AutoFillService.finished(appContext)
             return
         }
@@ -86,13 +84,14 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             val outcome = when {
                 status.sessionActive == false -> EngineOutcome.LOGIN_REQUIRED
                 status.today == id.ohmymonev.core.enginecore.TodayState.LIBUR ||
+                    status.today == id.ohmymonev.core.enginecore.TodayState.LEAVE ||
                     status.today == id.ohmymonev.core.enginecore.TodayState.FILLED -> EngineOutcome.DAY_NOT_FILLABLE
                 else -> EngineOutcome.RETRYABLE_ERROR
             }
             val record = RunRecord(todayIso, nowIso(), outcome, attemptToday(store, todayIso),
                 detail = status.error ?: "Laporan hari ini tidak perlu diisi.")
             store.appendRecord(record)
-            if (outcome == EngineOutcome.RETRYABLE_ERROR) maybeScheduleRetry(record, store, settings, lastChance)
+            if (outcome == EngineOutcome.RETRYABLE_ERROR) maybeScheduleRetry(record, store, settings)
             if (outcome != EngineOutcome.DAY_NOT_FILLABLE) post(factory, NotificationFactory.NOTIF_ID_REMINDER,
                 factory.info("Laporan belum diisi", status.error ?: "Periksa sesi di aplikasi."))
             AutoFillService.finished(appContext)
@@ -105,13 +104,15 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
         when (outcome) {
             is GenerationOutcome.Generated -> {
-                val engine = WebViewEngine(appContext, DEFAULT_SITE_PROFILE, runCallbacks(todayIso, outcome.draft, store, factory, settings, lastChance = lastChance))
+                // Asal isian menentukan notifikasi setelah terkirim: templat minta
+                // ditinjau ulang; lanjutan otomatis harus selalu disebut terang-terangan.
+                val fromTemplate = outcome.tier == GenerationTier.TEMPLATE && prepared.written == null
+                val fromContinuation = outcome.tier == GenerationTier.CONTINUATION_RULES
+                val engine = WebViewEngine(appContext, DEFAULT_SITE_PROFILE, runCallbacks(todayIso, store, factory, settings, usedTemplate = fromTemplate, usedContinuation = fromContinuation))
                 engine.runAutomation(
                     dateISO = todayIso,
                     draft = outcome.draft,
                     expectedSessionVersion = prepared.sessionVersion,
-                    // Setiap fitur memakai persetujuan pengiriman otomatisnya sendiri.
-                    liveSubmit = settings.policyFor(lastChance) == ScheduleSettings.Policy.FILL_AND_SUBMIT,
                     attempt = attemptToday(store, todayIso),
                 )
             }
@@ -143,24 +144,23 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
         val engine = WebViewEngine(
             appContext,
             BenchSite.profile,
-            runCallbacks(todayIso, BenchSite.draft, store, factory, settings, bench = true),
+            runCallbacks(todayIso, store, factory, settings, bench = true),
         )
         engine.runAutomation(
             dateISO = todayIso,
             draft = BenchSite.draft,
-            liveSubmit = true,
             attempt = 1,
         )
     }
 
     private fun runCallbacks(
         dateIso: String,
-        draft: ReportDraft,
         store: AppStore,
         factory: NotificationFactory,
         settings: ScheduleSettings,
         bench: Boolean = false,
-        lastChance: Boolean = false,
+        usedTemplate: Boolean = false,
+        usedContinuation: Boolean = false,
     ) = object : WebViewEngine.Callbacks {
         override fun onRunFinished(record: RunRecord) {
             scope.launch {
@@ -172,27 +172,25 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                     return@launch
                 }
                 when (record.outcome) {
-                    EngineOutcome.FILL_OK -> {
-                        store.appendDraft(StoredDraft(dateIso, draft.aktivitas, draft.pelajaran, draft.kendala))
+                    EngineOutcome.SUBMITTED -> {
+                        val detail = if (usedContinuation) "Tanggal $dateIso sudah dikirim dan tercatat di situs. Isian memakai lanjutan otomatis."
+                        else "Tanggal $dateIso sudah dikirim dan tercatat di situs."
                         post(
                             factory,
                             NotificationFactory.NOTIF_ID_REMINDER,
-                            factory.info(
-                                "oh-my-monev: laporan terisi",
-                                "Form terisi dan cocok dengan tulisanmu, belum dikirim. Tinjau lalu kirim manual.",
-                            ),
+                            factory.info("oh-my-monev: laporan terkirim", detail),
                         )
+                        if (usedTemplate) {
+                            post(
+                                factory,
+                                NotificationFactory.NOTIF_ID_REMINDER,
+                                factory.info(
+                                    "Templat laporan terpakai",
+                                    "Laporan hari ini memakai templat. Ganti templat di tab Jadwal bila perlu.",
+                                ),
+                            )
+                        }
                     }
-
-                    EngineOutcome.SUBMITTED ->
-                        post(
-                            factory,
-                            NotificationFactory.NOTIF_ID_REMINDER,
-                            factory.info(
-                                "oh-my-monev: laporan terkirim",
-                                "Tanggal $dateIso sudah dikirim dan tercatat di situs.",
-                            ),
-                        )
 
                     EngineOutcome.DAY_NOT_FILLABLE ->
                         // Hari sudah terisi atau libur: jangan pernah berbunyi "belum terkirim".
@@ -200,7 +198,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
                     else -> {
                         post(factory, NotificationFactory.NOTIF_ID_ESCALATION, factory.escalation())
-                        maybeScheduleRetry(record, store, settings, lastChance)
+                        maybeScheduleRetry(record, store, settings)
                     }
                 }
                 AutoFillService.finished(appContext)
@@ -212,11 +210,9 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
         }
     }
 
-    /** Menyiapkan tangga coba ulang, hanya bila pengisian otomatis memang menyala. */
-    private fun maybeScheduleRetry(record: RunRecord, store: AppStore, settings: ScheduleSettings, lastChance: Boolean) {
-        val enabled = if (lastChance) settings.escalationEnabled else settings.autofillEnabled
-        val days = if (lastChance) settings.escalationDays else settings.autofillDays
-        if (!settings.masterEnabled || !enabled || LocalDate.now(ScheduleCalculator.asiaJakarta).dayOfWeek !in days) return
+    /** Menyiapkan tangga coba ulang; penerima memeriksa ulang hari kerja dan jeda saat alarm menyala. */
+    private fun maybeScheduleRetry(record: RunRecord, store: AppStore, settings: ScheduleSettings) {
+        if (!settings.masterEnabled) return
         if (record.outcome !in RETRYABLE_OUTCOMES) return
         if (attemptToday(store, record.date) >= MAX_ATTEMPTS) {
             Log.w("ohmymonev", "batas percobaan tercapai: ${record.date} tidak dijadwalkan coba lagi")
@@ -228,7 +224,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             ZonedDateTime.now(ScheduleCalculator.asiaJakarta),
             deadline,
         ).firstOrNull() ?: return
-        AlarmScheduler.scheduleRetry(appContext, next, lastChance)
+        AlarmScheduler.scheduleRetry(appContext, next)
     }
 
     private fun attemptToday(store: AppStore, dateIso: String): Int =

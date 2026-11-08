@@ -19,17 +19,19 @@ class AlarmSchedulerTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private val alarms = context.getSystemService(AlarmManager::class.java)
 
+    @org.junit.Before fun calendar() { WorkDaysStore(context).save(org.json.JSONObject().put("id", "participant").put("off_days", org.json.JSONArray())) }
+
     @Test fun pausingAutomationRemovesPreviouslyScheduledAlarms() {
         AlarmScheduler.armAll(context, ScheduleSettings())
-        assertEquals(3, shadowOf(alarms).scheduledAlarms.size)
+        assertEquals(2, shadowOf(alarms).scheduledAlarms.size)
         AlarmScheduler.armAll(context, ScheduleSettings(masterEnabled = false))
         assertTrue(shadowOf(alarms).scheduledAlarms.isEmpty())
     }
 
-    @Test fun disablingOneAlarmKeepsTheOtherTwo() {
+    @Test fun disablingOneAlarmKeepsTheOtherOne() {
         AlarmScheduler.armAll(context, ScheduleSettings())
-        AlarmScheduler.armAll(context, ScheduleSettings(autofillEnabled = false))
-        assertEquals(2, shadowOf(alarms).scheduledAlarms.size)
+        AlarmScheduler.armAll(context, ScheduleSettings(escalationEnabled = false))
+        assertEquals(1, shadowOf(alarms).scheduledAlarms.size)
     }
 
     @Test fun foreignAlarmIsNeverUsedAsTheFeatureSchedule() {
@@ -38,8 +40,8 @@ class AlarmSchedulerTest {
         val now = java.time.ZonedDateTime.parse("2026-11-07T20:36:00+07:00[Asia/Jakarta]")
         alarms.setAlarmClock(AlarmManager.AlarmClockInfo(now.plusMinutes(15).toInstant().toEpochMilli(), foreign), foreign)
         val state = AlarmScheduler.readArmedState(context, ScheduleSettings(), now)
-        assertEquals("2026-11-07T14:00:00Z", state.nextFireISO)
-        assertEquals("Pengisian", state.source)
+        assertEquals("2026-11-07T15:30:00Z", state.nextFireISO)
+        assertEquals("Pengisian darurat", state.source)
         org.junit.Assert.assertFalse(state.armed)
         val off = AlarmScheduler.ensureArmed(context, ScheduleSettings(masterEnabled = false))
         org.junit.Assert.assertNull(off.nextFireISO)
@@ -51,7 +53,7 @@ class AlarmSchedulerTest {
         AlarmScheduler.armAll(context, ScheduleSettings())
         AlarmScheduler.scheduleRetry(context, java.time.ZonedDateTime.now().plusMinutes(5))
         AlarmScheduler.quickFireForTest(context)
-        assertEquals(5, shadowOf(alarms).scheduledAlarms.size)
+        assertEquals(4, shadowOf(alarms).scheduledAlarms.size)
         AlarmScheduler.ensureArmed(context, ScheduleSettings(masterEnabled = false))
         assertTrue(shadowOf(alarms).scheduledAlarms.isEmpty())
     }
@@ -73,6 +75,6 @@ class AlarmSchedulerTest {
     }
     @Test fun configuredTimeUsesJakartaEvenWhenTheDeviceClockUsesAnotherZone() {
         val state = AlarmScheduler.readArmedState(context, ScheduleSettings(), java.time.ZonedDateTime.parse("2026-11-07T13:36:00Z"))
-        assertEquals("2026-11-07T14:00:00Z", state.nextFireISO)
+        assertEquals("2026-11-07T15:30:00Z", state.nextFireISO)
     }
 }

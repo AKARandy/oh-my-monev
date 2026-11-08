@@ -149,7 +149,7 @@ fun DraftCard(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                 ) {
-                    Text("Simpan dan nyalakan isi otomatis", style = MaterialTheme.typography.titleSmall)
+                    Text("Simpan tulisan hari ini", style = MaterialTheme.typography.titleSmall)
                 }
             }
         }
@@ -179,7 +179,7 @@ fun DraftCard(
             title = { Text("Simpan laporan?") },
             text = {
                 Text(
-                    "Aplikasi menyimpan tulisan ini. Pengisian mengikuti hari, jam, dan tindakan yang Anda pilih di Jadwal.",
+                    "Aplikasi menyimpan tulisan ini. Pengisian darurat memakainya pada jam terjadwal.",
                 )
             },
             confirmButton = {
@@ -203,7 +203,7 @@ fun DraftCard(
 }
 
 @Composable
-private fun EditorField(
+internal fun EditorField(
     label: String,
     hint: String,
     value: String,

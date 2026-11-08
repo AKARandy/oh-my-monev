@@ -14,6 +14,7 @@ class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
         val today = java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
+        if (!WorkDaysStore(context).isWorkday(today)) return
         if (!settings.masterEnabled || !settings.reminderEnabled || today.dayOfWeek !in settings.reminderDays) return
         val factory = NotificationFactory(context)
         factory.ensureChannels()

@@ -37,7 +37,15 @@ internal class MonevApiClient(
 
     suspend fun objectData(path: String): JSONObject? {
         val body = get(path) ?: return null
-        return try { JSONObject(body).let { it.optJSONObject("data") ?: it } }
+        return try {
+            val data = JSONObject(body).let { it.optJSONObject("data") ?: it }
+            if (path == "/users/me" && isCurrent()) {
+                id.ohmymonev.android.schedule.WorkDaysStore(context).save(data)
+                id.ohmymonev.android.schedule.AlarmScheduler.armAll(context,
+                    id.ohmymonev.android.schedule.TimeSettingsStore(context).settingsOnce())
+            }
+            data
+        }
         catch (_: JSONException) { failed("Situs mengirim data yang tidak dikenali."); null }
     }
 

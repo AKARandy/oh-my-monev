@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.test.core.app.ApplicationProvider
 import id.ohmymonev.core.schedule.ScheduleSettings
@@ -16,6 +17,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.After
 import org.junit.runner.RunWith
@@ -36,55 +38,59 @@ class TimeSettingsStoreTest {
 
     @After fun closeStore() = runBlocking { job.cancelAndJoin() }
 
-    private suspend fun seedLegacy(days: String, filling: String = "FILL_ONLY", lastChance: String = "AUTO_FILL_LAST_CHANCE") {
-        preferences.edit {
-            it[stringPreferencesKey("active_days")] = days
-            it[stringPreferencesKey("autofill_policy")] = filling
-            it[stringPreferencesKey("escalation_policy")] = lastChance
-        }
+    @Test fun freshStoreStartsWithTemplateSourceAndSafeDefaults() = runBlocking {
+        val s = store.settingsOnce()
+        assertEquals(ScheduleSettings.ContentSource.TEMPLATE, s.escalationSource)
+        assertEquals(java.time.LocalTime.of(22, 30), s.escalationTime)
+        assertTrue(s.escalationEnabled)
     }
 
-    @Test fun legacySharedDaysCarryOverToAllFeatures() = runBlocking {
-        seedLegacy("1,3,5")
+    @Test fun legacySharedDaysCarryOverToBothFeatures() = runBlocking {
+        preferences.edit {
+            it[stringPreferencesKey("active_days")] = "1,3,5"
+        }
         val s = store.settingsOnce()
         val expected = setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY)
         assertEquals(expected, s.reminderDays)
-        assertEquals(expected, s.autofillDays)
         assertEquals(expected, s.escalationDays)
     }
 
-    @Test fun legacySendingOptInIsPreserved() = runBlocking {
-        seedLegacy("", "FILL_AND_SUBMIT")
+    @Test fun oldAutofillKeysAreIgnoredAndEscalationSettingsSurvive() = runBlocking {
+        preferences.edit {
+            it[stringPreferencesKey("autofill_policy")] = "FILL_ONLY"
+            it[intPreferencesKey("autofill_minutes_of_day")] = 21 * 60
+            it[intPreferencesKey("escalation_minutes_of_day")] = 22 * 60 + 45
+            it[stringPreferencesKey("escalation_source")] = "AUTOMATIC"
+        }
         val s = store.settingsOnce()
-        assertEquals(DayOfWeek.entries.toSet(), s.reminderDays)
-        assertEquals(ScheduleSettings.Policy.FILL_AND_SUBMIT, s.escalationAction)
+        assertEquals(java.time.LocalTime.of(22, 45), s.escalationTime)
+        assertEquals(ScheduleSettings.ContentSource.AUTOMATIC, s.escalationSource)
     }
 
-    @Test fun legacyNotificationOnlyStaysNotificationOnly() = runBlocking {
-        seedLegacy("1", "FILL_AND_SUBMIT", "NOTIFY_ONLY")
-        assertEquals(ScheduleSettings.Policy.REMIND_ONLY, store.settingsOnce().escalationAction)
+    @Test fun invalidStoredSourceFallsBackToTemplate() = runBlocking {
+        preferences.edit {
+            it[stringPreferencesKey("escalation_source")] = "FILL_AND_SUBMIT"
+        }
+        assertEquals(ScheduleSettings.ContentSource.TEMPLATE, store.settingsOnce().escalationSource)
     }
 
-    @Test fun featureDaysAndSendingRoundTripIndependently() = runBlocking {
+    @Test fun featureDaysAndSourceRoundTripIndependently() = runBlocking {
         val original = ScheduleSettings(
             reminderDays = setOf(DayOfWeek.MONDAY),
-            autofillDays = setOf(DayOfWeek.TUESDAY),
             escalationDays = setOf(DayOfWeek.FRIDAY),
-            autofillPolicy = ScheduleSettings.Policy.FILL_AND_SUBMIT,
-            escalationAction = ScheduleSettings.Policy.FILL_ONLY,
+            escalationSource = ScheduleSettings.ContentSource.AUTOMATIC,
         )
         store.save(original)
         assertEquals(original, store.settingsOnce())
         val changed = store.settingsOnce().copy(reminderDays = setOf(DayOfWeek.SUNDAY))
         store.save(changed)
         assertEquals(changed, store.settingsOnce())
-        assertEquals(original.autofillDays, store.settingsOnce().autofillDays)
         assertEquals(original.escalationDays, store.settingsOnce().escalationDays)
     }
 
     @Test fun emptyFeatureDaysDoNotTurnIntoEveryDay() = runBlocking {
-        store.save(ScheduleSettings(autofillDays = emptySet()))
-        assertEquals(emptySet<DayOfWeek>(), store.settingsOnce().autofillDays)
+        store.save(ScheduleSettings(escalationDays = emptySet()))
+        assertEquals(emptySet<DayOfWeek>(), store.settingsOnce().escalationDays)
         assertEquals(DayOfWeek.entries.toSet(), store.settingsOnce().reminderDays)
     }
 
@@ -92,11 +98,9 @@ class TimeSettingsStoreTest {
         val original = ScheduleSettings(
             reminderEnabled = false,
             reminderDays = setOf(DayOfWeek.MONDAY),
-            autofillDays = setOf(DayOfWeek.TUESDAY),
             escalationDays = setOf(DayOfWeek.FRIDAY),
-            autofillTime = java.time.LocalTime.of(20, 45),
-            autofillPolicy = ScheduleSettings.Policy.FILL_AND_SUBMIT,
-            escalationAction = ScheduleSettings.Policy.REMIND_ONLY,
+            escalationTime = java.time.LocalTime.of(22, 45),
+            escalationSource = ScheduleSettings.ContentSource.AUTOMATIC,
         )
         store.save(original)
         store.save(store.settingsOnce().copy(masterEnabled = false))

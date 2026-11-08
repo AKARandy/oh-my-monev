@@ -8,11 +8,8 @@ import android.content.Context
  * oleh `:app` (atau kelas engine) saat integrasi.
  */
 interface AutoFillDelegate {
-    /**
-     * Mulai satu siklus pengisian.
-     * @param lastChance true saat dipicu eskalasi 22:30 (malam terakhir — D4).
-     */
-    fun startAutoFill(context: Context, lastChance: Boolean)
+    /** Mulai satu siklus pengisian: isi formulir lalu kirim. */
+    fun startAutoFill(context: Context)
 }
 
 /**

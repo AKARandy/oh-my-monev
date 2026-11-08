@@ -11,6 +11,10 @@ import java.io.File
 @Serializable
 data class StoredDraft(val date: String, val aktivitas: String, val pelajaran: String, val kendala: String, val participantId: String? = null)
 
+/** Templat tetap buatan pengguna untuk Pengisian darurat mode templat ({tanggal} diganti saat dipakai). */
+@Serializable
+data class ReportTemplate(val aktivitas: String, val pelajaran: String, val kendala: String)
+
 /** Status sesi terakhir yang benar-benar diperiksa, dipakai semua layar. */
 @Serializable
 data class SessionRecord(val active: Boolean, val checkedAtISO: String)
@@ -95,6 +99,24 @@ class AppStore(private val context: Context) {
         draftFile().delete()
     }
 
+    /** Templat tetap tanpa tanggal; tidak ada yang menimpa kecuali pengguna. */
+    fun template(): ReportTemplate? = try {
+        templateFile().takeIf { it.exists() }
+            ?.readUtf8()
+            ?.let { json.decodeFromString(ReportTemplate.serializer(), it) }
+    } catch (e: Exception) {
+        android.util.Log.w("ohmymonev", "template parse gagal: $e")
+        null
+    }
+
+    fun saveTemplate(template: ReportTemplate) {
+        templateFile().writeText(json.encodeToString(template))
+    }
+
+    fun clearTemplate() {
+        templateFile().delete()
+    }
+
     fun appendRecord(record: RunRecord) {
         recordFile().appendText(json.encodeToString(record) + "\n")
     }
@@ -111,6 +133,7 @@ class AppStore(private val context: Context) {
     private fun historyFile() = File(context.filesDir, HISTORY_FILE)
     private fun recordFile() = File(context.filesDir, RECORDS_FILE)
     private fun draftFile() = File(context.filesDir, DRAFT_FILE)
+    private fun templateFile() = File(context.filesDir, TEMPLATE_FILE)
     private fun sessionFile() = File(context.filesDir, SESSION_FILE)
     private fun skipFile() = File(context.filesDir, SKIP_FILE)
 
@@ -118,6 +141,7 @@ class AppStore(private val context: Context) {
         const val HISTORY_FILE = "history.jsonl"
         const val RECORDS_FILE = "records.jsonl"
         const val DRAFT_FILE = "today-draft.json"
+        const val TEMPLATE_FILE = "report-template.json"
         const val SESSION_FILE = "session.json"
         const val SKIP_FILE = "tonight-skip.json"
     }

@@ -66,7 +66,6 @@ class WebViewEngine(
     private class RunState(
         val dateISO: String,
         val draft: ReportDraft,
-        val liveSubmit: Boolean,
         val attempt: Int,
         val attemptedAtISO: String,
         val expectedSessionVersion: Long?,
@@ -78,12 +77,11 @@ class WebViewEngine(
         var sessionVersion = 0L
     }
 
-    fun runAutomation(dateISO: String, draft: ReportDraft, liveSubmit: Boolean, attempt: Int, expectedSessionVersion: Long? = null) {
+    fun runAutomation(dateISO: String, draft: ReportDraft, attempt: Int, expectedSessionVersion: Long? = null) {
         val state = RunState(
             dateISO = dateISO,
             expectedSessionVersion = expectedSessionVersion,
             draft = draft,
-            liveSubmit = liveSubmit,
             attempt = attempt,
             attemptedAtISO = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(OffsetDateTime.now()),
         )
@@ -274,10 +272,6 @@ class WebViewEngine(
             when {
                 mismatchDetail != null -> finish(state, EngineOutcome.READBACK_MISMATCH, mismatchDetail)
                 !gate.passed -> finish(state, EngineOutcome.READBACK_MISMATCH, gate.violations.joinToString("; ") { it.id })
-                !state.liveSubmit -> {
-                    events(state, "Mode Uji: rintisan diisi dan diverifikasi, tanpa kirim")
-                    finish(state, EngineOutcome.FILL_OK, "terverifikasi tanpa kirim")
-                }
                 else -> tickAndSubmit(state)
             }
         }
@@ -309,7 +303,7 @@ class WebViewEngine(
         return null
     }
 
-    /** liveSubmit only: tick the confirmation checkbox, then click 'Simpan dan Kirim'. */
+    /** Tick the confirmation checkbox, then click 'Simpan dan Kirim'. */
     private fun tickAndSubmit(state: RunState) {
         if (!currentDraftScope(state)) return
         val webView = state.webView

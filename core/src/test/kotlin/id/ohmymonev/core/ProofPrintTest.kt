@@ -59,7 +59,8 @@ class ProofPrintTest {
         println()
         println("=== JADWAL HARI INI (WIB) ===")
         val settings = ScheduleSettings()
-        ScheduleCalculator.threeFires(today, settings).forEach { println("alarm: $it") }
+        ScheduleCalculator.nextFires(today.atStartOfDay(ScheduleCalculator.asiaJakarta), settings)
+            .forEach { (key, fire) -> println("alarm $key: $fire") }
         println("contoh coba ulang setelah gagal 21:05 (batas 22:30):")
         val failedAt = today.atTime(21, 5).atZone(ScheduleCalculator.asiaJakarta)
         val deadline = today.atTime(22, 30).atZone(ScheduleCalculator.asiaJakarta)

@@ -22,15 +22,12 @@ class ScheduleCalculatorTest {
 
     private fun settings(
         reminder: LocalTime = LocalTime.of(20, 0),
-        autofill: LocalTime = LocalTime.of(21, 0),
         escalation: LocalTime = LocalTime.of(22, 30),
         activeDays: Set<DayOfWeek> = DayOfWeek.entries.toSet(),
     ) = ScheduleSettings(
         reminderTime = reminder,
-        autofillTime = autofill,
         escalationTime = escalation,
         reminderDays = activeDays,
-        autofillDays = activeDays,
         escalationDays = activeDays,
     )
 
@@ -41,51 +38,28 @@ class ScheduleCalculatorTest {
     fun `each feature has its own next active day`() {
         val s = ScheduleSettings(
             reminderDays = setOf(DayOfWeek.MONDAY),
-            autofillDays = setOf(DayOfWeek.TUESDAY),
             escalationDays = setOf(DayOfWeek.FRIDAY),
         )
         val fires = ScheduleCalculator.nextFires(at(normalDay, 8, 0), s)
         assertEquals(at(normalDay, 20, 0), fires.getValue(ScheduleCalculator.KEY_REMINDER))
-        assertEquals(at(normalDay.plusDays(1), 21, 0), fires.getValue(ScheduleCalculator.KEY_AUTOFILL))
         assertEquals(at(normalDay.plusDays(4), 22, 30), fires.getValue(ScheduleCalculator.KEY_ESCALATION))
-        assertEquals(listOf(at(normalDay, 20, 0)), ScheduleCalculator.threeFires(normalDay, s))
     }
 
     @Test
-    fun `editing reminder days leaves other feature dates unchanged`() {
+    fun `editing reminder days leaves the other feature date unchanged`() {
         val now = at(normalDay, 8, 0)
         val original = ScheduleSettings()
         val before = ScheduleCalculator.nextFires(now, original)
         val after = ScheduleCalculator.nextFires(now, original.copy(reminderDays = setOf(DayOfWeek.WEDNESDAY)))
-        assertEquals(before[ScheduleCalculator.KEY_AUTOFILL], after[ScheduleCalculator.KEY_AUTOFILL])
         assertEquals(before[ScheduleCalculator.KEY_ESCALATION], after[ScheduleCalculator.KEY_ESCALATION])
         assertEquals(normalDay.plusDays(2), after.getValue(ScheduleCalculator.KEY_REMINDER).toLocalDate())
     }
 
     @Test
     fun `an empty day selection disables only that feature`() {
-        val s = ScheduleSettings(autofillDays = emptySet())
-        assertEquals(2, ScheduleCalculator.threeFires(normalDay, s).size)
+        val s = ScheduleSettings(escalationDays = emptySet())
         val fires = ScheduleCalculator.nextFires(at(normalDay, 8, 0), s)
-        assertEquals(setOf(ScheduleCalculator.KEY_REMINDER, ScheduleCalculator.KEY_ESCALATION), fires.keys)
-    }
-
-    // ---------------------------------------------------------------- threeFires
-
-    @Test
-    fun `threeFires returns the three ladders on a normal day`() {
-        val fires = ScheduleCalculator.threeFires(normalDay, settings())
-        assertEquals(3, fires.size)
-        assertEquals(at(normalDay, 20, 0), fires[0])
-        assertEquals(at(normalDay, 21, 0), fires[1])
-        assertEquals(at(normalDay, 22, 30), fires[2])
-    }
-
-    @Test
-    fun `threeFires returns empty on an inactive day`() {
-        val mondayOnly = settings(activeDays = setOf(DayOfWeek.MONDAY))
-        assertTrue(ScheduleCalculator.threeFires(LocalDate.of(2026, 11, 3), mondayOnly).isEmpty())
-        assertEquals(3, ScheduleCalculator.threeFires(normalDay, mondayOnly).size)
+        assertEquals(setOf(ScheduleCalculator.KEY_REMINDER), fires.keys)
     }
 
     // ------------------------------------------------------------------ nextFires
@@ -95,12 +69,11 @@ class ScheduleCalculatorTest {
         val now = at(normalDay, 8, 15)
         val fires = ScheduleCalculator.nextFires(now, settings())
         assertEquals(at(normalDay, 20, 0), fires.getValue(ScheduleCalculator.KEY_REMINDER))
-        assertEquals(at(normalDay, 21, 0), fires.getValue(ScheduleCalculator.KEY_AUTOFILL))
         assertEquals(at(normalDay, 22, 30), fires.getValue(ScheduleCalculator.KEY_ESCALATION))
     }
 
     @Test
-    fun `nextFires between reminder and autofill keeps same night tail`() {
+    fun `nextFires between reminder and escalation keeps same night tail`() {
         val now = at(normalDay, 20, 30)
         val fires = ScheduleCalculator.nextFires(now, settings())
         // Pengingat 20:00 sudah terlewat -> berikutnya besok.
@@ -108,7 +81,6 @@ class ScheduleCalculatorTest {
             at(normalDay.plusDays(1), 20, 0),
             fires.getValue(ScheduleCalculator.KEY_REMINDER),
         )
-        assertEquals(at(normalDay, 21, 0), fires.getValue(ScheduleCalculator.KEY_AUTOFILL))
         assertEquals(at(normalDay, 22, 30), fires.getValue(ScheduleCalculator.KEY_ESCALATION))
     }
 
@@ -118,7 +90,6 @@ class ScheduleCalculatorTest {
         val fires = ScheduleCalculator.nextFires(now, settings())
         val tomorrow = normalDay.plusDays(1)
         assertEquals(at(tomorrow, 20, 0), fires.getValue(ScheduleCalculator.KEY_REMINDER))
-        assertEquals(at(tomorrow, 21, 0), fires.getValue(ScheduleCalculator.KEY_AUTOFILL))
         assertEquals(at(tomorrow, 22, 30), fires.getValue(ScheduleCalculator.KEY_ESCALATION))
     }
 
@@ -134,23 +105,11 @@ class ScheduleCalculatorTest {
     }
 
     @Test
-    fun `nextFires with a late autofill keeps escalation same night unchanged policy`() {
-        // Dokumentasi kebijakan (D4 tidak berubah): meski autofill digeser ke 23:40,
-        // eskalasi TETAP 22:30 malam yang sama — kalkulator tidak menyusun ulang alarm.
-        val late = settings(autofill = LocalTime.of(23, 40))
-        val now = at(normalDay, 22, 0)
-        val fires = ScheduleCalculator.nextFires(now, late)
-        assertEquals(at(normalDay, 22, 30), fires.getValue(ScheduleCalculator.KEY_ESCALATION))
-        assertEquals(at(normalDay, 23, 40), fires.getValue(ScheduleCalculator.KEY_AUTOFILL))
-    }
-
-    @Test
-    fun `nextFires key set is the three documented keys`() {
+    fun `nextFires key set is the two documented keys`() {
         val fires = ScheduleCalculator.nextFires(at(normalDay, 8, 0), settings())
         assertEquals(
             setOf(
                 ScheduleCalculator.KEY_REMINDER,
-                ScheduleCalculator.KEY_AUTOFILL,
                 ScheduleCalculator.KEY_ESCALATION,
             ),
             fires.keys,
@@ -211,7 +170,7 @@ class ScheduleCalculatorTest {
         // Asia/Jakarta tidak punya DST: cek offset +07:00 di seluruh horizon 7 hari.
         val start = ZonedDateTime.of(2026, 11, 1, 0, 0, 0, 0, wib)
         val fires = ScheduleCalculator.nextFires(start, settings(), horizonDays = 7)
-        assertEquals(3, fires.size)
+        assertEquals(2, fires.size)
         for ((_, fire) in fires) {
             assertEquals(ZoneId.of("Asia/Jakarta"), fire.zone)
             assertEquals("+07:00", fire.offset.id)

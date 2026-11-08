@@ -4,24 +4,20 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationManagerCompat
-import id.ohmymonev.core.schedule.ScheduleSettings
 import kotlinx.coroutines.runBlocking
 
 /**
- * Alarm eskalasi 22:30 (default) — malam terakhir sebelum tengah malam.
- * Notifikasi kanal "escalation" (full-screen intent + suara; lihat NotificationFactory),
- * lalu — bila kebijakan AUTO_FILL_LAST_CHANCE — picu mesin autofill yang sama
- * dengan flag `lastChance`.
+ * Alarm pengisian darurat 22:30 (default) — satu-satunya pengisi otomatis, selalu
+ * isi lalu kirim. Notifikasi kanal "escalation" (full-screen intent + suara;
+ * lihat NotificationFactory), lalu picu mesin pengisi.
  */
 class EscalationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
         val today = java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
+        if (!WorkDaysStore(context).isWorkday(today)) return
         if (!settings.masterEnabled || !settings.escalationEnabled || today.dayOfWeek !in settings.escalationDays) return
-        if (id.ohmymonev.android.data.AppStore(context).isSkipped(
-                java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta).toString(),
-            )
-        ) {
+        if (id.ohmymonev.android.data.AppStore(context).isSkipped(today.toString())) {
             return
         }
         val factory = NotificationFactory(context)
@@ -30,9 +26,7 @@ class EscalationReceiver : BroadcastReceiver() {
             NotificationManagerCompat.from(context)
                 .notify(NotificationFactory.NOTIF_ID_ESCALATION, factory.escalation())
         }
-        if (settings.escalationAction != ScheduleSettings.Policy.REMIND_ONLY) {
-            AutoFillService.start(context, lastChance = true)
-        }
+        AutoFillService.start(context)
     }
 
     companion object {

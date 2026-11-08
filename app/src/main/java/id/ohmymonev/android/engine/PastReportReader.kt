@@ -79,7 +79,7 @@ internal class PastReportReader(private val context: Context) {
     }
 
     companion object {
-        private val submittedStates = setOf("SUBMITTED", "REVISION_SUBMITTED", "APPROVED", "COMPLETED")
+        internal val submittedStates = setOf("SUBMITTED", "REVISION_SUBMITTED", "APPROVED", "COMPLETED")
         private fun parseDate(row: JSONObject): LocalDate? = runCatching { LocalDate.parse(row.getString("date").take(10)) }.getOrNull()
         private fun belongsTo(row: JSONObject, id: String) = !row.has("participant_id") || row.optString("participant_id") == id
 

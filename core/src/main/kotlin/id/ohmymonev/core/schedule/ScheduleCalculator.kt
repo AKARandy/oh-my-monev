@@ -18,26 +18,9 @@ object ScheduleCalculator {
 
     /** Kunci stabil untuk [nextFires]. */
     const val KEY_REMINDER = "reminder"
-    const val KEY_AUTOFILL = "autofill"
     const val KEY_ESCALATION = "escalation"
 
-    private val allKeys = listOf(KEY_REMINDER, KEY_AUTOFILL, KEY_ESCALATION)
-
-    /**
-     * Tiga momen alarm (pengingat, isi-otomatis, eskalasi) untuk [day] dalam WIB,
-     * sesuai [s]. Setiap fitur memakai pilihan harinya sendiri.
-     * Catatan kebijakan: urutan mengikuti jam dinding tiap alarm apa adanya —
-     * kalkulator TIDAK menyusun ulang/menggeser walau misalnya autofill digeser
-     * ke 23:40; eskalasi tetap 22:30 malam yang sama.
-     */
-    fun threeFires(day: LocalDate, s: ScheduleSettings): List<ZonedDateTime> {
-        if (!s.masterEnabled) return emptyList()
-        return buildList {
-            if (s.reminderEnabled && day.dayOfWeek in s.reminderDays) add(fire(day, s.reminderTime))
-            if (s.autofillEnabled && day.dayOfWeek in s.autofillDays) add(fire(day, s.autofillTime))
-            if (s.escalationEnabled && day.dayOfWeek in s.escalationDays) add(fire(day, s.escalationTime))
-        }
-    }
+    private val allKeys = listOf(KEY_REMINDER, KEY_ESCALATION)
 
     /**
      * Aktivasi berikutnya untuk tiap kunci, ketat setelah [now], melewati hari non-aktif,
@@ -54,19 +37,16 @@ object ScheduleCalculator {
         val startDate = now.toLocalDate()
         val times = mapOf(
             KEY_REMINDER to s.reminderTime,
-            KEY_AUTOFILL to s.autofillTime,
             KEY_ESCALATION to s.escalationTime,
         )
         val days = mapOf(
             KEY_REMINDER to s.reminderDays,
-            KEY_AUTOFILL to s.autofillDays,
             KEY_ESCALATION to s.escalationDays,
         )
         val result = LinkedHashMap<String, ZonedDateTime>()
         if (!s.masterEnabled) return result
         val enabled = buildSet {
             if (s.reminderEnabled) add(KEY_REMINDER)
-            if (s.autofillEnabled) add(KEY_AUTOFILL)
             if (s.escalationEnabled) add(KEY_ESCALATION)
         }
         for (dayOffset in 0..horizonDays) {

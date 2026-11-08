@@ -30,7 +30,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.VerticalDivider
+
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -67,10 +67,8 @@ import id.ohmymonev.android.schedule.TimeSettingsStore
 import id.ohmymonev.core.enginecore.EngineOutcome
 import id.ohmymonev.core.enginecore.RunRecord
 import id.ohmymonev.core.schedule.ScheduleCalculator
-import id.ohmymonev.core.schedule.ScheduleSettings
 import id.ohmymonev.core.siteprofile.DEFAULT_SITE_PROFILE
 import java.time.LocalDate
-import java.time.LocalTime
 import java.time.OffsetDateTime
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -170,7 +168,11 @@ fun HomeTab(
         statusJob?.cancel()
         checkingStatus = true
         statusJob = scope.launch {
-            try { siteStatus = SiteStatusProbe(context).check() }
+            try {
+                siteStatus = SiteStatusProbe(context).check()
+                val current = withContext(Dispatchers.IO) { store.settingsOnce() }
+                armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, current) }
+            }
             finally { if (request == statusRequest) checkingStatus = false }
         }
     }
@@ -218,7 +220,8 @@ fun HomeTab(
     // Setup yang masih kurang: sesi, lokasi, notifikasi. Dipakai tombol utama dan kartu persiapan.
     val needSetup = !sessionReadyForAutomation() || !locationGranted || !notificationsOn
     val noReportRequired = siteStatus?.sessionActive == true &&
-        (siteStatus?.today == TodayState.FILLED || siteStatus?.today == TodayState.LIBUR)
+        (siteStatus?.today == TodayState.FILLED || siteStatus?.today == TodayState.LIBUR ||
+            siteStatus?.today == TodayState.LEAVE)
 
     val needsDraftCorrection = pratinjau != null && !pratinjauLoading && !pratinjau!!.sourceUnavailable &&
         pratinjau!!.outcome() is id.ohmymonev.core.generator.GenerationOutcome.Failed
@@ -248,6 +251,8 @@ fun HomeTab(
                         "Sudah tercatat"
                     siteStatus?.sessionActive == true && siteStatus?.today == TodayState.LIBUR ->
                         "Hari libur"
+                    siteStatus?.sessionActive == true && siteStatus?.today == TodayState.LEAVE ->
+                        "Tidak hadir"
                     !sessionReadyForAutomation() && session.hasToken -> "Login tersimpan. Pemeriksaan belum berhasil."
                     !sessionReadyForAutomation() -> "Login untuk melanjutkan."
                     todayDraft != null && !draftValid -> "Perbaiki laporan sebelum mengisi formulir."
@@ -269,7 +274,7 @@ fun HomeTab(
                     !sessionReadyForAutomation() -> onOpenSession()
                     (todayDraft != null && !draftValid) || needsDraftCorrection -> editorExpanded = true
                     !previewReady -> refreshPratinjau(true)
-                    else -> { AutoFillService.start(context, lastChance = false); running = true }
+                    else -> { AutoFillService.start(context); running = true }
                 }
             },
             enabled = !running && !pratinjauLoading && !confirmingSession && (noReportRequired || !sessionReadyForAutomation() || !needSetup),
@@ -290,8 +295,7 @@ fun HomeTab(
                     needSetup -> "Lengkapi izin di bawah"
                     (todayDraft != null && !draftValid) || needsDraftCorrection -> "Tulis laporan hari ini"
                     !previewReady -> "Perbarui pratinjau"
-                    settings?.autofillPolicy == ScheduleSettings.Policy.FILL_AND_SUBMIT -> "Isi dan kirim sekarang"
-                    else -> "Isi formulir sekarang"
+                    else -> "Isi dan kirim sekarang"
                 },
                 style = MaterialTheme.typography.titleMedium,
             )
@@ -361,7 +365,7 @@ fun HomeTab(
                         title = { Text("Matikan otomatis untuk malam ini?") },
                         text = {
                             Text(
-                                "Pengingat, pengisian, dan peringatan malam ini tidak akan berjalan. " +
+                                "Pengisian darurat malam ini tidak akan berjalan. " +
                                     "Kamu mengisi sendiri sebelum 23.59 WIB. Hanya berlaku malam ini.",
                             )
                         },
@@ -505,13 +509,14 @@ private fun SiteStatusCard(
                                 TodayState.FILLED -> "Sudah diisi"
                                 TodayState.UNFILLED -> "Belum diisi"
                                 TodayState.LIBUR -> "Hari libur, tidak perlu isi"
+                                TodayState.LEAVE -> "Tidak hadir, tidak perlu laporan"
                                 TodayState.UNKNOWN -> "Tidak jelas"
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = when (status.today) {
                                 TodayState.UNFILLED -> MaterialTheme.colorScheme.error
-                                TodayState.LIBUR -> MaterialTheme.colorScheme.onSurfaceVariant
+                                TodayState.LIBUR, TodayState.LEAVE -> MaterialTheme.colorScheme.onSurfaceVariant
                                 else -> MaterialTheme.colorScheme.primary
                             },
                         )
@@ -556,49 +561,6 @@ private fun SiteStatusCard(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun ScheduleSummary(settings: ScheduleSettings) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TimeSlot("Pengingat", settings.reminderTime, Modifier.weight(1f))
-            VerticalDivider(modifier = Modifier.height(28.dp), color = MaterialTheme.colorScheme.outlineVariant)
-            TimeSlot("Isi otomatis", settings.autofillTime, Modifier.weight(1f))
-            VerticalDivider(modifier = Modifier.height(28.dp), color = MaterialTheme.colorScheme.outlineVariant)
-            TimeSlot("Peringatan", settings.escalationTime, Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun TimeSlot(label: String, time: LocalTime, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Text(
-            text = time.format(TIME_FORMAT),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 

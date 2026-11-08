@@ -11,7 +11,9 @@ import id.ohmymonev.core.generator.ReportHistory
 import id.ohmymonev.core.model.GenerationTier
 import id.ohmymonev.core.model.ReportDraft
 import id.ohmymonev.core.schedule.ScheduleCalculator
+import id.ohmymonev.core.schedule.ScheduleSettings
 import id.ohmymonev.core.validator.DeliveryGate
+import id.ohmymonev.android.schedule.TimeSettingsStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -34,6 +36,8 @@ internal data class PreparedReport(
     val sourceReport: SourceReport? = null,
     val sourceReadComplete: Boolean = false,
     val sourceUnavailable: Boolean = false,
+    /** Mode + isi templat saat draf disiapkan; berubah berarti pratinjau wajib dihitung ulang. */
+    val templateKey: String? = null,
     @kotlinx.serialization.Transient val sessionVersion: Long? = null,
 ) {
     fun outcome(): GenerationOutcome {
@@ -71,10 +75,17 @@ internal class PreparedReportService(
         api.confirmActive()
         val writtenSnapshot = withContext(Dispatchers.IO) { store.todayDraft(date.toString()) }
         val written = writtenSnapshot?.takeIf { it.participantId == null || it.participantId == id }
+        val fillMode = TimeSettingsStore(context).settingsOnce().escalationSource
+        val template = if (fillMode == ScheduleSettings.ContentSource.TEMPLATE) withContext(Dispatchers.IO) { store.template() } else null
+        val templateKey = when (fillMode) {
+            ScheduleSettings.ContentSource.TEMPLATE ->
+                "TEMPLATE:" + (template?.let { "${it.aktivitas}\u0000${it.pelajaran}\u0000${it.kendala}".hashCode() } ?: "none")
+            ScheduleSettings.ContentSource.AUTOMATIC -> "AUTOMATIC"
+        }
         val cached = withContext(Dispatchers.IO) { runCatching {
             preferences.getString("draft", null)?.let { json.decodeFromString<PreparedReport>(it) }
         }.getOrNull() }
-        if (!force && today() == date && cached?.date == date.toString() && cached.participantId == id && cached.written == written && cached.sourceReadComplete && api.isCurrent()) {
+        if (!force && today() == date && cached?.date == date.toString() && cached.participantId == id && cached.written == written && cached.templateKey == templateKey && cached.sourceReadComplete && api.isCurrent()) {
             return cached.copy(sessionVersion = api.credentialVersion)
         }
         // A failed refresh must not leave an older preview available to the worker.
@@ -88,6 +99,15 @@ internal class PreparedReportService(
             sourceDate = date
             source = "Dari tulisan Anda untuk hari ini."
             outcome = GenerationOutcome.Generated(written.report(), GenerationTier.TEMPLATE, emptyList())
+        } else if (fillMode == ScheduleSettings.ContentSource.TEMPLATE) {
+            // Mode templat: tanpa fallback. Templat kosong gagal jelas, bukan melompat ke lanjutan otomatis.
+            sourceDate = date
+            source = if (template == null) "Templat belum dibuat." else "Dari templat Anda."
+            outcome = if (template == null) GenerationOutcome.Failed(FailureReason.NO_SOURCE_MATERIAL, "Templat belum dibuat. Buka tab Jadwal, kartu Templat laporan.")
+            else GeneratorPipeline(
+                templates = { ReportDraft(template.aktivitas, template.pelajaran, template.kendala) },
+                history = ReportHistory { null },
+            ).generate(date)
         } else {
             val previous = PastReportReader(context).read(date, api, profile)
             material = previous.material
@@ -102,7 +122,7 @@ internal class PreparedReportService(
         val draft = (outcome as? GenerationOutcome.Generated)?.draft
         val issues = if (outcome is GenerationOutcome.Failed) listOf(outcome.detail) else validationIssues(requireNotNull(draft))
         val prepared = PreparedReport(date.toString(), id, sourceDate.toString(), source,
-            draft?.let { StoredDraft(date.toString(), it.aktivitas, it.pelajaran, it.kendala) }, issues, written, material, !sourceUnavailable, sourceUnavailable)
+            draft?.let { StoredDraft(date.toString(), it.aktivitas, it.pelajaran, it.kendala) }, issues, written, material, !sourceUnavailable, sourceUnavailable, templateKey)
         // Transient API failures are retryable; only material-backed results are cached.
         if (!sourceUnavailable) withContext(Dispatchers.IO) {
             val owned = written?.copy(participantId = id)

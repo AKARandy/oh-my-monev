@@ -25,7 +25,7 @@ data class SessionSnapshot(
 
 internal class SessionCredentials(val token: String, val version: Long)
 
-internal class SessionRepository(context: Context, private val vault: SessionTokenStore = SessionTokenStore(context)) {
+internal class SessionRepository(private val context: Context, private val vault: SessionTokenStore = SessionTokenStore(context)) {
     private val store = AppStore(context)
     private val mutex = Mutex()
     private val loaded = CompletableDeferred<Unit>()
@@ -55,7 +55,10 @@ internal class SessionRepository(context: Context, private val vault: SessionTok
                 mutable.value = mutable.value.copy(issue = "Login belum dapat disimpan. Coba Cek sesi kembali.")
                 return@withLock false
             }
-            if (!preserveConfirmation) store.clearSessionStatus()
+            if (!preserveConfirmation) {
+                store.clearSessionStatus()
+                id.ohmymonev.android.schedule.WorkDaysStore(context).clear()
+            }
             token = value
             mutable.value = SessionSnapshot(if (preserveConfirmation) mutable.value.record else null, hasToken = true, version = expectedVersion + 1)
             true

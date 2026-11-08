@@ -63,15 +63,17 @@ import org.robolectric.annotation.GraphicsMode
 class UiRenderTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun capture(name: String, readyText: String, fontScale: Float = 1f, captureCards: Boolean = false, captureTag: String? = null, masterEnabled: Boolean = true, content: @Composable () -> Unit) {
+    private fun capture(name: String, readyText: String, fontScale: Float = 1f, captureCards: Boolean = false, captureTag: String? = null, masterEnabled: Boolean = true, source: ScheduleSettings.ContentSource = ScheduleSettings.ContentSource.TEMPLATE, content: @Composable () -> Unit) {
         RuntimeEnvironment.setFontScale(fontScale)
         val context = ApplicationProvider.getApplicationContext<Context>()
+        id.ohmymonev.android.schedule.WorkDaysStore(context).save(org.json.JSONObject().put("id", "fixture")
+            .put("off_days", org.json.JSONArray().put("SUNDAY")))
         runBlocking {
             TimeSettingsStore(context).save(ScheduleSettings(
                 masterEnabled = masterEnabled,
                 reminderDays = setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY),
-                autofillDays = setOf(DayOfWeek.TUESDAY, DayOfWeek.THURSDAY),
                 escalationDays = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
+                escalationSource = source,
             ))
         }
         compose.setContent {
@@ -98,7 +100,7 @@ class UiRenderTest {
         }
         if (!masterEnabled) {
             compose.onNodeWithTag("master-toggle").assertIsEnabled()
-            for (title in listOf("Pengingat", "Pengisian", "Peringatan terakhir")) {
+            for (title in listOf("Pengingat", "Pengisian darurat")) {
                 compose.onNodeWithTag("alarm-toggle-$title").assertIsNotEnabled()
                 compose.onNodeWithTag("alarm-edit-$title").assertIsNotEnabled()
             }
@@ -109,15 +111,18 @@ class UiRenderTest {
         if (captureTag == null) compose.onAllNodes(isRoot()).onLast().captureRoboImage(output.absolutePath)
         else compose.onNodeWithTag(captureTag).captureRoboImage(output.absolutePath)
         if (captureCards) {
-            listOf("Pengingat", "Pengisian", "Peringatan terakhir").forEachIndexed { index, title ->
+            listOf("Pengingat", "Pengisian darurat").forEachIndexed { index, title ->
                 compose.onNodeWithTag("alarm-card-$title")
                     .captureRoboImage(File(root, "screenshots/forge-card-${index + 1}${if (masterEnabled) "" else "-disabled"}${if (fontScale > 1f) "-large-text" else ""}.png").absolutePath)
             }
+            compose.onNodeWithTag("template-card")
+                .captureRoboImage(File(root, "screenshots/forge-template-card${if (masterEnabled) "" else "-disabled"}${if (fontScale > 1f) "-large-text" else ""}.png").absolutePath)
         }
     }
 
     @Test fun home() = capture("forge-home", "Login untuk") { AppRoot() }
-    @Test fun schedule() = capture("forge-schedule", "Aktifkan semua fitur") { ScheduleTab() }
+    @Test @Config(qualifiers = "w411dp-h2400dp-xhdpi")
+    fun schedule() = capture("forge-schedule", "Aktifkan semua fitur") { ScheduleTab() }
     @Test @Config(qualifiers = "w411dp-h2400dp-xhdpi")
     fun scheduleExplained() = capture("forge-schedule-explained", "Aktifkan semua fitur", captureCards = true) { ScheduleTab() }
     @Test @Config(qualifiers = "w360dp-h800dp-xhdpi")
@@ -139,20 +144,26 @@ class UiRenderTest {
     }
     @Test @Config(qualifiers = "w360dp-h800dp-xhdpi")
     fun homeLargeText() = capture("forge-home-large-text", "Login untuk", 1.3f) { AppRoot() }
-    @Test fun fillingEditor() = capture("forge-filling-editor", "Jam (WIB") {
+    @Test fun emergencyEditorTemplate() = capture("forge-emergency-editor", "Jam (WIB") {
         AlarmEditor(
-            title = "Pengisian", initialTime = LocalTime.of(21, 0), initialEnabled = true,
-            initialDays = setOf(DayOfWeek.TUESDAY, DayOfWeek.THURSDAY),
-            initialAction = ScheduleSettings.Policy.FILL_ONLY,
+            title = "Pengisian darurat", initialTime = LocalTime.of(22, 30), initialEnabled = true,
+            initialDays = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
+            initialSource = ScheduleSettings.ContentSource.TEMPLATE, templateReady = true,
             onDismiss = {}, onSave = { _, _, _, _ -> },
         )
     }
-    @Test fun finalWarningEditor() = capture("forge-final-warning-editor", "Jam (WIB") {
+    @Test fun emergencyEditorAutomatic() = capture("forge-emergency-editor-automatic", "Jam (WIB") {
         AlarmEditor(
-            title = "Peringatan terakhir", initialTime = LocalTime.of(22, 30), initialEnabled = true,
+            title = "Pengisian darurat", initialTime = LocalTime.of(22, 30), initialEnabled = true,
             initialDays = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
-            initialAction = ScheduleSettings.Policy.REMIND_ONLY,
+            initialSource = ScheduleSettings.ContentSource.AUTOMATIC,
             onDismiss = {}, onSave = { _, _, _, _ -> },
+        )
+    }
+    @Test fun templateDialog() = capture("forge-template-dialog", "Teks ini menjadi isi laporan") {
+        id.ohmymonev.android.ui.TemplateEditor(
+            current = null, clearBlocked = false,
+            onDismiss = {}, onSave = {}, onClear = {},
         )
     }
 
@@ -203,6 +214,13 @@ class UiRenderTest {
     }
 
     @Test @Config(qualifiers = "w411dp-h2400dp-xhdpi")
+    fun scheduleAutomaticDescriptions() = capture(
+        "forge-schedule-automatic",
+        "Aktifkan semua fitur",
+        source = ScheduleSettings.ContentSource.AUTOMATIC,
+    ) { ScheduleTab() }
+
+    @Test @Config(qualifiers = "w411dp-h2400dp-xhdpi")
     fun scheduleDisabled() = capture("forge-schedule-disabled", "Aktifkan semua fitur", captureCards = true, masterEnabled = false) { ScheduleTab() }
 
     @Test @Config(qualifiers = "w360dp-h3200dp-xhdpi")
@@ -210,7 +228,7 @@ class UiRenderTest {
 
     @Test fun configuredSchedule() = capture("forge-schedule-status", "Jadwal fitur berikutnya", captureTag = "schedule-status") {
         id.ohmymonev.android.ui.ScheduleStatus(
-            id.ohmymonev.android.schedule.AlarmScheduler.ArmedState(true, "2026-11-07T14:00:00Z", "Pengisian"), {})
+            id.ohmymonev.android.schedule.AlarmScheduler.ArmedState(true, "2026-11-07T15:30:00Z", "Pengisian darurat"), {})
     }
     @Test fun disabledScheduleStatus() = capture("forge-schedule-status-disabled", "Semua fitur nonaktif", captureTag = "schedule-status") {
         id.ohmymonev.android.ui.ScheduleStatus(
