@@ -250,4 +250,12 @@ class UiRenderTest {
     @Test fun separateTimeTyping() = capture("forge-time-typing", "Menit") {
         id.ohmymonev.android.ui.TimeWheels("05", "00", {}, {})
     }
+
+    @Test @Config(qualifiers = "w411dp-h1000dp-xhdpi")
+    fun wheelBoundaryAtLargeSystemText() = capture("forge-wheel-boundary", "Hari untuk fitur ini", 2f) {
+        Column(Modifier.fillMaxWidth().padding(20.dp)) {
+            id.ohmymonev.android.ui.TimeWheels("16", "00", {}, {})
+            Text("Hari untuk fitur ini", fontSize = 20.sp, modifier = Modifier.padding(top = 20.dp))
+        }
+    }
 }

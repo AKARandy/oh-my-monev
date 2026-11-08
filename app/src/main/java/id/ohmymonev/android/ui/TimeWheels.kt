@@ -8,6 +8,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -38,8 +39,10 @@ private fun TimePart(label: String, value: String, max: Int, onChange: (String) 
     val textSize = with(LocalDensity.current) { 40.sp.toPx() }
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(label, fontSize = 18.sp, color = MaterialTheme.colorScheme.secondary)
-        AndroidView(modifier = Modifier.fillMaxWidth().height(200.dp), factory = { context ->
+        AndroidView(modifier = Modifier.fillMaxWidth().height(200.dp).clipToBounds(), factory = { context ->
             NumberPicker(context).apply {
+                clipChildren = true
+                clipToPadding = true
                 minValue = 0; maxValue = max; wrapSelectorWheel = true
                 this.value = (value.toIntOrNull() ?: 0).coerceIn(0, max)
                 descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
@@ -72,9 +75,9 @@ private fun TimePart(label: String, value: String, max: Int, onChange: (String) 
             val selected = (value.toIntOrNull() ?: 0).coerceIn(0, max)
             if (!picker.hasFocus() && picker.value != selected) picker.value = selected
             if (Build.VERSION.SDK_INT >= 29) {
-                picker.textColor = textColor
-                picker.textSize = textSize
-                picker.selectionDividerHeight = 0
+                if (picker.textColor != textColor) picker.textColor = textColor
+                if (picker.textSize != textSize) picker.textSize = textSize
+                if (picker.selectionDividerHeight != 0) picker.selectionDividerHeight = 0
             }
         })
     }
