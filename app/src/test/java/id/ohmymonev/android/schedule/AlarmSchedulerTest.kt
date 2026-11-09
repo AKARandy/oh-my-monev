@@ -50,6 +50,7 @@ class AlarmSchedulerTest {
     }
 
     @Test fun stableUpgradeCancelsEmergencyAndRejectsStaleTriggers() = kotlinx.coroutines.runBlocking {
+        org.junit.Assume.assumeFalse(id.ohmymonev.android.BuildConfig.DEBUG)
         AlarmScheduler.armAll(context, ScheduleSettings(escalationEnabled = true))
         for (code in listOf(21, 99)) {
             val intent = android.content.Intent(context, AutoFillReceiver::class.java)
@@ -105,6 +106,19 @@ class AlarmSchedulerTest {
         for (session in listOf(false, true)) for (location in listOf(false, true)) for (notifications in listOf(false, true)) {
             assertEquals(session && location && notifications, FeatureReadiness(session, location, notifications).ready)
         }
+    }
+
+
+    @Test fun diagnosticsCanScheduleAndTriggerEmergency() = kotlinx.coroutines.runBlocking {
+        org.junit.Assume.assumeTrue(id.ohmymonev.android.BuildConfig.DEBUG)
+        val store = TimeSettingsStore(context)
+        store.save(ScheduleSettings(escalationEnabled = true))
+        val settings = store.settingsOnce()
+        assertTrue(settings.escalationEnabled)
+        assertTrue(AlarmScheduler.armAll(context, settings).armedKeys.contains("escalation"))
+        EscalationReceiver().onReceive(context, android.content.Intent(EscalationReceiver.ACTION_ESCALATION))
+        assertEquals(AutoFillService::class.java.name,
+            shadowOf(context.applicationContext as Application).nextStartedService.component?.className)
     }
 
 }

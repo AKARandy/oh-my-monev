@@ -341,11 +341,21 @@ class UiRenderTest {
 
 
     @Test fun stableEmergencyDisabledProof() {
+        org.junit.Assume.assumeFalse(id.ohmymonev.android.BuildConfig.DEBUG)
         id.ohmymonev.android.schedule.readySession(ApplicationProvider.getApplicationContext<Context>())
         capture("stable-emergency-disabled", "Pengisian darurat belum tersedia.") { ScheduleTab() }
         compose.onNodeWithTag("alarm-toggle-Pengisian darurat").assertIsNotEnabled()
         compose.onNodeWithTag("alarm-edit-Pengisian darurat").assertIsNotEnabled()
         compose.onNodeWithTag("alarm-toggle-Pengingat").assertIsEnabled()
+    }
+
+
+    @Test fun diagnosticEmergencyEnabledControlsProof() {
+        org.junit.Assume.assumeTrue(id.ohmymonev.android.BuildConfig.DEBUG)
+        id.ohmymonev.android.schedule.readySession(ApplicationProvider.getApplicationContext<Context>())
+        capture("diagnostic-emergency-controls", "Pengisian darurat") { ScheduleTab() }
+        compose.onNodeWithTag("alarm-toggle-Pengisian darurat").assertIsEnabled()
+        compose.onNodeWithTag("alarm-edit-Pengisian darurat").assertIsEnabled()
     }
 
 }

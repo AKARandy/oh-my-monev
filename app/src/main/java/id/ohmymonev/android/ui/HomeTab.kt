@@ -477,7 +477,7 @@ fun HomeTab(
                 Text(if (diagnosticsExpanded) "Tutup alat pengujian" else "Alat pengujian")
             }
             if (diagnosticsExpanded) {
-                Text("Uji mesin memakai halaman tiruan. Tes alarm Pengisian darurat belum tersedia.", style = MaterialTheme.typography.bodySmall)
+                Text("Uji mesin memakai halaman tiruan. Tes alarm memerlukan Pengisian darurat aktif.", style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(
                     onClick = { AutoFillService.startBench(context); running = true },
                     enabled = ready && !running,
