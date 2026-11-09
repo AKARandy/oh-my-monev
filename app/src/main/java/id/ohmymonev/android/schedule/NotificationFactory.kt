@@ -117,15 +117,6 @@ class NotificationFactory(private val context: Context) {
         nextFireISO
     }
 
-    /** Pengingat netral: tidak mengklaim status yang belum diperiksa. */
-    fun neutralReminder(detail: String): Notification =
-        builder(CHANNEL_REMINDER)
-            .setContentTitle("oh-my-monev: cek laporan malam ini")
-            .setContentText("Buka aplikasi untuk melihat status laporan dan menyiapkannya.")
-            .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
-
     /** Peringatan bersyarat: hanya berlaku kalau laporan memang belum terkirim. */
     fun escalation(): Notification {
         val openApp = PendingIntent.getActivity(

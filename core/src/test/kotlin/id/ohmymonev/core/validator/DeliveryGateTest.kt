@@ -42,77 +42,26 @@ class DeliveryGateTest {
     }
 
     @Test
-    fun `rejects person words`() {
-        val draft = validDraft().copy(
-            aktivitas = "- Saya membuat endpoint login berbasis JWT untuk modul kehadiran aplikasi\n" +
-                "- Menulis dan menjalankan tes unit baru untuk validasi token pada setiap sesi\n" +
-                "- Memperbaiki urutan middleware yang menolak token yang masih benar",
-        )
-        val result = gate.validate(draft)
-        assertTrue(result.violations.any { it.id == "G-2" })
-        assertTrue(result.violations.any { it.id == "G-8" }) // 'Saya' is not an active meN- opener
+    fun `accepts pronouns in a valid report`() {
+        val draft = validDraft()
+        val result = gate.validate(draft.copy(
+            aktivitas = draft.aktivitas.replace("aplikasi internal", "aplikasi kami"),
+            pelajaran = "Saya mempelajari hal berikut. " + draft.pelajaran,
+            kendala = "Kami menemukan kendala berikut. " + draft.kendala,
+        ))
+        assertTrue("unexpected violations: ${result.violations}", result.passed)
     }
 
     @Test
-    fun `rejects meta markers and leftover placeholders`() {
-        val draft = validDraft().copy(aktivitas = validDraft().aktivitas + "\n- Melanjutkan pencatatan {tanggal}")
-        val result = gate.validate(draft)
-        assertTrue(result.violations.any { it.id == "G-3" })
+    fun `accepts plain activities and line breaks within the limits`() {
+        val text = "Saya memeriksa data dan mencatat hasil — termasuk {rincian} — untuk tim.\n".repeat(2)
+        assertTrue(gate.validate(ReportDraft(text, text, text)).passed)
     }
 
     @Test
-    fun `rejects em and en dashes`() {
-        val draft = validDraft().copy(pelajaran = validDraft().pelajaran + " \u2014")
-        val result = gate.validate(draft)
-        assertTrue(result.violations.any { it.id == "G-4" })
-    }
-
-    @Test
-    fun `rejects aktivitas with fewer than three bullets`() {
-        val draft = validDraft().copy(
-            aktivitas = "- Membuat endpoint login berbasis JWT untuk modul kehadiran aplikasi internal\n" +
-                "- Menulis dan menjalankan tes unit baru untuk validasi token pada setiap sesi",
-        )
-        val result = gate.validate(draft)
-        assertTrue(result.violations.any { it.id == "G-5" })
-    }
-
-    @Test
-    fun `rejects multi paragraph pelajaran`() {
-        val text = validDraft().pelajaran
-        val draft = validDraft().copy(pelajaran = "$text\nKedua paragraf tidak diperbolehkan oleh aturan laporan harian.")
-        val result = gate.validate(draft)
-        assertTrue(result.violations.any { it.id == "G-6" })
-    }
-
-    @Test
-    fun `rejects empty vocabulary`() {
-        val draft = validDraft().copy(
-            kendala = "Pekerjaan hari ini luar biasa padat sehingga perlu menyusun ulang prioritas kecil di akhir " +
-                "pekan untuk menjaga mutu evaluasi mentoring mingguan program magang ini.",
-        )
-        val result = gate.validate(draft)
-        assertTrue(result.violations.any { it.id == "G-7" })
-    }
-
-    @Test
-    fun `rejects bullets opening with a passive verb`() {
-        val draft = validDraft().copy(
-            aktivitas = "- Dibuat endpoint login berbasis JWT untuk modul kehadiran aplikasi internal\n" +
-                "- Menulis dan menjalankan tes unit baru untuk validasi token pada setiap sesi\n" +
-                "- Memperbaiki urutan middleware yang menolak token yang masih benar",
-        )
-        val result = gate.validate(draft)
-        assertTrue(result.violations.any { it.id == "G-8" })
-    }
-
-    @Test
-    fun `rejects credential like literals`() {
-        val draft = validDraft().copy(
-            kendala = "Mengonfigurasi ulang kredensial environment pengujian: password=xxxx-rotasi-wajib-hari-ini " +
-                "sehingga layanan penyimpanan bisa menyambung kembali tanpa error timeout di lingkungan utama.",
-        )
-        val result = gate.validate(draft)
-        assertTrue(result.violations.any { it.id == "G-9" })
+    fun `accepts both length boundaries and rejects longer text`() {
+        val draft = ReportDraft("a".repeat(100), "b".repeat(5000), "c".repeat(100))
+        assertTrue(gate.validate(draft).passed)
+        assertFalse(gate.validate(draft.copy(pelajaran = draft.pelajaran + "b")).passed)
     }
 }

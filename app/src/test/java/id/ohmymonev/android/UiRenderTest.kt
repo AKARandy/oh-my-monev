@@ -290,4 +290,40 @@ class UiRenderTest {
             Text("Hari untuk fitur ini", fontSize = 20.sp, modifier = Modifier.padding(top = 20.dp))
         }
     }
+
+    @Test
+    fun templateChecksDeliveryRulesAfterDateReplacement() {
+        val detail = "Saya memeriksa urutan pemrosesan data dan mencatat hasil pemeriksaan untuk tim yang memelihara aplikasi."
+        val activities = "- Memeriksa data peserta pada {tanggal} sebelum memperbarui daftar.\n" +
+            "- Menulis hasil pemeriksaan untuk tim yang menangani daftar.\n" +
+            "- Memperbaiki data peserta yang belum sesuai dengan catatan."
+        val issues = id.ohmymonev.android.ui.templateIssues(activities, detail, detail)
+        org.junit.Assert.assertTrue("Unexpected issues: $issues", issues.isEmpty())
+        org.junit.Assert.assertTrue(
+            id.ohmymonev.android.ui.templateIssues(detail, detail, detail).isEmpty(),
+        )
+        org.junit.Assert.assertFalse(
+            id.ohmymonev.android.ui.templateIssues(activities, "Terlalu pendek", detail).isEmpty(),
+        )
+    }
+
+    @Test fun manualDraftProof() = capture("manual-draft-proof", "Simpan draf") {
+        id.ohmymonev.android.ui.DraftCard(
+            expanded = true, onExpandedChange = {}, onSaved = {},
+            savedDraft = null, account = "fixture", editable = true,
+        )
+    }
+
+    @Test fun manualConfirmationProof() = capture("manual-confirmation-proof", "Kirim laporan hari ini ke Monev?") {
+        id.ohmymonev.android.ui.ConfirmManualReport(true, {}, {})
+    }
+
+    @Test fun manualResultProof() = capture("report-status-colors", "Sudah terkirim") {
+        Column(Modifier.padding(20.dp)) {
+            for (status in id.ohmymonev.android.ui.ReportStatusLabel.entries) {
+                id.ohmymonev.android.ui.ReportStatus(status, true, {})
+            }
+        }
+    }
+
 }

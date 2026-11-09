@@ -11,7 +11,6 @@ data class DatedReport(val date: LocalDate, val draft: ReportDraft)
 
 enum class FailureReason {
     NO_SOURCE_MATERIAL,
-    TOO_FEW_BULLETS,
     UNSAFE_ACTIVITY,
     INVALID_REPORT,
 }
@@ -56,13 +55,6 @@ class GeneratorPipeline(
         val bullets = engine.bullets(previous.draft.aktivitas)
             ?: return GenerationOutcome.Failed(FailureReason.UNSAFE_ACTIVITY,
                 "Periksa aktivitas berikut:\n" + engine.unsupported(previous.draft.aktivitas).joinToString("\n") { (line, text) -> "Butir $line: $text" })
-        if (bullets.size !in 3..5) {
-            return GenerationOutcome.Failed(
-                FailureReason.TOO_FEW_BULLETS,
-                "Aktivitas memiliki ${bullets.size} butir. Tulis 3 sampai 5 butir tanpa menambah kegiatan rekaan.",
-            )
-        }
-
         val draft = ReportDraft(
             aktivitas = bullets.joinToString("\n") { "- $it" },
             pelajaran = previous.draft.pelajaran,

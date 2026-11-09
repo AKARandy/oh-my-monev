@@ -20,7 +20,7 @@ class OhMyMonevApp : Application() {
             val settings = TimeSettingsStore(applicationContext).settingsOnce()
             AlarmScheduler.armAll(applicationContext, settings)
             if (settings.masterEnabled) {
-                GuardService.ensure(applicationContext)
+                GuardService.tryEnsure(applicationContext)
             }
         }
     }

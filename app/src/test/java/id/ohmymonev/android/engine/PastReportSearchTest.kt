@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.data.SessionTokenStore
 import id.ohmymonev.core.enginecore.SessionState
+import id.ohmymonev.core.enginecore.TodayState
 import java.io.File
 import java.net.URI
 import java.time.LocalDate
@@ -61,7 +62,11 @@ class PastReportSearchTest {
             else if (failPage?.let { path.contains(it) } == true) ApiResponse(503, "{}")
             else if (http204) ApiResponse(204, "")
             else if (malformed) ApiResponse(200, """{"data":{}}""")
-            else {
+            else if (uri.path == "/users/me") ApiResponse(200, profile.toString())
+            else if (uri.path == "/users/me/home") ApiResponse(200, """{"is_scheduled_off_day":true}""")
+            else if (uri.path == "/attendances" && "page" !in query) {
+                ApiResponse(200, JSONArray(attendances).toString())
+            } else {
                 val data = if (uri.path == "/attendances") attendances.filter {
                     it.getString("date") >= query.getValue("start_date") && it.getString("date") <= query.getValue("end_date")
                 } else logs.filter { it.getString("date") == "broken-date" || it.getString("date").take(7) == query.getValue("date").take(7) }
@@ -74,6 +79,23 @@ class PastReportSearchTest {
         }
     }
     private suspend fun read() = PastReportReader(context).read(LocalDate.parse("2026-11-08"), api(), profile)
+
+    @Test fun reminderUsesOriginalDateAndRejectsUnknownReportState() = runBlocking {
+        val date = LocalDate.parse("2026-11-06")
+        val probe = SiteStatusProbe(context)
+        attendances = listOf(attendance(date.toString()))
+        suspend fun state(reportState: String): TodayState {
+            logs = listOf(log(date.toString(), reportState))
+            return probe.checkReminder(date, "participant", api()).today
+        }
+        assertEquals(TodayState.FILLED, state("SUBMITTED"))
+        assertEquals(TodayState.UNFILLED, state("DRAFT"))
+        assertEquals(TodayState.UNKNOWN, state("unexpected"))
+        assertFalse(calls.contains("/users/me/home"))
+        assertEquals("participant", probe.checkReminder(date, "another-account", api()).account)
+        expired = true
+        assertEquals(false, probe.checkReminder(date, "participant", api()).sessionActive)
+    }
 
     @Test fun sundayUsesFridayWhenPresent() = runBlocking {
         attendances = listOf(attendance("2026-11-06")); logs = listOf(log("2026-11-06"))

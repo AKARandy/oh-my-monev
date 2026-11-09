@@ -14,6 +14,9 @@ abstract class ArmAlarmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
         AlarmScheduler.armAll(context, settings)
+        if (settings.masterEnabled && settings.reminderEnabled && ReminderController.hasPending(context)) {
+            GuardService.tryEnsure(context)
+        }
     }
 }
 

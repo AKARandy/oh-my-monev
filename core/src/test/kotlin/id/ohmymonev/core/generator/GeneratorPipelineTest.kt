@@ -26,12 +26,12 @@ class GeneratorPipelineTest {
             (GeneratorPipeline(history = ReportHistory { null }).generate(date) as GenerationOutcome.Failed).reason)
     }
     @Test fun thinSourceIsNotPadded() {
-        val result = generate(original.copy(aktivitas = "- Memeriksa data 123.")) as GenerationOutcome.Failed
-        assertEquals(FailureReason.TOO_FEW_BULLETS, result.reason)
+        val result = generate(original.copy(aktivitas = "- Memeriksa data 123.")) as GenerationOutcome.Generated
+        assertEquals("- Melanjutkan pemeriksaan data 123.", result.draft.aktivitas)
     }
     @Test fun longSourceIsNotTruncated() {
         val result = generate(original.copy(aktivitas = (1..6).joinToString("\n") { "- Memeriksa data $it." }))
-        assertEquals(FailureReason.TOO_FEW_BULLETS, (result as GenerationOutcome.Failed).reason)
+        assertEquals(6, (result as GenerationOutcome.Generated).draft.aktivitas.lines().size)
     }
     @Test fun unsupportedBulletCannotBeSilentlyDropped() {
         val result = generate(original.copy(aktivitas = original.aktivitas + "\n- Membikin catatan."))

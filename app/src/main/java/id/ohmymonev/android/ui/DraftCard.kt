@@ -49,6 +49,9 @@ fun DraftCard(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onSaved: () -> Unit,
+    savedDraft: StoredDraft?,
+    account: String,
+    editable: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -57,23 +60,19 @@ fun DraftCard(
     val editorScrollState = rememberScrollState()
     val todayIso = LocalDate.now(ScheduleCalculator.asiaJakarta).toString()
 
-    var aktivitas by remember { mutableStateOf("") }
-    var pelajaran by remember { mutableStateOf("") }
-    var kendala by remember { mutableStateOf("") }
-    var loaded by remember { mutableStateOf(false) }
-    var dirty by remember { mutableStateOf(false) }
+    var aktivitas by remember(account, todayIso) { mutableStateOf("") }
+    var pelajaran by remember(account, todayIso) { mutableStateOf("") }
+    var kendala by remember(account, todayIso) { mutableStateOf("") }
+    var dirty by remember(account, todayIso) { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
-    var confirmEnableAutomation by remember { mutableStateOf(false) }
 
-    androidx.compose.runtime.LaunchedEffect(expanded) {
-        if (expanded && !loaded) {
-            val stored = withContext(Dispatchers.IO) { store.todayDraft(todayIso) }
-            stored?.let {
-                aktivitas = it.aktivitas
-                pelajaran = it.pelajaran
-                kendala = it.kendala
-            }
-            loaded = true
+    androidx.compose.runtime.LaunchedEffect(expanded, savedDraft, account, todayIso) {
+        if (expanded) {
+            aktivitas = savedDraft?.aktivitas.orEmpty()
+            pelajaran = savedDraft?.pelajaran.orEmpty()
+            kendala = savedDraft?.kendala.orEmpty()
+            dirty = false
         }
     }
 
@@ -87,31 +86,30 @@ fun DraftCard(
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Column(modifier = Modifier.heightIn(max = if (expanded) 620.dp else 200.dp).scrollIndicator(editorScrollState).verticalScroll(editorScrollState).padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.heightIn(max = 620.dp).scrollIndicator(editorScrollState).verticalScroll(editorScrollState).padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Tulisan hari ini", style = MaterialTheme.typography.titleMedium)
+                    Text("Draf hari ini", style = MaterialTheme.typography.titleMedium)
                     Text(
                         text = when {
-                            isEmpty -> "Belum ditulis."
-                            !gate.passed -> "Perlu diperiksa."
-                            else -> "Siap digunakan."
+                            savedDraft == null -> "Belum ada draf."
+                            else -> "Draf tersimpan."
                         },
                         fontSize = 18.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(onClick = {
+                TextButton(enabled = editable && !saving, onClick = {
                     if (expanded && dirty) {
                         confirmDiscard = true
                     } else {
                         onExpandedChange(!expanded)
                     }
-                }) { Text(if (expanded) "Tutup" else if (isEmpty) "Tulis" else "Ubah") }
+                }) { Text(if (expanded) "Tutup" else if (savedDraft == null) "Tulis laporan hari ini" else "Ubah draf") }
             }
 
             if (expanded) {
@@ -132,25 +130,41 @@ fun DraftCard(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            for (violation in gate.violations.take(4)) {
-                                Text(
-                                    "${violation.id}: ${violation.message}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                )
-                            }
+                            Text("Gunakan 100 sampai 5000 karakter per bagian.",
+                                color = MaterialTheme.colorScheme.onErrorContainer)
                         }
                     }
                 }
 
                 Button(
-                    onClick = { confirmEnableAutomation = true },
-                    enabled = loaded && !isEmpty && gate.passed,
+                    onClick = {
+                        val toSave = StoredDraft(todayIso, aktivitas, pelajaran, kendala, account)
+                        saving = true
+                        scope.launch {
+                            try {
+                                withContext(Dispatchers.IO) { store.saveTodayDraft(toSave) }
+                                onSaved()
+                                onExpandedChange(false)
+                            } catch (_: java.io.IOException) {
+                                Toast.makeText(context, "Draf tidak dapat disimpan.", Toast.LENGTH_SHORT).show()
+                            } finally {
+                                saving = false
+                            }
+                        }
+                    },
+                    enabled = editable && !saving && gate.passed,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                 ) {
-                    Text("Simpan tulisan hari ini", style = MaterialTheme.typography.titleSmall)
+                    Text("Simpan draf", style = MaterialTheme.typography.titleSmall)
                 }
+            } else if (savedDraft != null) {
+                Text("Aktivitas", style = MaterialTheme.typography.labelLarge)
+                Text(savedDraft.aktivitas)
+                Text("Pelajaran", style = MaterialTheme.typography.labelLarge)
+                Text(savedDraft.pelajaran)
+                Text("Kendala", style = MaterialTheme.typography.labelLarge)
+                Text(savedDraft.kendala)
             }
         }
     }
@@ -173,33 +187,6 @@ fun DraftCard(
         )
     }
 
-    if (confirmEnableAutomation) {
-        AlertDialog(
-            onDismissRequest = { confirmEnableAutomation = false },
-            title = { Text("Simpan laporan?") },
-            text = {
-                Text(
-                    "Aplikasi menyimpan tulisan ini. Pengisian darurat memakainya pada jam terjadwal.",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmEnableAutomation = false
-                    val toSave = StoredDraft(todayIso, aktivitas, pelajaran, kendala)
-                    scope.launch {
-                        withContext(Dispatchers.IO) { store.saveTodayDraft(toSave) }
-                        dirty = false
-                        Toast.makeText(context, "Laporan tersimpan.", Toast.LENGTH_SHORT).show()
-                        onSaved()
-                        onExpandedChange(false)
-                    }
-                }) { Text("Ya, simpan") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmEnableAutomation = false }) { Text("Batal") }
-            },
-        )
-    }
 }
 
 @Composable

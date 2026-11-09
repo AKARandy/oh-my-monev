@@ -64,6 +64,10 @@ class WorkDaysStoreTest {
         assertNull(org.robolectric.Shadows.shadowOf(app).nextStartedService)
         calendar.save(profile())
         ReminderReceiver().onReceive(context, android.content.Intent(ReminderReceiver.ACTION_REMINDER))
-        assertEquals(1, notifications.allNotifications.size)
+        assertTrue(notifications.allNotifications.isEmpty())
+        assertTrue(ReminderController.hasPending(context))
+        assertEquals(GuardService::class.java.name,
+            org.robolectric.Shadows.shadowOf(app).nextStartedService.component?.className)
+        ReminderController.clear(context)
     }
 }

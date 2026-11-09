@@ -143,7 +143,7 @@ class PreparedReportServiceTest {
         activity = "- Memeriksa data penerbangan."
         val thin = service(session).prepare(force = true)
         assertTrue(thin.outcome() is GenerationOutcome.Failed)
-        assertTrue(thin.issues.any { it.contains("3 sampai 5") })
+        assertTrue(thin.issues.any { it.contains("100 sampai 5000") })
     }
     @Test fun failedRefreshDoesNotRestoreAnOlderPreparedDraft() = runBlocking {
         val session = session()

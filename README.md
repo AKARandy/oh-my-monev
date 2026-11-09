@@ -18,8 +18,7 @@ Aplikasi ini melakukan hal-hal ini:
 - Lanjutan otomatis itu eksperimen dan berisiko. Aplikasi meminta konfirmasi sebelum menyalakannya.
   Contoh: "Melakukan aktivitas X" menjadi "Melanjutkan aktivitas X". Aplikasi tidak mengarang kata.
   Pratinjau menunjukkan teks yang akan dikirim.
-- Aplikasi memeriksa semua teks sebelum mengisi formulir. Setiap bagian wajib memiliki 100 karakter
-  atau lebih. Tanpa kata seperti "saya" atau "kami". 3 sampai 5 baris aktivitas. Tanpa klise.
+- Aplikasi memeriksa semua teks sebelum mengisi formulir. Setiap bagian wajib berisi 100 sampai 5000 karakter.
 - Ponsel boleh dalam keadaan diam. Alarm tetap tepat waktu. Sebuah layanan menjaga ponsel tetap
   menyala selama pengisian berlangsung.
 

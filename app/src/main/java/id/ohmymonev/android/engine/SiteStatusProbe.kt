@@ -17,24 +17,41 @@ data class SiteStatus(
     val deadline: String?,
     val days: List<DayEntry>,
     val error: String? = null,
+    val account: String? = null,
+    val credentialVersion: Long? = null,
 )
 
 /** The same authenticated data that powers Monev's own Beranda. No DOM verdicts. */
 class SiteStatusProbe(private val context: Context) {
-    suspend fun check(): SiteStatus {
-        val api = MonevApiClient(context)
+    suspend fun check(): SiteStatus = read(null, null)
+
+    internal suspend fun checkReminder(
+        date: LocalDate,
+        account: String,
+        api: MonevApiClient = MonevApiClient(context),
+    ): SiteStatus = read(date, account, api)
+
+    private suspend fun read(
+        date: LocalDate?,
+        expectedAccount: String?,
+        api: MonevApiClient = MonevApiClient(context),
+    ): SiteStatus {
         fun unavailable() = SiteStatus(if (api.failureState == SessionState.EXPIRED) false else null,
             TodayState.UNKNOWN, null, emptyList(), api.message)
         val profile = api.objectData("/users/me") ?: return unavailable()
         val id = profile.optString("id")
         if (id.isBlank()) { api.failed("Profil belum dapat dibaca."); return unavailable() }
         api.confirmActive()
-        val home = api.objectData("/users/me/home") ?: return unavailable()
-        if (home.opt("is_scheduled_off_day") !is Boolean) {
+        if (expectedAccount != null && expectedAccount != id) {
+            return SiteStatus(true, TodayState.UNKNOWN, null, emptyList(), account = id, credentialVersion = api.credentialVersion)
+        }
+        val currentDate = LocalDate.now(ScheduleCalculator.asiaJakarta)
+        val today = date ?: currentDate
+        val home = if (today == currentDate) api.objectData("/users/me/home") ?: return unavailable() else JSONObject()
+        if (today == currentDate && home.opt("is_scheduled_off_day") !is Boolean) {
             api.failed("Kondisi hari ini belum dapat dibaca.")
             return unavailable()
         }
-        val today = LocalDate.now(ScheduleCalculator.asiaJakarta)
         val encodedId = URLEncoder.encode(id, "UTF-8")
         val attendances = api.arrayData("/attendances?participant_id=$encodedId&start_date=${today.withDayOfMonth(1)}&end_date=$today&limit=100")
         if (api.failureState == SessionState.EXPIRED) return unavailable()
@@ -54,8 +71,23 @@ class SiteStatusProbe(private val context: Context) {
             .firstOrNull { row -> row != null && belongsTo(row, id) && rowDate(row) == today }?.optString("status")
         val reportStateToday = (0 until logs.length()).map { logs.optJSONObject(it) }
             .firstOrNull { row -> row != null && belongsTo(row, id) && rowDate(row) == today }?.optString("state")
+        if (date != null) {
+            fun validRows(rows: org.json.JSONArray, validStates: Set<String>, field: String): Boolean =
+                (0 until rows.length()).all { index ->
+                    val row = rows.optJSONObject(index) ?: return@all false
+                    val rowDay = rowDate(row) ?: return@all false
+                    !belongsTo(row, id) || rowDay != date || row.optString(field) in validStates
+                }
+            if (attendances.length() > today.dayOfMonth || !api.isCurrent() ||
+                !validRows(attendances, nonFillableAttendance + "PRESENT", "status") ||
+                !validRows(logs, PastReportReader.submittedStates + setOf("DRAFT", "NEEDS_REVISION"), "state")
+            ) {
+                api.failed("Data laporan belum dapat diperiksa.")
+                return unavailable()
+            }
+        }
         val state = todayState(home, attendanceToday, reportStateToday)
-        return SiteStatus(true, state, if (state == TodayState.LIBUR || state == TodayState.LEAVE) null else "23:59", days)
+        return SiteStatus(true, state, if (state == TodayState.LIBUR || state == TodayState.LEAVE) null else "23:59", days, account = id, credentialVersion = api.credentialVersion)
     }
 
     companion object {

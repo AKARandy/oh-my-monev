@@ -72,6 +72,7 @@ object AlarmScheduler {
                 val intent = Intent(context, receiverFor(key)).apply {
                     action = actionFor(key)
                     putExtra(EXTRA_FIRE_KEY, key)
+                    if (key == ScheduleCalculator.KEY_REMINDER) putExtra("date", fire.toLocalDate().toString())
                 }
                 val pending = PendingIntent.getBroadcast(
                     context,

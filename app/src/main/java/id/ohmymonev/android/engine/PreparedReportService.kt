@@ -231,18 +231,7 @@ internal class PreparedReportService(
 
         internal fun validationIssues(draft: ReportDraft): List<String> = DeliveryGate().validate(draft).violations.map { violation ->
             val part = violation.message.substringBefore(':').replace("aktivitas", "Aktivitas").replace("pelajaran", "Pelajaran").replace("kendala", "Kendala")
-            val instruction = when (violation.id) {
-                "G-1" -> "Gunakan 100 sampai 5000 karakter."
-                "G-2" -> "Gunakan kalimat tanpa kata ganti orang."
-                "G-3" -> "Hapus catatan dan penanda yang belum diisi."
-                "G-4" -> "Ganti tanda pisah panjang dengan tanda baca biasa."
-                "G-5" -> "Tulis 3 sampai 5 butir. Awali setiap butir dengan tanda - dan spasi."
-                "G-6" -> "Tulis satu paragraf tanpa daftar."
-                "G-7" -> "Tulis rincian kegiatan yang nyata."
-                "G-8" -> "Awali setiap butir dengan kata kerja aktif."
-                else -> "Hapus informasi pribadi dan kredensial."
-            }
-            "$part: $instruction"
+            "$part: Gunakan 100 sampai 5000 karakter."
         }.distinct()
     }
 }

@@ -60,7 +60,7 @@ Site explicitly displays `23.59 WIB` and the day rolls at Asia/Jakarta (+07:00, 
 - Success detection now accepts the site's success snackbar text OR leaving the `?view=edit` form URL.
 - Weekend/off-days produce `Jadwal libur posisi` and no form; the engine treats "no textareas" as `DAY_NOT_FILLABLE` (safe, no submit).
 - Past days cannot be backfilled unless the mentor requested a revision — catch-up is intentionally not implemented (same-night doctrine).
-- The write-gate rules (G-1..G-9, ≥100 chars, no pronouns, bullets) still apply from our side; the site independently enforces ≥100 chars.
+- The app checks that each report section contains 100 to 5000 characters.
 
 ## Evidence artifacts
 - Browser-session accessibility trees: `.tools/monev-beranda.json`, `.tools/monev-riwayat.json`, `.tools/monev-form.json`

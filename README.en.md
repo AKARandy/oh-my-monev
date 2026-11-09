@@ -19,8 +19,7 @@ The app does this:
 - The automatic continuation is experimental and risky. The app asks for confirmation before you
   can turn it on. Example: "Melakukan aktivitas X" becomes "Melanjutkan aktivitas X". It does not
   invent words. The preview shows the exact text that will be sent.
-- The app checks all text before it fills the form. Each part must have 100 or more characters.
-  No words such as "saya" or "kami". 3 to 5 activity lines. No clichés.
+- The app checks all text before it fills the form. Each part must have 100 to 5000 characters.
 - The phone can be idle. The alarms stay exact. A service keeps the phone awake during the fill.
 
 Status: still in development. See `docs/plan.md`.

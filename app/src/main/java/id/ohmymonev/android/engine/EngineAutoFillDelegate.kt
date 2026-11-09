@@ -5,6 +5,12 @@ import android.content.Context
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import id.ohmymonev.android.data.AppStore
+import id.ohmymonev.android.data.SessionRepository
+import id.ohmymonev.android.schedule.ManualReportRequest
+import id.ohmymonev.core.enginecore.TodayState
+import id.ohmymonev.core.validator.DeliveryGate
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import id.ohmymonev.android.schedule.AlarmScheduler
 import id.ohmymonev.android.schedule.AutoFillDelegate
 import id.ohmymonev.android.schedule.AutoFillService
@@ -41,6 +47,67 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
         val factory = NotificationFactory(appContext)
         factory.ensureChannels()
         scope.launch { runCycle(factory) }
+    }
+
+    override fun startManual(request: ManualReportRequest) {
+        scope.launch {
+            val store = AppStore(appContext)
+            val draft = request.draft
+            val report = ReportDraft(draft.aktivitas, draft.pelajaran, draft.kendala)
+            val sessions = SessionRepository.get(appContext)
+            fun complete(message: String) {
+                AutoFillService.manualFinished(request, message)
+                AutoFillService.finished(appContext)
+            }
+            fun draftStillCurrent() = store.todayDraft(draft.date) == draft &&
+                draft.date == LocalDate.now(ScheduleCalculator.asiaJakarta).toString()
+            try {
+                if (!draftStillCurrent() || sessions.state.value.version != request.sessionVersion ||
+                    (draft.participantId != null && draft.participantId != request.account)
+                ) {
+                    complete("Draf, tanggal, atau sesi berubah. Tinjau draf lagi.")
+                    return@launch
+                }
+                if (!DeliveryGate().validate(report).passed) {
+                    complete("Periksa panjang setiap bagian draf.")
+                    return@launch
+                }
+                val probe = SiteStatusProbe(appContext)
+                val date = LocalDate.parse(draft.date)
+                val status = withTimeoutOrNull(45_000) { probe.checkReminder(date, request.account) }
+                val issue = manualPreflightIssue(status, request, draftStillCurrent(), sessions.state.value.version)
+                if (issue != null) {
+                    complete(issue)
+                    return@launch
+                }
+                val engine = WebViewEngine(appContext, DEFAULT_SITE_PROFILE, object : WebViewEngine.Callbacks {
+                    override fun onEvent(message: String) { Log.d("ohmymonev", message) }
+
+                    override fun onRunFinished(record: RunRecord) {
+                        scope.launch {
+                            val verified = try {
+                                withTimeoutOrNull(45_000) { probe.checkReminder(date, request.account) }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Log.w("ohmymonev", "Pemeriksaan setelah kirim gagal", e)
+                                null
+                            }
+                            complete(if (verified?.account == request.account && verified.today == TodayState.FILLED)
+                                "Laporan sudah terkirim."
+                            else "Pengiriman belum dapat dikonfirmasi. Cek ulang status laporan.")
+                        }
+                    }
+                })
+                engine.runAutomation(draft.date, report, attempt = 1,
+                    expectedSessionVersion = request.sessionVersion, draftStillCurrent = ::draftStillCurrent)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("ohmymonev", "Pengiriman manual gagal", e)
+                complete("Pengiriman belum dapat dikonfirmasi. Cek ulang status laporan.")
+            }
+        }
     }
 
     private suspend fun runCycle(factory: NotificationFactory) {
@@ -248,4 +315,21 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
     private fun nowIso(): String = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(OffsetDateTime.now())
 
+}
+
+internal fun manualPreflightIssue(
+    status: SiteStatus?,
+    request: ManualReportRequest,
+    draftStillCurrent: Boolean,
+    sessionVersion: Long,
+): String? = when {
+    status?.sessionActive == false -> "Sesi berakhir. Login kembali."
+    status?.account != null && status.account != request.account -> "Akun berubah. Tinjau draf lagi."
+    status?.today == TodayState.FILLED -> "Monev sudah mencatat laporan ini."
+    status?.today == TodayState.LIBUR || status?.today == TodayState.LEAVE -> "Tidak perlu mengirim laporan hari ini."
+    status?.today != TodayState.UNFILLED || status.sessionActive != true ||
+        status.account != request.account -> status?.error ?: "Status laporan belum dapat diperiksa."
+    !draftStillCurrent || status.credentialVersion != request.sessionVersion ||
+        sessionVersion != request.sessionVersion -> "Draf, tanggal, atau sesi berubah. Tinjau draf lagi."
+    else -> null
 }

@@ -9,6 +9,15 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
+import id.ohmymonev.android.data.StoredDraft
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+data class ManualReportRequest(val draft: StoredDraft, val account: String, val sessionVersion: Long)
+
+data class ManualReportState(val request: ManualReportRequest, val message: String? = null) {
+    val sending: Boolean get() = message == null
+}
 
 /**
  * Layanan layar depan tipe dataSync yang satu-satunya tugasnya menjalankan
@@ -17,7 +26,21 @@ import androidx.core.app.ServiceCompat
  */
 class AutoFillService : Service() {
 
+    private var running = false
+    private var manualRequest: ManualReportRequest? = null
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val request = if (intent?.action == ACTION_MANUAL) manual.value?.takeIf { it.sending }?.request else null
+        if (running) {
+            if (request != null && manualRequest == null) manualFinished(request, "Pengisian sedang berjalan. Cek ulang status laporan.")
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_MANUAL && request == null) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        running = true
+        manualRequest = request
         val factory = NotificationFactory(this)
         factory.ensureChannels()
         val notification: Notification = factory.autofillProgress()
@@ -45,16 +68,49 @@ class AutoFillService : Service() {
                     ),
                 )
             }
+            if (request != null) manualFinished(request, "Pengiriman belum siap.")
             stopSelf()
+        } else if (request != null) {
+            delegate.startManual(request)
         } else {
+            id.ohmymonev.android.engine.DebugBench.pending = intent?.action == ACTION_BENCH
             delegate.startAutoFill(applicationContext)
         }
         return START_NOT_STICKY
     }
 
+    override fun onDestroy() {
+        manualRequest?.let { manualFinished(it, "Pengiriman terhenti. Cek ulang status laporan.") }
+        super.onDestroy()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        private const val ACTION_BENCH = "id.ohmymonev.android.BENCH"
+        private const val ACTION_MANUAL = "id.ohmymonev.android.MANUAL_REPORT"
+        private val mutableManual = MutableStateFlow<ManualReportState?>(null)
+        val manual = mutableManual.asStateFlow()
+
+        fun startManual(context: Context, request: ManualReportRequest) {
+            if (manual.value?.sending == true) return
+            mutableManual.value = ManualReportState(request)
+            try {
+                context.startForegroundService(Intent(context, AutoFillService::class.java).setAction(ACTION_MANUAL))
+            } catch (_: IllegalStateException) {
+                manualFinished(request, "Pengiriman tidak dapat dimulai. Coba lagi.")
+            } catch (_: SecurityException) {
+                manualFinished(request, "Pengiriman tidak dapat dimulai. Periksa izin aplikasi.")
+            }
+        }
+
+        fun manualFinished(request: ManualReportRequest, message: String) {
+            val current = mutableManual.value
+            if (current?.request === request && current.sending) {
+                mutableManual.compareAndSet(current, ManualReportState(request, message))
+            }
+        }
+
         fun start(context: Context) {
             val intent = Intent(context, AutoFillService::class.java)
             context.startForegroundService(intent)
@@ -62,8 +118,7 @@ class AutoFillService : Service() {
 
         /** Satu putaran uji mesin terhadap halaman tiruan di dalam aplikasi (debug). */
         fun startBench(context: Context) {
-            id.ohmymonev.android.engine.DebugBench.pending = true
-            start(context)
+            context.startForegroundService(Intent(context, AutoFillService::class.java).setAction(ACTION_BENCH))
         }
 
         /** Dipanggil mesin saat satu siklus autofill selesai (sukses maupun gagal). */

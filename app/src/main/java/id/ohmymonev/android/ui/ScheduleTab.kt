@@ -149,12 +149,12 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             .scrollIndicator(scrollState)
             .verticalScroll(scrollState)
             .padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(22.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Jadwal", style = MaterialTheme.typography.headlineMedium)
             Text(
-                "Mengikuti hari kerja profil Monev. Semua jam memakai WIB.",
+                "Mengikuti hari kerja profil Monev (WIB).",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -171,8 +171,8 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                     Text("Aktifkan semua fitur", style = MaterialTheme.typography.titleLarge)
                     Text(
                         if (!current.masterEnabled) "Jadwal nonaktif" else if (workingDays == null) "Hari kerja belum dimuat" else "Jadwal aktif",
-                        fontSize = 18.sp,
-                        lineHeight = 26.sp,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 Switch(
@@ -192,7 +192,11 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             enabled = current.reminderEnabled,
             controlsEnabled = current.masterEnabled,
             effective = current.reminderEnabled && current.masterEnabled,
-            detail = "Mengingatkan Anda untuk mengisi laporan.",
+            detail = "Memeriksa status laporan.",
+            actionLabel = "Suara dan getar",
+            onAction = {
+                id.ohmymonev.android.schedule.ReminderNotifications(context).openSettings()
+            },
             onToggle = { on -> save { it.copy(reminderEnabled = on) } },
         ) {
             editing = AlarmId.REMINDER
@@ -209,7 +213,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 ScheduleSettings.ContentSource.TEMPLATE ->
                     "Terpicu pada jam terjadwal bila laporan belum terkirim. Isian memakai templat Anda."
                 ScheduleSettings.ContentSource.AUTOMATIC ->
-                    "Terpicu pada jam terjadwal bila laporan belum terkirim. Isian melanjutkan laporan sebelumnya. Eksperimen, berisiko."
+                    "Terpicu pada jam terjadwal bila belum terkirim. Isian melanjutkan laporan hari kerja sebelumnya (eksperimental)."
             },
             onToggle = { on -> save { it.copy(escalationEnabled = on) } },
         ) {
@@ -295,8 +299,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             title = { Text("Pakai otomatis?") },
             text = {
                 Text(
-                    "Aplikasi melanjutkan laporan hari sebelumnya. Anda tidak menulis apa pun. " +
-                        "Ini pilihan terakhir dan mudah salah. Periksa pratinjau di Beranda.",
+                    "Sistem melanjutkan laporan hari kerja sebelumnya. Periksa pratinjau di Beranda sebelum mengaktifkan.",
                 )
             },
             confirmButton = {
@@ -339,8 +342,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             title = { Text("Matikan kedua fitur?") },
             text = {
                 Text(
-                    "Aplikasi menghentikan Pengingat dan Pengisian darurat. " +
-                        "Anda tetap dapat mengisi formulir melalui Beranda.",
+                    "Pengingat dan Pengisian darurat dimatikan. Anda tetap dapat mengisi melalui Beranda.",
                 )
             },
             confirmButton = {
@@ -518,7 +520,15 @@ private fun TemplateCard(status: String, onOpen: () -> Unit) {
     }
 }
 
-/** Dialog templat: tiga bagian, divalidasi dengan aturan yang sama seperti saat dikirim. */
+/** Check the report after replacing the date marker, as the delivery path does. */
+internal fun templateIssues(aktivitas: String, pelajaran: String, kendala: String): List<String> {
+    val date = java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
+    val draft = id.ohmymonev.core.generator.GeneratorPipeline.substitute(
+        ReportDraft(aktivitas, pelajaran, kendala), date,
+    )
+    return PreparedReportService.validationIssues(draft)
+}
+
 @Composable
 internal fun TemplateEditor(
     current: ReportTemplate?,
@@ -530,7 +540,9 @@ internal fun TemplateEditor(
     var aktivitas by remember(current) { mutableStateOf(current?.aktivitas ?: "") }
     var pelajaran by remember(current) { mutableStateOf(current?.pelajaran ?: "") }
     var kendala by remember(current) { mutableStateOf(current?.kendala ?: "") }
-    val issues = PreparedReportService.validationIssues(ReportDraft(aktivitas, pelajaran, kendala))
+    val issues = remember(aktivitas, pelajaran, kendala) {
+        templateIssues(aktivitas, pelajaran, kendala)
+    }
     val editorScrollState = rememberScrollState()
     AlertDialog(
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
@@ -544,8 +556,7 @@ internal fun TemplateEditor(
             ) {
                 Text(
                     "Teks ini menjadi isi laporan. Tanda {tanggal} diganti tanggal hari ini.",
-                    fontSize = 18.sp,
-                    lineHeight = 26.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 EditorField("Aktivitas", "Uraian aktivitas minimal 100 karakter", aktivitas) { aktivitas = it }
@@ -567,8 +578,7 @@ internal fun TemplateEditor(
                 if (clearBlocked && current != null) {
                     Text(
                         "Mode Templat aktif. Ganti sumber di Pengisian darurat dahulu.",
-                        fontSize = 18.sp,
-                        lineHeight = 26.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -578,14 +588,14 @@ internal fun TemplateEditor(
             Button(
                 enabled = issues.isEmpty(),
                 onClick = { onSave(ReportTemplate(aktivitas, pelajaran, kendala)) },
-            ) { Text("Simpan", fontSize = 18.sp) }
+            ) { Text("Simpan", fontSize = 16.sp) }
         },
         dismissButton = {
             Row {
                 if (current != null && !clearBlocked) {
-                    TextButton(onClick = onClear) { Text("Hapus", fontSize = 18.sp) }
+                    TextButton(onClick = onClear) { Text("Hapus", fontSize = 16.sp) }
                 }
-                TextButton(onClick = onDismiss) { Text("Batal", fontSize = 18.sp) }
+                TextButton(onClick = onDismiss) { Text("Batal", fontSize = 16.sp) }
             }
         },
     )
@@ -601,6 +611,8 @@ private fun AlarmCard(
     effective: Boolean,
     controlsEnabled: Boolean,
     detail: String,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
     onToggle: (Boolean) -> Unit,
     onOpen: () -> Unit,
 ) {
@@ -641,19 +653,19 @@ private fun AlarmCard(
                 TextButton(onClick = onOpen, enabled = controlsEnabled,
                     colors = ButtonDefaults.textButtonColors(disabledContentColor = textColor),
                     modifier = Modifier.align(Alignment.CenterVertically).testTag("alarm-edit-$title")) {
-                    Text("Atur fitur", fontSize = 18.sp)
+                    Text("Atur fitur", fontSize = 16.sp)
                 }
             }
             Text(
                 if (days.isEmpty()) "Tidak ada hari kerja terpilih" else if (days.size == DayOfWeek.entries.size) "Setiap hari" else days.sortedBy { it.value }.joinToString(", ") { DAY_SHORT.getValue(it) },
-                fontSize = 18.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 color = textColor,
                 fontWeight = FontWeight.Medium,
             )
             if (!effective) {
                 Text(
                     if (enabled) "Semua fitur nonaktif." else "Fitur ini nonaktif.",
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp, lineHeight = 26.sp),
+                    style = MaterialTheme.typography.bodyMedium,
                     color = textColor,
                 )
             }
@@ -661,10 +673,17 @@ private fun AlarmCard(
             detail.split('\n').forEach { instruction ->
                 Text(
                     instruction,
-                    fontSize = 20.sp,
-                    lineHeight = 28.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = textColor,
                 )
+            }
+            if (actionLabel != null && onAction != null && effective) {
+                TextButton(
+                    onClick = onAction,
+                    modifier = Modifier.testTag("alarm-action-$title"),
+                ) {
+                    Text(actionLabel, style = MaterialTheme.typography.labelLarge)
+                }
             }
         }
     }

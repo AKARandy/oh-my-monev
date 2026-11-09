@@ -22,9 +22,12 @@ import kotlinx.coroutines.runBlocking
  */
 class GuardService : Service() {
 
+    private lateinit var reminders: ReminderController
+
     override fun onCreate() {
         super.onCreate()
         startAsForeground()
+        reminders = ReminderController(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -38,6 +41,7 @@ class GuardService : Service() {
             // Dihidupkan ulang oleh sistem (START_STICKY): perbaiki alarm yang mungkin hilang.
             AlarmScheduler.armAll(this, settings)
         }
+        reminders.handle(intent)
         refreshContent()
         return START_STICKY
     }
@@ -49,6 +53,11 @@ class GuardService : Service() {
             AlarmScheduler.armAll(this, settings)
         }
         super.onTaskRemoved(rootIntent)
+    }
+
+    override fun onDestroy() {
+        reminders.close()
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -93,7 +102,16 @@ class GuardService : Service() {
             androidx.core.content.ContextCompat.startForegroundService(context, intent)
         }
 
+        fun tryEnsure(context: Context) {
+            try {
+                ensure(context)
+            } catch (e: IllegalStateException) {
+                android.util.Log.w("GuardService", "Android deferred foreground service start", e)
+            }
+        }
+
         fun stop(context: Context) {
+            ReminderController.clear(context)
             context.stopService(Intent(context, GuardService::class.java))
         }
     }

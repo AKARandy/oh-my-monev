@@ -10,6 +10,7 @@ import android.content.Context
 interface AutoFillDelegate {
     /** Mulai satu siklus pengisian: isi formulir lalu kirim. */
     fun startAutoFill(context: Context)
+    fun startManual(request: ManualReportRequest)
 }
 
 /**

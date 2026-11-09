@@ -65,6 +65,7 @@ class WebViewEngine(
     /** Mutable per-run bookkeeping; touched only on the main thread. */
     private class RunState(
         val dateISO: String,
+        val draftStillCurrent: (() -> Boolean)?,
         val draft: ReportDraft,
         val attempt: Int,
         val attemptedAtISO: String,
@@ -77,9 +78,10 @@ class WebViewEngine(
         var sessionVersion = 0L
     }
 
-    fun runAutomation(dateISO: String, draft: ReportDraft, attempt: Int, expectedSessionVersion: Long? = null) {
+    fun runAutomation(dateISO: String, draft: ReportDraft, attempt: Int, expectedSessionVersion: Long? = null, draftStillCurrent: (() -> Boolean)? = null) {
         val state = RunState(
             dateISO = dateISO,
+            draftStillCurrent = draftStillCurrent,
             expectedSessionVersion = expectedSessionVersion,
             draft = draft,
             attempt = attempt,
@@ -286,6 +288,10 @@ class WebViewEngine(
         }
         if (SessionRepository.get(appContext).state.value.version != state.expectedSessionVersion) {
             finish(state, EngineOutcome.LOGIN_REQUIRED, "Sesi berubah. Perbarui pratinjau.")
+            return false
+        }
+        if (state.draftStillCurrent?.invoke() == false) {
+            finish(state, EngineOutcome.READBACK_MISMATCH, "Draf berubah. Tinjau draf lagi.")
             return false
         }
         return true

@@ -2,20 +2,20 @@ package id.ohmymonev.android.ui
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
+import android.provider.Settings
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -41,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
@@ -49,6 +50,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import id.ohmymonev.android.BuildConfig
 import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.data.AppStore
@@ -64,6 +68,7 @@ import id.ohmymonev.core.model.ReportDraft
 import id.ohmymonev.core.validator.DeliveryGate
 import id.ohmymonev.android.schedule.AlarmScheduler
 import id.ohmymonev.android.schedule.AutoFillService
+import id.ohmymonev.android.schedule.ManualReportRequest
 import id.ohmymonev.android.schedule.TimeSettingsStore
 import id.ohmymonev.core.enginecore.EngineOutcome
 import id.ohmymonev.core.enginecore.RunRecord
@@ -127,16 +132,56 @@ fun HomeTab(
     var armedState by remember { mutableStateOf<AlarmScheduler.ArmedState?>(null) }
     var pratinjau by remember { mutableStateOf<PreparedReport?>(null) }
     var pratinjauLoading by remember { mutableStateOf(false) }
-    var editorExpanded by remember { mutableStateOf(false) }
+    var editorExpanded by remember(session.version, todayIso) { mutableStateOf(false) }
+    val manual by AutoFillService.manual.collectAsState()
+    val manualSending = manual?.sending == true
+    var confirmSend by remember { mutableStateOf<ManualReportRequest?>(null) }
+    var recheckedManual by remember { mutableStateOf<ManualReportRequest?>(null) }
     var infoExpanded by remember { mutableStateOf(false) }
     var diagnosticsExpanded by remember { mutableStateOf(false) }
 
+    fun refreshPermissions() {
+        locationGranted = hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+        notificationsOn = NotificationManagerCompat.from(context).areNotificationsEnabled()
+    }
+
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshPermissions()
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
     val locationLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { locationGranted = it }
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { refreshPermissions() }
+    var notificationRequested by remember { mutableStateOf(false) }
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { notificationsOn = it }
+    ) {
+        notificationRequested = true
+        refreshPermissions()
+    }
+
+    fun requestLocation() {
+        locationLauncher.launch(arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ))
+    }
+
+    fun requestNotifications() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationRequested &&
+            !hasPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+        ) {
+            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
+        }
+    }
 
     fun refreshPratinjau(force: Boolean = false, allowModelRun: Boolean = true) {
         val request = ++previewRequest
@@ -170,7 +215,9 @@ fun HomeTab(
         checkingStatus = true
         statusJob = scope.launch {
             try {
-                siteStatus = SiteStatusProbe(context).check()
+                val result = SiteStatusProbe(context).check()
+                if (request != statusRequest) return@launch
+                siteStatus = result
                 val current = withContext(Dispatchers.IO) { store.settingsOnce() }
                 armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, current) }
             }
@@ -183,6 +230,7 @@ fun HomeTab(
     }
     LaunchedEffect(session.version, session.initializing, todayIso) {
         if (!session.initializing) {
+            siteStatus = null
             refresh()
             refreshSiteStatus()
         }
@@ -216,17 +264,25 @@ fun HomeTab(
         }
     }
 
-    fun sessionReadyForAutomation(): Boolean = session.usable
+    val status = siteStatus
+    val account = status?.account
+    val visibleDraft = todayDraft?.takeIf { it.date == todayIso &&
+        (it.participantId == null || it.participantId == account) }
+    val manualResult = manual?.takeIf {
+        !it.sending && it.request.draft.date == todayIso &&
+            (it.request.account == account ||
+                (account == null && it.message != "Laporan sudah terkirim." && it.request.sessionVersion == session.version))
+    }
+    val maySend = status?.sessionActive == true && status.today == TodayState.UNFILLED &&
+        account != null && status.credentialVersion == session.version && !checkingStatus &&
+        !manualSending && (manualResult == null || manualResult.request === recheckedManual) &&
+        manualResult?.message != "Laporan sudah terkirim."
 
-    // Setup yang masih kurang: sesi, lokasi, notifikasi. Dipakai tombol utama dan kartu persiapan.
-    val needSetup = !sessionReadyForAutomation() || !locationGranted || !notificationsOn
-    val noReportRequired = siteStatus?.sessionActive == true &&
-        (siteStatus?.today == TodayState.FILLED || siteStatus?.today == TodayState.LIBUR ||
-            siteStatus?.today == TodayState.LEAVE)
+    LaunchedEffect(manual) {
+        val result = manual
+        if (result != null && !result.sending) refreshSiteStatus()
+    }
 
-    val needsDraftCorrection = pratinjau != null && !pratinjauLoading && !pratinjau!!.sourceUnavailable &&
-        pratinjau!!.outcome() is id.ohmymonev.core.generator.GenerationOutcome.Failed
-    val previewReady = pratinjau?.outcome() is id.ohmymonev.core.generator.GenerationOutcome.Generated
     val scrollState = rememberScrollState()
     Box(modifier = modifier.fillMaxSize()) {
         Column(
@@ -235,70 +291,66 @@ fun HomeTab(
                 .scrollIndicator(scrollState)
                 .verticalScroll(scrollState)
                 .padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(22.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 text = ZonedDateTime.now(ScheduleCalculator.asiaJakarta).format(DATE_FORMAT).uppercase(ID_LOCALE),
-                fontSize = 18.sp,
+                style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text("Laporan hari ini", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                text = when {
-                    confirmingSession -> "Memeriksa login tersimpan…"
-                    settings == null -> "Memuat jadwal…"
-                    siteStatus?.sessionActive == true && siteStatus?.today == TodayState.FILLED ->
-                        "Sudah tercatat"
-                    siteStatus?.sessionActive == true && siteStatus?.today == TodayState.LIBUR ->
-                        "Hari libur"
-                    siteStatus?.sessionActive == true && siteStatus?.today == TodayState.LEAVE ->
-                        "Tidak hadir"
-                    !sessionReadyForAutomation() && session.hasToken -> "Login tersimpan. Pemeriksaan belum berhasil."
-                    !sessionReadyForAutomation() -> "Login untuk melanjutkan."
-                    todayDraft != null && !draftValid -> "Perbaiki laporan sebelum mengisi formulir."
-                    draftValid -> "Laporan siap diisi ke formulir."
-                    else -> "Siapkan laporan hari ini, lalu isi formulir."
+            ReportStatus(
+                status = when {
+                    checkingStatus || confirmingSession -> ReportStatusLabel.CHECKING
+                    status?.today == TodayState.FILLED -> ReportStatusLabel.SUBMITTED
+                    status?.today == TodayState.UNFILLED && status.sessionActive == true -> ReportStatusLabel.MISSING
+                    status?.today == TodayState.LIBUR || status?.today == TodayState.LEAVE -> ReportStatusLabel.NOT_REQUIRED
+                    !session.hasToken -> ReportStatusLabel.LOGIN_REQUIRED
+                    else -> ReportStatusLabel.UNAVAILABLE
                 },
-                fontSize = 20.sp,
-                lineHeight = 28.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                canRecheck = !checkingStatus && !manualSending && session.hasToken,
+                onRecheck = {
+                    recheckedManual = manualResult?.request
+                    refreshSiteStatus()
+                },
             )
+            if (!session.hasToken) {
+                TextButton(onClick = onOpenSession) { Text("Login ke Monev") }
+            }
         }
 
-        val interaction = remember { MutableInteractionSource() }
-        // Tombol yang tidak bisa berhasil memang harus tampak mati, bukan sekali tap lalu gagal.
-        Button(
-            onClick = {
-                when {
-                    noReportRequired -> onOpenSession()
-                    !sessionReadyForAutomation() -> onOpenSession()
-                    (todayDraft != null && !draftValid) || needsDraftCorrection -> editorExpanded = true
-                    !previewReady -> refreshPratinjau(true)
-                    else -> { AutoFillService.start(context); running = true }
-                }
-            },
-            enabled = !running && !pratinjauLoading && !confirmingSession && (noReportRequired || !sessionReadyForAutomation() || !needSetup),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(54.dp)
-                .pressScale(interaction),
-            shape = RoundedCornerShape(16.dp),
-            interactionSource = interaction,
-        ) {
-            Text(
-                when {
-                    running -> "Mengisi…"
-                    confirmingSession -> "Memeriksa login…"
-                    noReportRequired -> "Lihat di situs Monev"
-                    !sessionReadyForAutomation() && session.hasToken -> "Cek sesi tersimpan"
-                    !sessionReadyForAutomation() -> "Login ke Monev"
-                    needSetup -> "Lengkapi izin di bawah"
-                    (todayDraft != null && !draftValid) || needsDraftCorrection -> "Tulis laporan hari ini"
-                    !previewReady -> "Perbarui pratinjau"
-                    else -> "Isi dan kirim sekarang"
+        if (manualSending) Text("Mengirim…")
+        manualResult?.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+        if (account != null && (visibleDraft != null || status?.today == TodayState.UNFILLED)) {
+            DraftCard(
+                expanded = editorExpanded && !manualSending,
+                onExpandedChange = { editorExpanded = it },
+                onSaved = { scope.launch { refresh(); refreshPratinjau(true, allowModelRun = false) } },
+                savedDraft = visibleDraft,
+                account = account,
+                editable = !manualSending && status?.today == TodayState.UNFILLED,
+            )
+            if (visibleDraft != null && draftValid && status?.today == TodayState.UNFILLED) {
+                Button(
+                    onClick = {
+                        if (!locationGranted) requestLocation()
+                        else confirmSend = ManualReportRequest(visibleDraft, account, session.version)
+                    },
+                    enabled = maySend && !editorExpanded,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (locationGranted) "Kirim ke Monev" else "Izinkan lokasi akurat") }
+            }
+        }
+        confirmSend?.let { reviewed ->
+            ConfirmManualReport(
+                enabled = maySend && visibleDraft == reviewed.draft &&
+                    account == reviewed.account && session.version == reviewed.sessionVersion,
+                onSend = {
+                    confirmSend = null
+                    recheckedManual = null
+                    AutoFillService.startManual(context, reviewed)
                 },
-                style = MaterialTheme.typography.titleMedium,
+                onDismiss = { confirmSend = null },
             )
         }
 
@@ -308,12 +360,8 @@ fun HomeTab(
                 locationGranted = locationGranted,
                 notificationsOn = notificationsOn,
                 // Satu fungsi satu tombol: memeriksa sesi hanya ada di tab Sesi.
-                onGrantLocation = { locationLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION) },
-                onGrantNotifications = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                },
+                onGrantLocation = { requestLocation() },
+                onGrantNotifications = { requestNotifications() },
             )
         }
 
@@ -327,12 +375,6 @@ fun HomeTab(
             } else {
                 "Mencari laporan Hadir…"
             },
-        )
-
-        DraftCard(
-            expanded = editorExpanded,
-            onExpandedChange = { editorExpanded = it },
-            onSaved = { scope.launch { refresh(); refreshPratinjau(true) } },
         )
 
         // Ringkasan malam ini: bukti alarm + apa yang akan terjadi + jalan keluar bila ingin mandiri.
@@ -368,11 +410,10 @@ fun HomeTab(
                 if (confirmSkip) {
                     AlertDialog(
                         onDismissRequest = { confirmSkip = false },
-                        title = { Text("Matikan otomatis untuk malam ini?") },
+                        title = { Text("Jeda Pengisian darurat malam ini?") },
                         text = {
                             Text(
-                                "Pengisian darurat malam ini tidak akan berjalan. " +
-                                    "Kamu mengisi sendiri sebelum 23.59 WIB. Hanya berlaku malam ini.",
+                                "Pengingat tetap mengikuti jadwal. Kirim laporan sendiri sebelum 23.59 WIB.",
                             )
                         },
                         confirmButton = {
@@ -394,13 +435,13 @@ fun HomeTab(
         }
 
         // Tindakan pada tulisan hari ini: hapus hanya bila ada, sebagai tautan kecil.
-        if (todayDraft != null) {
+        if (visibleDraft != null && !manualSending) {
             var confirmDelete by remember { mutableStateOf(false) }
             if (confirmDelete) {
                 AlertDialog(
                     onDismissRequest = { confirmDelete = false },
                     title = { Text("Hapus tulisan hari ini?") },
-                    text = { Text("Aplikasi akan memakai laporan Hadir terbaru jika tersedia.") },
+                    text = { Text("Aplikasi akan memakai sumber yang dipilih di Pengisian darurat.") },
                     confirmButton = {
                         TextButton(onClick = {
                             confirmDelete = false
@@ -425,7 +466,7 @@ fun HomeTab(
         }
 
         LastRunRow(lastRecord)
-        TextButton(onClick = { infoExpanded = !infoExpanded }) { Text("Tentang aplikasi", fontSize = 18.sp) }
+        TextButton(onClick = { infoExpanded = !infoExpanded }) { Text("Tentang aplikasi", style = MaterialTheme.typography.bodyMedium) }
         if (infoExpanded) DisclaimerCard()
         TextButton(onClick = { diagnosticsExpanded = !diagnosticsExpanded }) {
             Text(if (diagnosticsExpanded) "Tutup alat pengujian" else "Alat pengujian")
@@ -472,6 +513,35 @@ private fun DisclaimerCard() {
             )
         }
     }
+}
+
+internal enum class ReportStatusLabel(val text: String, val color: Color) {
+    CHECKING("Memeriksa status…", Color(0xFF0A3D91)),
+    SUBMITTED("Sudah terkirim", Color(0xFF17613A)),
+    MISSING("Belum terkirim", Color(0xFFAA182E)),
+    NOT_REQUIRED("Tidak perlu laporan", Color(0xFF5F6570)),
+    LOGIN_REQUIRED("Login untuk melanjutkan.", Color(0xFF634197)),
+    UNAVAILABLE("Status belum dapat diperiksa.", Color(0xFF815300)),
+}
+
+@Composable
+internal fun ReportStatus(status: ReportStatusLabel, canRecheck: Boolean, onRecheck: () -> Unit) {
+    Text("Status laporan hari ini", style = MaterialTheme.typography.headlineMedium)
+    Text(status.text, color = status.color, style = MaterialTheme.typography.bodyLarge)
+    TextButton(onClick = onRecheck, enabled = canRecheck) { Text("Cek ulang") }
+}
+
+@Composable
+internal fun ConfirmManualReport(enabled: Boolean, onSend: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Kirim laporan hari ini ke Monev?") },
+        text = { Text("Pastikan draf yang tersimpan sudah benar.") },
+        confirmButton = {
+            TextButton(enabled = enabled, onClick = onSend) { Text("Kirim ke Monev") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } },
+    )
 }
 
 @Composable
@@ -586,7 +656,7 @@ private fun ReadinessCard(
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Persiapan", style = MaterialTheme.typography.titleMedium)
             if (!locationGranted) {
-                ReadyRow("Izin lokasi", false, "Dibutuhkan situs", "Izinkan", onGrantLocation)
+                ReadyRow("Izin lokasi", false, "Pilih lokasi akurat", "Izinkan", onGrantLocation)
             }
             if (!notificationsOn) {
                 ReadyRow("Notifikasi", false, "Aktifkan pengingat", "Izinkan", onGrantNotifications)
