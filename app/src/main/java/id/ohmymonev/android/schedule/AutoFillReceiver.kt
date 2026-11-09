@@ -12,9 +12,13 @@ import kotlinx.coroutines.runBlocking
 class AutoFillReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
+        if (!FeatureReadiness.read(context).ready) {
+            AlarmScheduler.armAll(context, settings)
+            return
+        }
         val today = java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
         if (!WorkDaysStore(context).isWorkday(today)) return
-        if (!settings.masterEnabled) return
+        if (!settings.masterEnabled || !settings.escalationEnabled) return
         // Pengguna membatalkan malam ini: hormati, jangan jalankan apa pun.
         if (id.ohmymonev.android.data.AppStore(context).isSkipped(today.toString())) return
         AutoFillService.start(context)

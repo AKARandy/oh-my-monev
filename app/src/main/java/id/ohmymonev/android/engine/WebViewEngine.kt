@@ -10,8 +10,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.webkit.CookieManager
-import android.webkit.GeolocationPermissions
-import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -72,6 +70,9 @@ class WebViewEngine(
         val expectedSessionVersion: Long?,
     ) {
         lateinit var webView: WebView
+        lateinit var watchdog: Runnable
+        var stage = "membuka Monev"
+        fun viewOrNull(): WebView? = if (::webView.isInitialized) webView else null
         var httpStatusCode: Int = 200
         var mainFrameError: String? = null
         var finished = false
@@ -87,7 +88,17 @@ class WebViewEngine(
             attempt = attempt,
             attemptedAtISO = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(OffsetDateTime.now()),
         )
-        main.post { startRun(state) }
+        state.watchdog = Runnable {
+            finish(state, EngineOutcome.LOADING_TIMEOUT, "Batas waktu saat ${state.stage}.")
+        }
+        main.post {
+            main.postDelayed(state.watchdog, 90_000)
+            try {
+                startRun(state)
+            } catch (_: RuntimeException) {
+                finish(state, EngineOutcome.RETRYABLE_ERROR, "Monev tidak dapat dibuka.")
+            }
+        }
     }
 
     // ---------------------------------------------------------------- pipeline steps
@@ -107,19 +118,9 @@ class WebViewEngine(
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
         webView.webViewClient = buildClient(state)
-        webView.webChromeClient = buildChromeClient()
+        webView.webChromeClient = SessionWebView.locationClient(appContext)
         events(state, "Mulai otomatisasi tanggal ${state.dateISO} (percobaan ${state.attempt})")
         openDashboard(state)
-    }
-
-    /** Situs meminta geolokasi lewat prompt JS; mesin ini sudah memegang izin runtime aplikasi. */
-    private fun buildChromeClient() = object : WebChromeClient() {
-        override fun onGeolocationPermissionsShowPrompt(
-            origin: String?,
-            callback: GeolocationPermissions.Callback?,
-        ) {
-            callback?.invoke(origin, true, false)
-        }
     }
 
     private fun buildClient(state: RunState) = object : WebViewClient() {
@@ -190,6 +191,7 @@ class WebViewEngine(
 
     /** Loads the per-date riwayat edit URL and polls for the 3 textareas, matched by placeholder. */
     private fun openForm(state: RunState) {
+        state.stage = "membuka formulir"
         val deadline = SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs
         state.webView.loadUrl(profile.riwayatEditUrl(state.dateISO))
         main.postDelayed({ waitTextareas(state, deadline) }, profile.timing.spaSettleMs)
@@ -223,6 +225,7 @@ class WebViewEngine(
 
     /** The site shows the location OK text above the Kehadiran selector once the check passes. */
     private fun checkLocation(state: RunState) {
+        state.stage = "memeriksa lokasi"
         val deadline = SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs
         waitLocation(state, deadline)
     }
@@ -242,6 +245,7 @@ class WebViewEngine(
     }
 
     private fun fillForm(state: RunState) {
+        state.stage = "mengisi formulir"
         if (!currentDraftScope(state)) return
         val js = JsSnippets.fillTextareas(
             profile,
@@ -282,6 +286,10 @@ class WebViewEngine(
     private fun currentDraftScope(state: RunState): Boolean {
         // Bench runs have no participant-bound draft and stay on the local fixture.
         if (state.expectedSessionVersion == null) return true
+        if (!id.ohmymonev.android.schedule.FeatureReadiness.read(appContext).ready) {
+            finish(state, EngineOutcome.LOGIN_REQUIRED, "Periksa sesi dan izin aplikasi.")
+            return false
+        }
         if (java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta).toString() != state.dateISO) {
             finish(state, EngineOutcome.DAY_NOT_FILLABLE, "Tanggal berubah. Perbarui pratinjau.")
             return false
@@ -319,33 +327,43 @@ class WebViewEngine(
                 finish(state, EngineOutcome.SUBMIT_FAILED, "kotak konfirmasi tidak ditemukan")
                 return@evaluateJavascript
             }
-            if (!currentDraftScope(state)) return@evaluateJavascript
-            webView.evaluateJavascript(JsSnippets.clickSubmit(profile)) { raw2 ->
-                if (state.finished) return@evaluateJavascript
-                if (unwrapObject(raw2)?.optBoolean("clicked") != true) {
-                    finish(state, EngineOutcome.SUBMIT_FAILED, "tombol kirim tidak ditemukan")
-                    return@evaluateJavascript
+            state.stage = "menunggu tombol kirim"
+            waitSubmitEnabled(state, SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs)
+        }
+    }
+
+    private fun waitSubmitEnabled(state: RunState, deadline: Long) {
+        if (state.finished || !currentDraftScope(state)) return
+        state.webView.evaluateJavascript(JsSnippets.clickSubmit(profile)) { raw ->
+            if (state.finished) return@evaluateJavascript
+            val result = unwrapObject(raw)
+            when {
+                result?.optBoolean("clicked") == true -> {
+                    state.stage = "memeriksa hasil pengiriman"
+                    events(state, "Tombol kirim ditekan")
+                    waitSubmitLanding(state, SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs)
                 }
-                events(state, "Terkirim: menunggu halaman keluar dari form")
-                waitSubmitLanding(state, SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs)
+                result?.optBoolean("blocked") == true && SystemClock.elapsedRealtime() < deadline ->
+                    main.postDelayed({ waitSubmitEnabled(state, deadline) }, profile.timing.pollIntervalMs)
+                else -> finish(state, EngineOutcome.SUBMIT_FAILED,
+                    if (result?.optBoolean("blocked") == true) "Tombol kirim Monev belum aktif."
+                    else "Tombol kirim Monev tidak dapat ditekan.")
             }
         }
     }
 
-    /** Success marker: the site shows a success snackbar and/or the SPA leaves the ?view=edit form URL. */
     private fun waitSubmitLanding(state: RunState, deadline: Long) {
         if (state.finished) return
-        val probeJs = "(function(){return (window.location.href||'')+'\\n'+(document.body?document.body.textContent:'');})()"
-        state.webView.evaluateJavascript(probeJs) { raw ->
+        state.webView.evaluateJavascript(JsSnippets.submissionState()) { raw ->
             if (state.finished) return@evaluateJavascript
-            val both = unwrap(raw).orEmpty()
-            val url = both.substringBefore('\n')
-            val text = both.substringAfter('\n', "")
+            val page = unwrapObject(raw)
+            val url = page?.optString("url").orEmpty()
+            val text = page?.optString("text").orEmpty()
             val successText = text.contains(profile.markers.submissionSuccessText) ||
                 text.contains(profile.markers.submissionUpdatedText)
             when {
                 successText -> finish(state, EngineOutcome.SUBMITTED, "pesan sukses situs terlihat")
-                url.isNotEmpty() && !url.contains("view=edit") ->
+                url.substringBefore('?').substringBefore('#') == profile.riwayatUrl() && !url.contains("view=edit") ->
                     finish(state, EngineOutcome.SUBMITTED, "form tertutup: $url")
                 SystemClock.elapsedRealtime() >= deadline ->
                     finish(state, EngineOutcome.SUBMIT_FAILED, "tidak ada indikasi sukses dari situs")
@@ -358,10 +376,12 @@ class WebViewEngine(
     private fun finish(state: RunState, outcome: EngineOutcome, detail: String?) {
         if (state.finished) return
         state.finished = true
-        CookieManager.getInstance().flush()
+        main.removeCallbacks(state.watchdog)
+        runCatching { CookieManager.getInstance().flush() }
         events(state, "Hasil: $outcome" + (detail?.let { " ($it)" } ?: ""))
-        val webView = state.webView
-        SessionWebView.release(webView, SessionRepository.get(appContext), state.sessionVersion)
+        state.viewOrNull()?.let { view ->
+            SessionWebView.release(view, SessionRepository.get(appContext), state.sessionVersion)
+        }
         callbacks.onRunFinished(
             RunRecord(
                 date = state.dateISO,

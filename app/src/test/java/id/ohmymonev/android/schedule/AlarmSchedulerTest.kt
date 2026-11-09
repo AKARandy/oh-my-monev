@@ -19,17 +19,17 @@ class AlarmSchedulerTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private val alarms = context.getSystemService(AlarmManager::class.java)
 
-    @org.junit.Before fun calendar() { WorkDaysStore(context).save(org.json.JSONObject().put("id", "participant").put("off_days", org.json.JSONArray())) }
+    @org.junit.Before fun calendar() { readySession(context); WorkDaysStore(context).save(org.json.JSONObject().put("id", "participant").put("off_days", org.json.JSONArray())) }
 
     @Test fun pausingAutomationRemovesPreviouslyScheduledAlarms() {
-        AlarmScheduler.armAll(context, ScheduleSettings())
+        AlarmScheduler.armAll(context, ScheduleSettings(escalationEnabled = true))
         assertEquals(2, shadowOf(alarms).scheduledAlarms.size)
         AlarmScheduler.armAll(context, ScheduleSettings(masterEnabled = false))
         assertTrue(shadowOf(alarms).scheduledAlarms.isEmpty())
     }
 
     @Test fun disablingOneAlarmKeepsTheOtherOne() {
-        AlarmScheduler.armAll(context, ScheduleSettings())
+        AlarmScheduler.armAll(context, ScheduleSettings(escalationEnabled = true))
         AlarmScheduler.armAll(context, ScheduleSettings(escalationEnabled = false))
         assertEquals(1, shadowOf(alarms).scheduledAlarms.size)
     }
@@ -39,7 +39,7 @@ class AlarmSchedulerTest {
             android.content.Intent("other.app.ALARM"), android.app.PendingIntent.FLAG_IMMUTABLE)
         val now = java.time.ZonedDateTime.parse("2026-11-07T20:36:00+07:00[Asia/Jakarta]")
         alarms.setAlarmClock(AlarmManager.AlarmClockInfo(now.plusMinutes(15).toInstant().toEpochMilli(), foreign), foreign)
-        val state = AlarmScheduler.readArmedState(context, ScheduleSettings(), now)
+        val state = AlarmScheduler.readArmedState(context, ScheduleSettings(escalationEnabled = true), now)
         assertEquals("2026-11-07T15:30:00Z", state.nextFireISO)
         assertEquals("Pengisian darurat", state.source)
         org.junit.Assert.assertFalse(state.armed)
@@ -50,7 +50,7 @@ class AlarmSchedulerTest {
     }
 
     @Test fun masterOffCancelsNormalRetryAndTestAlarmsOnly() {
-        AlarmScheduler.armAll(context, ScheduleSettings())
+        AlarmScheduler.armAll(context, ScheduleSettings(escalationEnabled = true))
         AlarmScheduler.scheduleRetry(context, java.time.ZonedDateTime.now().plusMinutes(5))
         AlarmScheduler.quickFireForTest(context)
         assertEquals(4, shadowOf(alarms).scheduledAlarms.size)
@@ -60,7 +60,7 @@ class AlarmSchedulerTest {
 
     @Test fun clockDetailsOpenTheAppInsteadOfRunningAReceiver() {
         org.robolectric.shadows.ShadowAlarmManager.setCanScheduleExactAlarms(true)
-        AlarmScheduler.armAll(context, ScheduleSettings())
+        AlarmScheduler.armAll(context, ScheduleSettings(escalationEnabled = true))
         val show = requireNotNull(alarms.nextAlarmClock).showIntent
         assertEquals(id.ohmymonev.android.MainActivity::class.java.name,
             shadowOf(show).savedIntent.component?.className)
@@ -69,12 +69,31 @@ class AlarmSchedulerTest {
 
     @Test fun restoredExactPermissionClearsTheOldInstallationWarning() {
         org.robolectric.shadows.ShadowAlarmManager.setCanScheduleExactAlarms(false)
-        org.junit.Assert.assertNotNull(AlarmScheduler.ensureArmed(context, ScheduleSettings()).lastError)
+        org.junit.Assert.assertNotNull(AlarmScheduler.ensureArmed(context, ScheduleSettings(escalationEnabled = true)).lastError)
         org.robolectric.shadows.ShadowAlarmManager.setCanScheduleExactAlarms(true)
-        org.junit.Assert.assertNull(AlarmScheduler.ensureArmed(context, ScheduleSettings()).lastError)
+        org.junit.Assert.assertNull(AlarmScheduler.ensureArmed(context, ScheduleSettings(escalationEnabled = true)).lastError)
     }
     @Test fun configuredTimeUsesJakartaEvenWhenTheDeviceClockUsesAnotherZone() {
-        val state = AlarmScheduler.readArmedState(context, ScheduleSettings(), java.time.ZonedDateTime.parse("2026-11-07T13:36:00Z"))
+        val state = AlarmScheduler.readArmedState(context, ScheduleSettings(escalationEnabled = true), java.time.ZonedDateTime.parse("2026-11-07T13:36:00Z"))
         assertEquals("2026-11-07T15:30:00Z", state.nextFireISO)
     }
+
+    @Test fun missingLocationPausesUntilRestored() {
+        val settings = ScheduleSettings(escalationEnabled = true)
+        AlarmScheduler.armAll(context, settings)
+        val app = context.applicationContext as Application
+        shadowOf(app).denyPermissions(android.Manifest.permission.ACCESS_FINE_LOCATION)
+        AlarmScheduler.armAll(context, settings)
+        assertTrue(shadowOf(alarms).scheduledAlarms.isEmpty())
+        shadowOf(app).grantPermissions(android.Manifest.permission.ACCESS_FINE_LOCATION)
+        AlarmScheduler.armAll(context, settings)
+        assertEquals(2, shadowOf(alarms).scheduledAlarms.size)
+    }
+
+    @Test fun everyReadinessRequirementMustBePresent() {
+        for (session in listOf(false, true)) for (location in listOf(false, true)) for (notifications in listOf(false, true)) {
+            assertEquals(session && location && notifications, FeatureReadiness(session, location, notifications).ready)
+        }
+    }
+
 }

@@ -238,17 +238,17 @@ fun HomeTab(
     LaunchedEffect(settings) {
         settings?.let { s -> armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) } }
     }
-    LaunchedEffect(session.version, session.usable, todayIso) {
+    LaunchedEffect(session.version, session.usable, locationGranted, notificationsOn, todayIso) {
         previewJob?.cancel()
         pratinjau = null
         pratinjauLoading = false
-        if (session.usable) refreshPratinjau(allowModelRun = false)
+        if (session.usable && locationGranted && notificationsOn) refreshPratinjau(allowModelRun = false)
     }
     LaunchedEffect(running) {
         if (running) {
             delay(15_000)
             refresh()
-            if (session.usable) refreshPratinjau(allowModelRun = false)
+            if (session.usable && locationGranted && notificationsOn) refreshPratinjau(allowModelRun = false)
             val s = withContext(Dispatchers.IO) { store.settingsOnce() }
             armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
             running = false
@@ -264,6 +264,8 @@ fun HomeTab(
         }
     }
 
+    val readiness = id.ohmymonev.android.schedule.FeatureReadiness(session.usable, locationGranted, notificationsOn)
+    val ready = readiness.ready
     val status = siteStatus
     val account = status?.account
     val visibleDraft = todayDraft?.takeIf { it.date == todayIso &&
@@ -273,7 +275,7 @@ fun HomeTab(
             (it.request.account == account ||
                 (account == null && it.message != "Laporan sudah terkirim." && it.request.sessionVersion == session.version))
     }
-    val maySend = status?.sessionActive == true && status.today == TodayState.UNFILLED &&
+    val maySend = ready && status?.sessionActive == true && status.today == TodayState.UNFILLED &&
         account != null && status.credentialVersion == session.version && !checkingStatus &&
         !manualSending && (manualResult == null || manualResult.request === recheckedManual) &&
         manualResult?.message != "Laporan sudah terkirim."
@@ -314,7 +316,8 @@ fun HomeTab(
                     refreshSiteStatus()
                 },
             )
-            if (!session.hasToken) {
+            if (!ready) Text(readiness.missing(), style = MaterialTheme.typography.bodyMedium)
+            if (!session.usable) {
                 TextButton(onClick = onOpenSession) { Text("Login ke Monev") }
             }
         }
@@ -328,7 +331,7 @@ fun HomeTab(
                 onSaved = { scope.launch { refresh(); refreshPratinjau(true, allowModelRun = false) } },
                 savedDraft = visibleDraft,
                 account = account,
-                editable = !manualSending && status?.today == TodayState.UNFILLED,
+                editable = ready && !manualSending && status?.today == TodayState.UNFILLED,
             )
             if (visibleDraft != null && draftValid && status?.today == TodayState.UNFILLED) {
                 Button(
@@ -369,6 +372,7 @@ fun HomeTab(
             prepared = pratinjau,
             loading = pratinjauLoading,
             onRefresh = { refreshPratinjau(true) },
+            refreshEnabled = ready,
             holiday = siteStatus?.today == TodayState.LIBUR,
             loadingText = if (settings?.escalationSource == ScheduleSettings.ContentSource.AUTOMATIC) {
                 "Membuat draf otomatis…"
@@ -395,7 +399,7 @@ fun HomeTab(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    TextButton(onClick = {
+                    TextButton(enabled = ready, onClick = {
                         scope.launch {
                             withContext(Dispatchers.IO) { appStore.clearTonightSkip() }
                             tonightSkipped = false
@@ -403,11 +407,11 @@ fun HomeTab(
                     }) { Text("Nyalakan lagi") }
                 } else if (settings?.masterEnabled == true) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    TextButton(onClick = { confirmSkip = true }) {
+                    TextButton(enabled = ready, onClick = { confirmSkip = true }) {
                         Text("Jeda malam ini", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                if (confirmSkip) {
+                if (ready && confirmSkip) {
                     AlertDialog(
                         onDismissRequest = { confirmSkip = false },
                         title = { Text("Jeda Pengisian darurat malam ini?") },
@@ -435,7 +439,7 @@ fun HomeTab(
         }
 
         // Tindakan pada tulisan hari ini: hapus hanya bila ada, sebagai tautan kecil.
-        if (visibleDraft != null && !manualSending) {
+        if (visibleDraft != null && !manualSending && ready) {
             var confirmDelete by remember { mutableStateOf(false) }
             if (confirmDelete) {
                 AlertDialog(
@@ -475,9 +479,9 @@ fun HomeTab(
             Text("Uji mesin memakai halaman tiruan. Tes alarm memakai pengaturan Pengisian dan sesi aktif.", style = MaterialTheme.typography.bodySmall)
             OutlinedButton(
                 onClick = { AutoFillService.startBench(context); running = true },
-                enabled = !running,
+                enabled = ready && !running,
             ) { Text("Uji mesin") }
-            TextButton(onClick = { AlarmScheduler.quickFireForTest(context, 90) }) {
+            TextButton(enabled = ready, onClick = { AlarmScheduler.quickFireForTest(context, 90) }) {
                 Text("Tes alarm 90 detik")
             }
         }

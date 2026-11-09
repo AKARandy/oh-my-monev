@@ -51,6 +51,7 @@ class WorkDaysStoreTest {
     }
 
     @Test fun receiversStaySilentOnTheProfilesOffDay() = kotlinx.coroutines.runBlocking {
+        readySession(context)
         val app = context as Application
         org.robolectric.Shadows.shadowOf(app).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
         TimeSettingsStore(context).save(ScheduleSettings())
@@ -72,6 +73,7 @@ class WorkDaysStoreTest {
     }
 
     @Test fun legacyWorkdayQueuesOriginalDateWithoutAnAccount() = kotlinx.coroutines.runBlocking {
+        readySession(context)
         val settings = ScheduleSettings()
         TimeSettingsStore(context).save(settings)
         val date = LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta).minusDays(1)

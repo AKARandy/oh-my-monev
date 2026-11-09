@@ -70,4 +70,29 @@ class ManualReportServiceTest {
         assertNotNull(issue(ready, version = 8))
     }
 
+
+    @Test fun stalledWebViewFinishesOnce() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val outcomes = mutableListOf<id.ohmymonev.core.enginecore.EngineOutcome>()
+        val engine = id.ohmymonev.android.engine.WebViewEngine(
+            app, id.ohmymonev.core.siteprofile.DEFAULT_SITE_PROFILE,
+            object : id.ohmymonev.android.engine.WebViewEngine.Callbacks {
+                override fun onEvent(message: String) = Unit
+                override fun onRunFinished(record: id.ohmymonev.core.enginecore.RunRecord) {
+                    outcomes += record.outcome
+                }
+            },
+        )
+        engine.runAutomation("2026-11-09", id.ohmymonev.core.model.ReportDraft("A", "B", "C"), attempt = 1)
+        val main = Shadows.shadowOf(android.os.Looper.getMainLooper())
+        main.idle()
+        assertTrue(outcomes.isEmpty())
+        main.idleFor(java.time.Duration.ofSeconds(89))
+        assertTrue(outcomes.isEmpty())
+        main.idleFor(java.time.Duration.ofSeconds(1))
+        assertEquals(1, outcomes.size)
+        main.idleFor(java.time.Duration.ofSeconds(5))
+        assertEquals(listOf(id.ohmymonev.core.enginecore.EngineOutcome.LOADING_TIMEOUT), outcomes)
+    }
+
 }

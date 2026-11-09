@@ -154,4 +154,28 @@ class SessionAuthenticationTest {
         assertFalse(repository.state.value.usable)
         assertEquals(true, AppStore(context).sessionStatus()?.active)
     }
+
+    @Test fun locationRequiresPrecisePermissionAndTrustedMonevOrigin() {
+        val app = base as Application
+        val permissions = org.robolectric.Shadows.shadowOf(app)
+        val client = SessionWebView.locationClient(context)
+        val origin = id.ohmymonev.core.siteprofile.DEFAULT_SITE_PROFILE.urls.baseUrl
+        fun allowed(requestOrigin: String): Boolean {
+            var granted = false
+            client.onGeolocationPermissionsShowPrompt(requestOrigin) { _, allow, retain ->
+                assertFalse(retain)
+                granted = allow
+            }
+            return granted
+        }
+        permissions.denyPermissions(android.Manifest.permission.ACCESS_FINE_LOCATION)
+        permissions.grantPermissions(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+        assertFalse(allowed(origin))
+        permissions.grantPermissions(android.Manifest.permission.ACCESS_FINE_LOCATION)
+        assertTrue(allowed(origin))
+        assertFalse(allowed(origin.replace("https:", "http:")))
+        assertFalse(allowed("https://example.test"))
+        assertFalse(allowed("$origin:444"))
+    }
+
 }

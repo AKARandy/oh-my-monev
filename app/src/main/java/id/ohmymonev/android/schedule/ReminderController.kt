@@ -75,10 +75,13 @@ internal class ReminderController(private val context: Context) {
                 }
         }
         scope.launch {
-            sessions.state.map { Triple(it.initializing, it.hasToken, it.version) }
-                .distinctUntilChanged().collect { (initializing, hasToken, _) ->
+            sessions.state.map { Triple(it.initializing, it.usable, it.version) }
+                .distinctUntilChanged().collect { (initializing, _, _) ->
                     if (!initializing) {
-                        if (!hasToken) stopAlarm()
+                        if (!FeatureReadiness.read(context).ready) {
+                            stopAlarm()
+                            clear(context)
+                        }
                         requestCheck()
                     }
                 }
@@ -132,7 +135,11 @@ internal class ReminderController(private val context: Context) {
         val keys = preferences.all.keys.sorted()
         val now = System.currentTimeMillis()
         for (key in keys) {
-            if (!enabled) return
+            if (!enabled || !FeatureReadiness.read(context).ready) {
+                stopAlarm()
+                clear(context)
+                return
+            }
             val due = due(key)
             if (due < 0 || due > now) continue
             val date = LocalDate.parse(key.substringAfterLast('/'))
@@ -152,7 +159,7 @@ internal class ReminderController(private val context: Context) {
             } catch (_: Exception) {
                 null
             }
-            if (!enabled || this.due(key) != due ||
+            if (!enabled || !FeatureReadiness.read(context).ready || this.due(key) != due ||
                 !TimeSettingsStore(context).settingsOnce().let { it.masterEnabled && it.reminderEnabled }
             ) continue
             if (result?.credentialVersion != null && result.credentialVersion != sessions.state.value.version) {
@@ -252,6 +259,7 @@ internal class ReminderController(private val context: Context) {
                 val end = android.os.SystemClock.elapsedRealtime() + duration
                 var firstCycle = true
                 while (android.os.SystemClock.elapsedRealtime() < end) {
+                    if (!firstCycle && !FeatureReadiness.read(context).ready) break
                     val policy = manager.currentInterruptionFilter
                     val allowed = policy == NotificationManager.INTERRUPTION_FILTER_ALL ||
                         policy == NotificationManager.INTERRUPTION_FILTER_ALARMS

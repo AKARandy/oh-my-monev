@@ -45,6 +45,7 @@ internal fun PratinjauCard(
     prepared: PreparedReport?,
     loading: Boolean,
     onRefresh: () -> Unit,
+    refreshEnabled: Boolean = true,
     holiday: Boolean = false,
     loadingText: String = "Mencari laporan Hadir…",
     modifier: Modifier = Modifier,
@@ -63,7 +64,7 @@ internal fun PratinjauCard(
             Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Text("Pratinjau", Modifier.weight(1f), fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.secondary)
-                TextButton(onClick = onRefresh, enabled = !loading) { Text("Perbarui", fontSize = 18.sp) }
+                TextButton(onClick = onRefresh, enabled = refreshEnabled && !loading) { Text("Perbarui", fontSize = 18.sp) }
             }
             when {
                 loading -> Text(loadingText, fontSize = 20.sp, lineHeight = 28.sp)

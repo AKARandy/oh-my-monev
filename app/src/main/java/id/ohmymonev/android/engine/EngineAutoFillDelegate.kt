@@ -62,6 +62,10 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             fun draftStillCurrent() = store.todayDraft(draft.date) == draft &&
                 draft.date == LocalDate.now(ScheduleCalculator.asiaJakarta).toString()
             try {
+                if (!id.ohmymonev.android.schedule.FeatureReadiness.read(appContext).ready) {
+                    complete("Periksa sesi dan izin aplikasi.")
+                    return@launch
+                }
                 if (!draftStillCurrent() || sessions.state.value.version != request.sessionVersion ||
                     (draft.participantId != null && draft.participantId != request.account)
                 ) {
@@ -95,7 +99,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                             }
                             complete(if (verified?.account == request.account && verified.today == TodayState.FILLED)
                                 "Laporan sudah terkirim."
-                            else "Pengiriman belum dapat dikonfirmasi. Cek ulang status laporan.")
+                            else manualSendFailure(record))
                         }
                     }
                 })
@@ -119,6 +123,13 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
         // Tombol debug: satu putaran terhadap halaman tiruan untuk membuktikan mesin isi+kirim.
         if (DebugBench.consume()) {
             runBench(factory, settings, store, todayIso)
+            return
+        }
+
+        if (!settings.masterEnabled || !settings.escalationEnabled ||
+            !id.ohmymonev.android.schedule.FeatureReadiness.read(appContext).ready
+        ) {
+            AutoFillService.finished(appContext)
             return
         }
 
@@ -332,4 +343,16 @@ internal fun manualPreflightIssue(
     !draftStillCurrent || status.credentialVersion != request.sessionVersion ||
         sessionVersion != request.sessionVersion -> "Draf, tanggal, atau sesi berubah. Tinjau draf lagi."
     else -> null
+}
+
+private fun manualSendFailure(record: RunRecord): String = when (record.outcome) {
+    EngineOutcome.LOGIN_REQUIRED -> "Sesi Monev tidak siap. Periksa sesi, lalu cek ulang status laporan."
+    EngineOutcome.LOCATION_CHECK_FAILS -> "Monev belum dapat memeriksa lokasi. Cek ulang status laporan."
+    EngineOutcome.DAY_NOT_FILLABLE -> "Formulir Monev tidak dapat diisi. Cek ulang status laporan."
+    EngineOutcome.READBACK_MISMATCH -> "Isian formulir berbeda dari draf. Cek ulang status laporan."
+    EngineOutcome.LOADING_TIMEOUT -> (record.detail ?: "Monev tidak merespons.") + " Cek ulang status laporan."
+    EngineOutcome.SUBMIT_FAILED -> if (record.detail == "Tombol kirim Monev belum aktif.")
+        "Tombol kirim Monev belum aktif. Cek ulang status laporan."
+        else "Pengiriman belum dapat dikonfirmasi. Cek ulang status laporan."
+    else -> "Pengiriman belum dapat dikonfirmasi. Cek ulang status laporan."
 }

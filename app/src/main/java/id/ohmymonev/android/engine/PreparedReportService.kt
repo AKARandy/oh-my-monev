@@ -79,6 +79,22 @@ internal class PreparedReportService(
         catch (_: IOException) { failed(today(), "Draf tidak dapat disimpan. Coba Perbarui kembali.") }
     }
 
+    internal suspend fun deleteAutomaticModel(beforeDelete: suspend () -> Unit) {
+        check(mutex.tryLock()) { "Tunggu pembuatan pratinjau selesai." }
+        try {
+            beforeDelete()
+            withContext(Dispatchers.IO) {
+                val cached = runCatching {
+                    preferences.getString("draft", null)?.let { json.decodeFromString<PreparedReport>(it) }
+                }.getOrNull()
+                if (cached?.templateKey?.startsWith("AUTOMATIC:") == true) save(null)
+            }
+            ModelStore(context).delete()
+        } finally {
+            mutex.unlock()
+        }
+    }
+
     private suspend fun prepareLocked(force: Boolean, allowModelRun: Boolean): PreparedReport {
         val date = today()
         val fillMode = TimeSettingsStore(context).settingsOnce().escalationSource

@@ -1,6 +1,12 @@
 package id.ohmymonev.android.engine
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.webkit.GeolocationPermissions
+import android.webkit.WebChromeClient
+import androidx.core.content.ContextCompat
 import android.webkit.WebView
 import id.ohmymonev.core.siteprofile.DEFAULT_SITE_PROFILE
 import kotlin.coroutines.resume
@@ -21,6 +27,18 @@ internal object SessionWebView {
     fun trusted(url: String?): Boolean {
         val uri = url?.let { Uri.parse(it) } ?: return false
         return uri.scheme == "https" && uri.host == Uri.parse(origin).host && uri.port in listOf(-1, 443)
+    }
+
+    fun locationClient(context: Context) = object : WebChromeClient() {
+        override fun onGeolocationPermissionsShowPrompt(
+            origin: String?,
+            callback: GeolocationPermissions.Callback?,
+        ) {
+            val allowed = trusted(origin) &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED
+            callback?.invoke(origin, allowed, false)
+        }
     }
 
     /** Seed only the app-owned page at Monev's HTTPS origin before opening the real SPA. */

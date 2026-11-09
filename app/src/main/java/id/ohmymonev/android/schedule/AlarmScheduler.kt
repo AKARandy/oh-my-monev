@@ -39,7 +39,8 @@ object AlarmScheduler {
             true
         }
         val now = ZonedDateTime.now(ScheduleCalculator.asiaJakarta)
-        val fires = ScheduleCalculator.nextFires(now, WorkDaysStore(context).restrict(settings), horizonDays = 7)
+        val ready = FeatureReadiness.read(context).ready
+        val fires = if (ready) ScheduleCalculator.nextFires(now, WorkDaysStore(context).restrict(settings), horizonDays = 7) else emptyMap()
         // LEGACY_KEY_AUTOFILL tidak pernah dijadwalkan lagi; tetap di daftar agar
         // alarm warisan 21:00 dari versi lama ikut dibatalkan.
         for (key in listOf(ScheduleCalculator.KEY_REMINDER, LEGACY_KEY_AUTOFILL, ScheduleCalculator.KEY_ESCALATION)) {
@@ -55,7 +56,7 @@ object AlarmScheduler {
                 pending.cancel()
             }
         }
-        if (!settings.masterEnabled || !WorkDaysStore(context).isWorkday(now.toLocalDate())) {
+        if (!ready || !settings.masterEnabled || !settings.escalationEnabled || !WorkDaysStore(context).isWorkday(now.toLocalDate())) {
             for (code in listOf(REQUEST_CODE_RETRY, REQUEST_CODE_TEST)) {
                 val intent = Intent(context, AutoFillReceiver::class.java).setAction(AutoFillReceiver.ACTION_AUTOFILL)
                 PendingIntent.getBroadcast(context, code, intent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)?.let {
@@ -63,6 +64,10 @@ object AlarmScheduler {
                     it.cancel()
                 }
             }
+        }
+        if (!ready) {
+            lastArmError = "Periksa sesi dan izin aplikasi."
+            return ArmReport(emptyList(), listOfNotNull(lastArmError))
         }
         if (fires.isEmpty()) return ArmReport(emptyList(), emptyList())
         val armedKeys = mutableListOf<String>()

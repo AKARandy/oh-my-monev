@@ -14,6 +14,10 @@ import kotlinx.coroutines.runBlocking
 class EscalationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
+        if (!FeatureReadiness.read(context).ready) {
+            AlarmScheduler.armAll(context, settings)
+            return
+        }
         val today = java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
         if (!WorkDaysStore(context).isWorkday(today)) return
         if (!settings.masterEnabled || !settings.escalationEnabled || today.dayOfWeek !in settings.escalationDays) return

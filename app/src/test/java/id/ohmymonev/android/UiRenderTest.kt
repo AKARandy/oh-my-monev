@@ -98,8 +98,8 @@ class UiRenderTest {
                 compose.onAllNodesWithText(label).assertCountEquals(0)
             }
         }
-        if (!masterEnabled) {
-            compose.onNodeWithTag("master-toggle").assertIsEnabled()
+        if (!masterEnabled || name == "locked-schedule") {
+            compose.onNodeWithTag("master-toggle").assertIsNotEnabled()
             for (title in listOf("Pengingat", "Pengisian darurat")) {
                 compose.onNodeWithTag("alarm-toggle-$title").assertIsNotEnabled()
                 compose.onNodeWithTag("alarm-edit-$title").assertIsNotEnabled()
@@ -324,6 +324,19 @@ class UiRenderTest {
                 id.ohmymonev.android.ui.ReportStatus(status, true, {})
             }
         }
+    }
+
+
+    @Test fun indoT5DownloadProof() = capture("indot5-download-confirmation", "Unduh model IndoT5?") {
+        id.ohmymonev.android.ui.ModelActionDialog(false, {}, {})
+    }
+
+    @Test fun indoT5DeleteProof() = capture("indot5-delete-confirmation", "Hapus model IndoT5?") {
+        id.ohmymonev.android.ui.ModelActionDialog(true, {}, {})
+    }
+
+    @Test fun lockedScheduleProof() = capture("locked-schedule", "Buka Beranda atau Sesi") {
+        ScheduleTab()
     }
 
 }

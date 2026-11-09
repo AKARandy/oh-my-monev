@@ -129,7 +129,12 @@ object JsSnippets {
         return "(function(){var p=$payload;var b=null;var bs=document.querySelectorAll('button');" +
             "for(var i=0;i<bs.length;i++){if((bs[i].textContent||'').trim()===p.submitButtonLabel){b=bs[i];break;}}" +
             "if(b===null){for(var j=0;j<bs.length;j++){if((bs[j].textContent||'').indexOf(p.submitButtonLabel)!==-1){b=bs[j];break;}}}" +
-            "var clicked=false;if(b!==null){try{b.click();clicked=true;}catch(e){}}" +
-            "window.__ohmymonev_done=JSON.stringify({clicked:clicked});return window.__ohmymonev_done;})()"
+            "var blocked=b!==null&&(b.disabled||b.getAttribute('aria-disabled')==='true');" +
+            "var clicked=false;if(b!==null&&!blocked){try{b.click();clicked=true;}catch(e){}}" +
+            "window.__ohmymonev_done=JSON.stringify({clicked:clicked,blocked:blocked});return window.__ohmymonev_done;})()"
     }
+
+    fun submissionState(): String =
+        "(function(){return JSON.stringify({url:window.location.href,text:document.body?document.body.textContent:''});})()"
+
 }

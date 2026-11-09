@@ -53,6 +53,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import id.ohmymonev.android.data.AppStore
 import id.ohmymonev.android.data.ModelStore
+import id.ohmymonev.android.data.SessionRepository
+import id.ohmymonev.android.schedule.FeatureReadiness
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import id.ohmymonev.android.data.ReportTemplate
 import id.ohmymonev.android.engine.PreparedReportService
 import id.ohmymonev.android.schedule.AlarmScheduler
@@ -97,9 +104,30 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
     var editing by remember { mutableStateOf<AlarmId?>(null) }
     var editingTemplate by remember { mutableStateOf(false) }
     var template by remember { mutableStateOf<ReportTemplate?>(null) }
+    val session by remember { SessionRepository.get(context) }.state.collectAsState()
+    var permissions by remember { mutableStateOf(FeatureReadiness.read(context, false)) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) permissions = FeatureReadiness.read(context, false)
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    val readiness = permissions.copy(session = session.usable)
+    val ready = readiness.ready
+    LaunchedEffect(ready) {
+        if (!ready) {
+            editing = null
+            editingTemplate = false
+        }
+    }
+    var confirmDownload by remember { mutableStateOf(false) }
+    var confirmModelDelete by remember { mutableStateOf(false) }
     var modelReady by remember { mutableStateOf(false) }
     var modelProgress by remember { mutableStateOf<Int?>(null) }
     var modelBusy by remember { mutableStateOf(false) }
+    var modelDeleteError by remember { mutableStateOf<String?>(null) }
     var modelError by remember { mutableStateOf<String?>(null) }
     // Draf editor: hanya ditulis ke penyimpanan saat Simpan ditekan.
     var pendingSubmit by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -125,8 +153,10 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
     }
 
     fun save(update: (ScheduleSettings) -> ScheduleSettings) {
+        if (!ready || modelBusy) return
         scope.launch {
             saveMutex.withLock {
+                if (!FeatureReadiness.read(context).ready) return@withLock
                 val settings = update(loaded ?: return@withLock)
                 if (settings == loaded) return@withLock
                 store.save(settings)
@@ -153,6 +183,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Jadwal", style = MaterialTheme.typography.headlineMedium)
+            if (!ready) Text(readiness.missing() + ". Buka Beranda atau Sesi.")
             Text(
                 "Mengikuti hari kerja profil Monev (WIB).",
                 style = MaterialTheme.typography.bodyMedium,
@@ -170,7 +201,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Aktifkan semua fitur", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        if (!current.masterEnabled) "Jadwal nonaktif" else if (workingDays == null) "Hari kerja belum dimuat" else "Jadwal aktif",
+                        if (!current.masterEnabled) "Jadwal nonaktif" else if (!ready) "Jadwal dijeda" else if (workingDays == null) "Hari kerja belum dimuat" else "Jadwal aktif",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -178,6 +209,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 Switch(
                     modifier = Modifier.testTag("master-toggle"),
                     checked = current.masterEnabled,
+                    enabled = ready && !modelBusy,
                     onCheckedChange = { on ->
                         if (on) save { it.copy(masterEnabled = true) } else confirmMasterOff = true
                     },
@@ -190,8 +222,8 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             time = current.reminderTime,
             days = workingDays?.let { current.reminderDays intersect it } ?: current.reminderDays,
             enabled = current.reminderEnabled,
-            controlsEnabled = current.masterEnabled,
-            effective = current.reminderEnabled && current.masterEnabled,
+            controlsEnabled = ready && current.masterEnabled && !modelBusy,
+            effective = ready && current.reminderEnabled && current.masterEnabled,
             detail = "Memeriksa status laporan.",
             actionLabel = "Suara dan getar",
             onAction = {
@@ -207,26 +239,39 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             time = current.escalationTime,
             days = workingDays?.let { current.escalationDays intersect it } ?: current.escalationDays,
             enabled = current.escalationEnabled,
-            controlsEnabled = current.masterEnabled,
-            effective = current.escalationEnabled && current.masterEnabled,
+            controlsEnabled = ready && current.masterEnabled && !modelBusy,
+            effective = ready && current.escalationEnabled && current.masterEnabled,
             detail = when (current.escalationSource) {
                 ScheduleSettings.ContentSource.TEMPLATE ->
                     "Terpicu pada jam terjadwal bila laporan belum terkirim. Isian memakai templat Anda."
                 ScheduleSettings.ContentSource.AUTOMATIC ->
                     "Terpicu pada jam terjadwal bila belum terkirim. Isian melanjutkan laporan hari kerja sebelumnya (eksperimental)."
             },
-            onToggle = { on -> save { it.copy(escalationEnabled = on) } },
+            onToggle = { on ->
+                if (!on) save { it.copy(escalationEnabled = false) }
+                else if (current.escalationSource == ScheduleSettings.ContentSource.AUTOMATIC && !modelReady ||
+                    current.escalationSource == ScheduleSettings.ContentSource.TEMPLATE && template == null
+                ) editing = AlarmId.ESCALATION
+                else pendingSubmit = { save { it.copy(escalationEnabled = true) } }
+            },
         ) {
             editing = AlarmId.ESCALATION
         }
 
         TemplateCard(
             status = if (template == null) "Belum dibuat" else "Siap dipakai",
+            enabled = ready && !modelBusy,
             onOpen = { editingTemplate = true },
         )
+        if (modelReady) {
+            TextButton(enabled = ready && !modelBusy, onClick = { confirmModelDelete = true }) {
+                Text("Hapus model")
+            }
+        }
+        modelDeleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 
-    editing?.let { which ->
+    if (ready) editing?.let { which ->
         AlarmEditor(
             title = when (which) {
                 AlarmId.REMINDER -> "Pengingat"
@@ -252,25 +297,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             autoReady = modelReady && modelProgress == null,
             modelProgress = modelProgress,
             modelError = modelError,
-            onDownloadModel = {
-                if (!modelBusy) {
-                    modelBusy = true
-                    modelError = null
-                    modelProgress = 0
-                    scope.launch {
-                        try {
-                            ModelStore(context).download { percent -> modelProgress = percent }
-                            modelReady = true
-                            Toast.makeText(context, "Model terunduh", Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {
-                            modelError = e.message ?: "Unduhan gagal. Coba lagi."
-                        } finally {
-                            modelBusy = false
-                            modelProgress = null
-                        }
-                    }
-                }
-            },
+            onDownloadModel = { confirmDownload = true },
             onDismiss = { editing = null },
             onSave = { time, enabled, days, source ->
                 val persist: () -> Unit = {
@@ -293,7 +320,66 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
         )
     }
 
-    if (pendingAuto != null) {
+    if (ready && confirmDownload) {
+        ModelActionDialog(delete = false, onDismiss = { confirmDownload = false }, onConfirm = {
+                confirmDownload = false
+                if (!modelBusy && FeatureReadiness.read(context).ready) {
+                    modelBusy = true
+                    modelError = null
+                    modelProgress = 0
+                    scope.launch {
+                        try {
+                            ModelStore(context).download { percent ->
+                                withContext(Dispatchers.Main) { modelProgress = percent }
+                            }
+                            modelReady = true
+                            Toast.makeText(context, "Model terunduh", Toast.LENGTH_SHORT).show()
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            modelError = e.message ?: "Unduhan gagal. Coba lagi."
+                        } finally {
+                            modelBusy = false
+                            modelProgress = null
+                        }
+                    }
+                }
+            })
+    }
+
+    if (ready && confirmModelDelete) {
+        ModelActionDialog(delete = true, onDismiss = { confirmModelDelete = false }, onConfirm = {
+            confirmModelDelete = false
+            if (!modelBusy && FeatureReadiness.read(context).ready) {
+                modelBusy = true
+                modelDeleteError = null
+                scope.launch {
+                    try {
+                        PreparedReportService(context).deleteAutomaticModel {
+                            saveMutex.withLock {
+                                val latest = store.settingsOnce()
+                                if (latest.escalationSource == ScheduleSettings.ContentSource.AUTOMATIC) {
+                                    val disabled = latest.copy(escalationEnabled = false)
+                                    store.save(disabled)
+                                    loaded = disabled
+                                    AlarmScheduler.armAll(context, disabled)
+                                }
+                            }
+                        }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        modelDeleteError = e.message ?: "Model tidak dapat dihapus."
+                    } finally {
+                        modelReady = withContext(Dispatchers.IO) { ModelStore(context).present() }
+                        modelBusy = false
+                    }
+                }
+            }
+        })
+    }
+
+    if (ready && pendingAuto != null) {
         AlertDialog(
             onDismissRequest = { pendingAuto = null },
             title = { Text("Pakai otomatis?") },
@@ -314,7 +400,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
         )
     }
 
-    if (pendingSubmit != null) {
+    if (ready && pendingSubmit != null) {
         AlertDialog(
             onDismissRequest = { pendingSubmit = null },
             title = { Text("Nyalakan kirim otomatis?") },
@@ -336,7 +422,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
         )
     }
 
-    if (confirmMasterOff) {
+    if (ready && confirmMasterOff) {
         AlertDialog(
             onDismissRequest = { confirmMasterOff = false },
             title = { Text("Matikan kedua fitur?") },
@@ -357,7 +443,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
         )
     }
 
-    if (editingTemplate) {
+    if (ready && editingTemplate) {
         TemplateEditor(
             current = template,
             clearBlocked = current.escalationSource == ScheduleSettings.ContentSource.TEMPLATE,
@@ -460,14 +546,14 @@ internal fun AlarmEditor(
                     if (source == ScheduleSettings.ContentSource.AUTOMATIC && !autoReady) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Text(
-                            "Model otomatis belum diunduh. Ukuran ~500 MB.",
+                            "Ukuran unduhan model: 845 MB.",
                             fontSize = 18.sp,
                             lineHeight = 26.sp,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         when {
                             modelProgress != null -> Text(
-                                "Mengunduh… $modelProgress%",
+                                if (modelProgress == 100) "Memeriksa model…" else "Mengunduh… $modelProgress%",
                                 fontSize = 18.sp,
                                 lineHeight = 26.sp,
                                 color = MaterialTheme.colorScheme.primary,
@@ -475,7 +561,7 @@ internal fun AlarmEditor(
                             onDownloadModel != null -> Button(
                                 onClick = onDownloadModel,
                                 modifier = Modifier.fillMaxWidth().testTag("download-model"),
-                            ) { Text("Unduh model", fontSize = 18.sp) }
+                            ) { Text(if (modelError == null) "Unduh model" else "Coba lagi", fontSize = 18.sp) }
                         }
                         modelError?.let {
                             Text(it, fontSize = 18.sp, lineHeight = 26.sp, color = MaterialTheme.colorScheme.error)
@@ -498,7 +584,7 @@ private enum class AlarmId { REMINDER, ESCALATION }
 
 /** Kartu ringkas templat: status satu baris + tombol Atur (editor dalam dialog). */
 @Composable
-private fun TemplateCard(status: String, onOpen: () -> Unit) {
+private fun TemplateCard(status: String, enabled: Boolean, onOpen: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().testTag("template-card"),
         shape = RoundedCornerShape(20.dp),
@@ -513,7 +599,7 @@ private fun TemplateCard(status: String, onOpen: () -> Unit) {
                 Text("Templat laporan", style = MaterialTheme.typography.titleMedium)
                 Text(status, fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TextButton(onClick = onOpen, modifier = Modifier.testTag("template-edit")) {
+            TextButton(onClick = onOpen, enabled = enabled, modifier = Modifier.testTag("template-edit")) {
                 Text("Atur", fontSize = 18.sp)
             }
         }
@@ -752,4 +838,19 @@ private fun SourceOption(label: String, selected: Boolean, enabled: Boolean = tr
         RadioButton(selected = selected, onClick = null, enabled = enabled)
         Text(label, modifier = Modifier.padding(start = 8.dp).weight(1f), fontSize = 20.sp, lineHeight = 28.sp, color = MaterialTheme.colorScheme.onSurface)
     }
+}
+
+
+@Composable
+internal fun ModelActionDialog(delete: Boolean, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (delete) "Hapus model IndoT5?" else "Unduh model IndoT5?") },
+        text = {
+            Text(if (delete) "Aplikasi menghapus model dan sisa unduhan. Jika sumbernya Otomatis, Pengisian darurat dimatikan."
+                else "Aplikasi akan mengunduh IndoT5 FP16 (845 MB) dari GitHub. Model ini membantu menulis ulang kalimat aktivitas dari laporan sebelumnya. Aplikasi menjalankan model di ponsel. Model dapat mengubah makna. Periksa draf sebelum mengirim.")
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(if (delete) "Hapus" else "Unduh") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } },
+    )
 }

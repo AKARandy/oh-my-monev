@@ -27,6 +27,7 @@ class ScheduleCalculatorTest {
     ) = ScheduleSettings(
         reminderTime = reminder,
         escalationTime = escalation,
+        escalationEnabled = true,
         reminderDays = activeDays,
         escalationDays = activeDays,
     )
@@ -39,6 +40,7 @@ class ScheduleCalculatorTest {
         val s = ScheduleSettings(
             reminderDays = setOf(DayOfWeek.MONDAY),
             escalationDays = setOf(DayOfWeek.FRIDAY),
+            escalationEnabled = true,
         )
         val fires = ScheduleCalculator.nextFires(at(normalDay, 8, 0), s)
         assertEquals(at(normalDay, 20, 0), fires.getValue(ScheduleCalculator.KEY_REMINDER))

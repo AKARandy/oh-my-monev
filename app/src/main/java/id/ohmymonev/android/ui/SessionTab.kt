@@ -113,6 +113,9 @@ fun SessionTab(modifier: Modifier = Modifier) {
                         isScrollbarFadingEnabled = false
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
+                        @Suppress("DEPRECATION")
+                        settings.setGeolocationEnabled(true)
+                        webChromeClient = SessionWebView.locationClient(ctx)
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                                 if (request.isForMainFrame && request.url.host == "account.kemnaker.go.id" && request.url.path == "/auth/logout") {

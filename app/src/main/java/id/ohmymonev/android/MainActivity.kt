@@ -2,6 +2,8 @@ package id.ohmymonev.android
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
 import id.ohmymonev.android.ui.AppRoot
@@ -17,6 +19,11 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    override fun onResume() {
+        super.onResume()
+        lifecycleScope.launch { id.ohmymonev.android.schedule.FeatureReadiness.rearm(applicationContext) }
+    }
+
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         openReminderSite(intent)

@@ -31,7 +31,7 @@ data class ScheduleSettings(
     val reminderEnabled: Boolean = true,
 
     /** Pengisian darurat boleh jalan? Selalu isi lalu kirim. */
-    val escalationEnabled: Boolean = true,
+    val escalationEnabled: Boolean = false,
 
     /** Sumber isian pengisian darurat: templat pengguna atau lanjutan otomatis (eksperimen). Wajib pilih satu. */
     val escalationSource: ContentSource = ContentSource.TEMPLATE,

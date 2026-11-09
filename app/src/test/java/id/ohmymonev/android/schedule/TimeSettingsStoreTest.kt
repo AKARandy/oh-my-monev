@@ -42,7 +42,7 @@ class TimeSettingsStoreTest {
         val s = store.settingsOnce()
         assertEquals(ScheduleSettings.ContentSource.TEMPLATE, s.escalationSource)
         assertEquals(java.time.LocalTime.of(22, 30), s.escalationTime)
-        assertTrue(s.escalationEnabled)
+        org.junit.Assert.assertFalse(s.escalationEnabled)
     }
 
     @Test fun legacySharedDaysCarryOverToBothFeatures() = runBlocking {
@@ -108,4 +108,10 @@ class TimeSettingsStoreTest {
         store.save(store.settingsOnce().copy(masterEnabled = true))
         assertEquals(original, store.settingsOnce())
     }
+
+    @Test fun explicitlyEnabledEmergencySurvivesReload() = runBlocking {
+        store.save(ScheduleSettings(escalationEnabled = true))
+        assertTrue(store.settingsOnce().escalationEnabled)
+    }
+
 }

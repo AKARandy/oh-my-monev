@@ -14,7 +14,7 @@ class ReminderReceiver : BroadcastReceiver() {
         val date = intent.getStringExtra("date")?.let(LocalDate::parse)
             ?: LocalDate.now(ScheduleCalculator.asiaJakarta)
         val calendar = WorkDaysStore(context)
-        if (settings.masterEnabled && settings.reminderEnabled &&
+        if (FeatureReadiness.read(context).ready && settings.masterEnabled && settings.reminderEnabled &&
             date.dayOfWeek in settings.reminderDays && calendar.isWorkday(date)
         ) {
             ReminderController.enqueue(context, calendar.lastAccount(), date)
