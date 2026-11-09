@@ -61,4 +61,28 @@ class ReminderNotificationTest {
             "Tidak ada koneksi internet. Aplikasi akan memeriksa lagi saat internet tersedia.")
         capture("delayed", "Laporan 8 November 2026 belum terkirim.", "Periksa laporan di situs.")
     }
+
+    @Test fun missingReportVibratesWithoutAnInitialDelay() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        Shadows.shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val manager = app.getSystemService(NotificationManager::class.java)
+        Shadows.shadowOf(manager).setNotificationPolicyAccessGranted(true)
+        manager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+        val vibrator = Shadows.shadowOf(app.getSystemService(android.os.Vibrator::class.java))
+        vibrator.setHasVibrator(true)
+        val now = java.time.ZonedDateTime.parse("2026-11-09T20:00:00+07:00[Asia/Jakarta]")
+        val controller = ReminderController(app)
+        try {
+            controller.deliver("fixture/2026-11-09", now.toLocalDate(),
+                id.ohmymonev.core.enginecore.TodayState.UNFILLED, now)
+            Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            assertTrue(vibrator.isVibrating)
+            assertEquals("Laporan hari ini belum terkirim.",
+                manager.activeNotifications.single().notification.extras.getCharSequence(Notification.EXTRA_TITLE))
+        } finally {
+            controller.close()
+        }
+        assertFalse(vibrator.isVibrating)
+    }
+
 }

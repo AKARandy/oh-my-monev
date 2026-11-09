@@ -70,4 +70,26 @@ class WorkDaysStoreTest {
             org.robolectric.Shadows.shadowOf(app).nextStartedService.component?.className)
         ReminderController.clear(context)
     }
+
+    @Test fun legacyWorkdayQueuesOriginalDateWithoutAnAccount() = kotlinx.coroutines.runBlocking {
+        val settings = ScheduleSettings()
+        TimeSettingsStore(context).save(settings)
+        val date = LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta).minusDays(1)
+        val profileCache = context.getSharedPreferences("work_days", Context.MODE_PRIVATE)
+        profileCache.edit().putString("days", DayOfWeek.entries.joinToString(",") { it.name })
+            .remove("account").commit()
+        assertNull(calendar.lastAccount())
+
+        ReminderReceiver().onReceive(context, android.content.Intent(ReminderReceiver.ACTION_REMINDER)
+            .putExtra("date", date.toString()))
+
+        val queued = context.getSharedPreferences("reminder_checks", Context.MODE_PRIVATE)
+        assertTrue(ReminderController.hasPending(context))
+        assertEquals(date.toString(), queued.all.keys.single().substringAfterLast('/'))
+        val alarms = org.robolectric.Shadows.shadowOf(context.getSystemService(android.app.AlarmManager::class.java))
+        val next = requireNotNull(alarms.peekNextScheduledAlarm())
+        assertTrue(next.triggerAtTime > System.currentTimeMillis())
+        ReminderController.clear(context)
+    }
+
 }

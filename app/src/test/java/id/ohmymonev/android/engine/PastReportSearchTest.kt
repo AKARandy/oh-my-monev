@@ -90,7 +90,13 @@ class PastReportSearchTest {
         }
         assertEquals(TodayState.FILLED, state("SUBMITTED"))
         assertEquals(TodayState.UNFILLED, state("DRAFT"))
+        val resolved = probe.checkReminder(date, null, api())
+        assertEquals(TodayState.UNFILLED, resolved.today)
+        assertEquals("participant", resolved.account)
+        assertNotNull(resolved.credentialVersion)
+        assertTrue(calls.any { it.contains("end_date=2026-11-06") })
         assertEquals(TodayState.UNKNOWN, state("unexpected"))
+        assertEquals(TodayState.UNKNOWN, probe.checkReminder(date, null, api()).today)
         assertFalse(calls.contains("/users/me/home"))
         assertEquals("participant", probe.checkReminder(date, "another-account", api()).account)
         expired = true

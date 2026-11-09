@@ -27,7 +27,7 @@ class SiteStatusProbe(private val context: Context) {
 
     internal suspend fun checkReminder(
         date: LocalDate,
-        account: String,
+        account: String?,
         api: MonevApiClient = MonevApiClient(context),
     ): SiteStatus = read(date, account, api)
 

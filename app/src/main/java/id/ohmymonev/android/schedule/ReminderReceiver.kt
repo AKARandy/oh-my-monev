@@ -17,7 +17,7 @@ class ReminderReceiver : BroadcastReceiver() {
         if (settings.masterEnabled && settings.reminderEnabled &&
             date.dayOfWeek in settings.reminderDays && calendar.isWorkday(date)
         ) {
-            calendar.lastAccount()?.let { ReminderController.enqueue(context, it, date) }
+            ReminderController.enqueue(context, calendar.lastAccount(), date)
             GuardService.tryEnsure(context)
         }
         if (settings.masterEnabled) AlarmScheduler.armAll(context, settings)

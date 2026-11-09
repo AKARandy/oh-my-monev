@@ -11,6 +11,7 @@ import android.net.NetworkCapabilities
 import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.util.Log
 import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.engine.SiteStatusProbe
 import id.ohmymonev.core.enginecore.TodayState
@@ -135,27 +136,39 @@ internal class ReminderController(private val context: Context) {
             val due = due(key)
             if (due < 0 || due > now) continue
             val date = LocalDate.parse(key.substringAfterLast('/'))
-            val account = key.substringBeforeLast('/')
+            val account = key.substringBeforeLast('/').takeUnless { it == UNBOUND }
             if (!online) {
-                warn(key, "Tidak ada koneksi internet. Aplikasi akan memeriksa lagi saat internet tersedia.")
+                warn(key, "offline", "Tidak ada koneksi internet. Aplikasi akan memeriksa lagi saat internet tersedia.")
                 continue
             }
             if (!sessions.state.value.hasToken) {
-                warn(key, "Sesi berakhir. Login kembali.")
+                warn(key, "no_session", "Sesi berakhir. Login kembali.")
                 continue
             }
-            val result = withTimeoutOrNull(45_000) { SiteStatusProbe(context).checkReminder(date, account) }
+            val result = try {
+                withTimeoutOrNull(45_000) { SiteStatusProbe(context).checkReminder(date, account) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
             if (!enabled || this.due(key) != due ||
                 !TimeSettingsStore(context).settingsOnce().let { it.masterEnabled && it.reminderEnabled }
             ) continue
-            if (result?.credentialVersion != null && result.credentialVersion != sessions.state.value.version) continue
+            if (result?.credentialVersion != null && result.credentialVersion != sessions.state.value.version) {
+                warn(key, "session_changed", "Sesi berubah. Aplikasi akan memeriksa lagi.")
+                rerun = true
+                continue
+            }
             when {
-                result?.account != null && result.account != account -> {
+                account != null && result?.account != null && result.account != account -> {
+                    Log.i(TAG, "Check failed date=$date reason=account_changed")
                     preferences.edit().remove(key).apply()
                     notifications.cancel(key)
                 }
-                result?.today == null || result.today == TodayState.UNKNOWN -> {
-                    warn(key, result?.error ?: "Situs tidak merespons. Aplikasi akan memeriksa lagi.")
+                result?.sessionActive != true || result.account == null ||
+                    result.credentialVersion == null || result.today == TodayState.UNKNOWN -> {
+                    warn(key, "status_unverified", result?.error ?: "Situs tidak merespons. Aplikasi akan memeriksa lagi.")
                     if (sessions.state.value.hasToken) {
                         val attempt = failures.getOrDefault(key, 0)
                         val delay = listOf(1, 5, 15)[attempt.coerceAtMost(2)] * 60_000L
@@ -164,10 +177,15 @@ internal class ReminderController(private val context: Context) {
                     }
                 }
                 else -> {
-                    save(key, DONE)
+                    val resolvedKey = "${result.account}/$date"
+                    val alreadyHandled = resolvedKey != key && preferences.contains(resolvedKey)
+                    preferences.edit().putLong(key, DONE).apply {
+                        if (!alreadyHandled) putLong(resolvedKey, DONE)
+                    }.apply()
                     failures.remove(key)
                     warned.removeAll { it.startsWith("$key:") }
-                    deliver(key, date, result.today)
+                    if (resolvedKey != key) notifications.cancel(key)
+                    if (!alreadyHandled) deliver(resolvedKey, date, result.today)
                 }
             }
         }
@@ -178,13 +196,21 @@ internal class ReminderController(private val context: Context) {
         }
     }
 
-    private fun warn(key: String, detail: String) {
+    private fun warn(key: String, reason: String, detail: String) {
         val marker = "$key:$detail"
-        if (warned.add(marker)) notifications.post(key, "Status laporan belum dapat diperiksa.", detail)
+        if (warned.add(marker)) {
+            Log.i(TAG, "Check failed date=${key.substringAfterLast('/')} reason=$reason")
+            notifications.post(key, "Status laporan belum dapat diperiksa.", detail)
+        }
     }
 
-    private fun deliver(key: String, date: LocalDate, state: TodayState) {
-        val now = ZonedDateTime.now(ScheduleCalculator.asiaJakarta)
+    internal fun deliver(
+        key: String,
+        date: LocalDate,
+        state: TodayState,
+        now: ZonedDateTime = ZonedDateTime.now(ScheduleCalculator.asiaJakarta),
+    ) {
+        Log.i(TAG, "Check complete date=$date state=$state")
         val today = date == now.toLocalDate()
         val day = if (today) "hari ini" else date.format(
             java.time.format.DateTimeFormatter.ofPattern("d MMMM yyyy", java.util.Locale.forLanguageTag("id")))
@@ -197,6 +223,7 @@ internal class ReminderController(private val context: Context) {
                 if (today && now.toLocalTime() < LocalTime.of(23, 59)) {
                     startAlarm(key, now)
                 } else {
+                    Log.i(TAG, "Alarm suppressed date=$date reason=deadline_passed")
                     notifications.post(key, "Laporan $day belum terkirim.", "Periksa laporan di situs.")
                 }
             }
@@ -209,7 +236,10 @@ internal class ReminderController(private val context: Context) {
         stopAlarm()
         val channel = notifications.alarmChannel()
         if (!notifications.post(key, "Laporan hari ini belum terkirim.",
-                "Buka situs dan kirim laporan sebelum 23.59 WIB.", alarm = true)) return
+                "Buka situs dan kirim laporan sebelum 23.59 WIB.", alarm = true)) {
+            Log.i(TAG, "Alarm suppressed date=${now.toLocalDate()} reason=notification_blocked")
+            return
+        }
         playing = key
         val duration = java.time.Duration.between(now, now.withHour(23).withMinute(59).withSecond(0).withNano(0))
             .toMillis().coerceIn(1, 300_000)
@@ -218,25 +248,45 @@ internal class ReminderController(private val context: Context) {
             .apply { acquire(duration) }
         ringJob = scope.launch {
             try {
-                // Let the channel post the initial alert. Repeat only while Android allows alarms.
                 val audio = context.getSystemService(android.media.AudioManager::class.java)
                 val end = android.os.SystemClock.elapsedRealtime() + duration
-                delay(duration.coerceAtMost(4_000))
+                var firstCycle = true
                 while (android.os.SystemClock.elapsedRealtime() < end) {
                     val policy = manager.currentInterruptionFilter
-                    if (policy == NotificationManager.INTERRUPTION_FILTER_ALL ||
+                    val allowed = policy == NotificationManager.INTERRUPTION_FILTER_ALL ||
                         policy == NotificationManager.INTERRUPTION_FILTER_ALARMS
-                    ) {
-                        if (channel.sound != null && audio.getStreamVolume(android.media.AudioManager.STREAM_ALARM) > 0) {
-                            ringtone = RingtoneManager.getRingtone(context, channel.sound)?.apply {
-                                audioAttributes = channel.audioAttributes
-                                play()
+                    val sound = allowed && channel.sound != null &&
+                        audio.getStreamVolume(android.media.AudioManager.STREAM_ALARM) > 0
+                    val vibrate = allowed && channel.shouldVibrate() && vibrator.hasVibrator()
+                    if (sound) {
+                        try {
+                            ringtone = RingtoneManager.getRingtone(context, channel.sound)?.also {
+                                it.audioAttributes = channel.audioAttributes
+                                it.play()
                             }
+                        } catch (_: RuntimeException) {
+                            Log.w(TAG, "Alarm sound failed date=${now.toLocalDate()}")
                         }
-                        if (channel.shouldVibrate() && vibrator.hasVibrator()) {
+                    }
+                    var vibrationRequested = false
+                    if (vibrate) {
+                        try {
                             vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 300, 500), -1),
                                 android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_ALARM).build())
+                            vibrationRequested = true
+                        } catch (_: RuntimeException) {
+                            Log.w(TAG, "Alarm vibration failed date=${now.toLocalDate()}")
                         }
+                    }
+                    if (firstCycle) {
+                        val date = now.toLocalDate()
+                        when {
+                            ringtone != null || vibrationRequested ->
+                                Log.i(TAG, "Alarm started date=$date sound=${ringtone != null} vibration=$vibrationRequested")
+                            !allowed -> Log.i(TAG, "Alarm suppressed date=$date reason=interruption_filter")
+                            else -> Log.i(TAG, "Alarm suppressed date=$date reason=no_enabled_output")
+                        }
+                        firstCycle = false
                     }
                     delay((end - android.os.SystemClock.elapsedRealtime()).coerceIn(1, 4_000))
                     ringtone?.stop()
@@ -282,12 +332,20 @@ internal class ReminderController(private val context: Context) {
 
     companion object {
         private const val DONE = -1L
+        private const val UNBOUND = "@unbound"
+        private const val TAG = "MonevReminder"
         private fun store(context: Context) = context.getSharedPreferences("reminder_checks", Context.MODE_PRIVATE)
 
-        fun enqueue(context: Context, account: String, date: LocalDate) {
+        fun enqueue(context: Context, account: String?, date: LocalDate) {
             val store = store(context)
-            val key = "$account/$date"
-            if (!store.contains(key)) store.edit().putLong(key, 0).commit()
+            val key = "${account ?: UNBOUND}/$date"
+            if (store.contains(key) || store.getLong("$UNBOUND/$date", DONE) >= 0) return
+            if (store.edit().putLong(key, 0).commit()) {
+                val reason = if (account == null) "resolve_account" else "scheduled"
+                Log.i(TAG, "Check queued date=$date reason=$reason")
+            } else {
+                Log.w(TAG, "Check failed date=$date reason=queue_write")
+            }
         }
 
         fun hasPending(context: Context) = store(context).all.values.any { it is Long && it >= 0 }
