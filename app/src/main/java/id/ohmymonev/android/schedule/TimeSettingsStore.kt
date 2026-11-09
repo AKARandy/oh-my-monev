@@ -69,7 +69,7 @@ class TimeSettingsStore internal constructor(private val dataStore: DataStore<Pr
             prefs[Keys.ESCALATION_SOURCE] = settings.escalationSource.name
             prefs[Keys.MASTER_ENABLED] = settings.masterEnabled
             prefs[Keys.REMINDER_ENABLED] = settings.reminderEnabled
-            prefs[Keys.ESCALATION_ENABLED] = settings.escalationEnabled
+            prefs[Keys.ESCALATION_ENABLED] = false
         }
     }
 
@@ -90,7 +90,8 @@ class TimeSettingsStore internal constructor(private val dataStore: DataStore<Pr
                 escalationSource = prefs[Keys.ESCALATION_SOURCE]?.toSourceOrNull() ?: DEFAULT.escalationSource,
                 masterEnabled = prefs[Keys.MASTER_ENABLED] ?: DEFAULT.masterEnabled,
                 reminderEnabled = prefs[Keys.REMINDER_ENABLED] ?: DEFAULT.reminderEnabled,
-                escalationEnabled = prefs[Keys.ESCALATION_ENABLED] ?: DEFAULT.escalationEnabled,
+                // Disable saved emergency settings in the stable release.
+                escalationEnabled = false,
             )
         }
 

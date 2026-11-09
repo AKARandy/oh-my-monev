@@ -25,8 +25,8 @@ android {
         applicationId = "id.ohmymonev.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "0.1.15"
+        versionCode = 16
+        versionName = "1.0.0"
         // Ponsel nyata semuanya ARM64; ABI lain dibuang sesuai keputusan pemilik.
         ndk { abiFilters += listOf("arm64-v8a") }
     }
@@ -54,7 +54,10 @@ android {
         }
         release {
             isMinifyEnabled = false
-            if (keystorePropsFile.exists()) {
+            if (providers.gradleProperty("useExistingDistributionKey").orNull == "true") {
+                // Keep upgrade compatibility with the APKs previously distributed on GitHub.
+                signingConfig = signingConfigs.getByName("debug")
+            } else if (keystorePropsFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
@@ -72,6 +75,15 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+        }
+    }
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.outputs.forEach {
+            it.versionCode.set(15)
+            it.versionName.set("0.1.16")
         }
     }
 }

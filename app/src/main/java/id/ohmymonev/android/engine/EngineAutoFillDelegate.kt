@@ -3,6 +3,7 @@ package id.ohmymonev.android.engine
 import android.app.Notification
 import android.content.Context
 import android.util.Log
+import id.ohmymonev.android.BuildConfig
 import androidx.core.app.NotificationManagerCompat
 import id.ohmymonev.android.data.AppStore
 import id.ohmymonev.android.data.SessionRepository
@@ -85,7 +86,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                     return@launch
                 }
                 val engine = WebViewEngine(appContext, DEFAULT_SITE_PROFILE, object : WebViewEngine.Callbacks {
-                    override fun onEvent(message: String) { Log.d("ohmymonev", message) }
+                    override fun onEvent(message: String) { if (BuildConfig.DEBUG) Log.d("ohmymonev", message) }
 
                     override fun onRunFinished(record: RunRecord) {
                         scope.launch {
@@ -94,7 +95,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
-                                Log.w("ohmymonev", "Pemeriksaan setelah kirim gagal", e)
+                                if (BuildConfig.DEBUG) Log.w("ohmymonev", "Pemeriksaan setelah kirim gagal", e)
                                 null
                             }
                             complete(if (verified?.account == request.account && verified.today == TodayState.FILLED)
@@ -108,7 +109,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.w("ohmymonev", "Pengiriman manual gagal", e)
+                if (BuildConfig.DEBUG) Log.w("ohmymonev", "Pengiriman manual gagal", e)
                 complete("Pengiriman belum dapat dikonfirmasi. Cek ulang status laporan.")
             }
         }
@@ -135,7 +136,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
         // Kasus malam tanpa internet: berhenti cepat, catat, dan andalkan tangga coba ulang.
         if (!NetworkStatus.isOnline(appContext)) {
-            Log.d("ohmymonev", "TIDAK ADA INTERNET: putaran dibatalkan")
+            if (BuildConfig.DEBUG) Log.d("ohmymonev", "TIDAK ADA INTERNET: putaran dibatalkan")
             val record = RunRecord(
                 date = todayIso,
                 attemptedAtISO = nowIso(),
@@ -218,7 +219,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
         store: AppStore,
         todayIso: String,
     ) {
-        Log.d("ohmymonev", "BENCH: mulai putaran uji mesin di halaman contoh")
+        if (BuildConfig.DEBUG) Log.d("ohmymonev", "BENCH: mulai putaran uji mesin di halaman contoh")
         val engine = WebViewEngine(
             appContext,
             BenchSite.profile,
@@ -245,7 +246,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                 store.appendRecord(record)
                 if (bench) {
                     // Bukti uji mesin: catat hasil, jangan masukkan ke riwayat dan jangan beri notifikasi.
-                    Log.d("ohmymonev", "BENCH selesai: ${record.outcome} (${record.detail})")
+                    if (BuildConfig.DEBUG) Log.d("ohmymonev", "BENCH selesai: ${record.outcome} (${record.detail})")
                     AutoFillService.finished(appContext)
                     return@launch
                 }
@@ -272,7 +273,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
                     EngineOutcome.DAY_NOT_FILLABLE ->
                         // Hari sudah terisi atau libur: jangan pernah berbunyi "belum terkirim".
-                        Log.d("ohmymonev", "Hari ini tidak perlu diisi (sudah terisi atau libur).")
+                        if (BuildConfig.DEBUG) Log.d("ohmymonev", "Hari ini tidak perlu diisi (sudah terisi atau libur).")
 
                     else -> {
                         post(factory, NotificationFactory.NOTIF_ID_ESCALATION, factory.escalation())
@@ -284,7 +285,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
         }
 
         override fun onEvent(message: String) {
-            Log.d("ohmymonev", message)
+            if (BuildConfig.DEBUG) Log.d("ohmymonev", message)
         }
     }
 

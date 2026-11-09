@@ -392,7 +392,7 @@ fun HomeTab(
                 ScheduleStatus(armedState, onCheck = { refreshArmed() })
 
                 var confirmSkip by remember { mutableStateOf(false) }
-                if (settings?.masterEnabled == true && tonightSkipped) {
+                if (settings?.masterEnabled == true && settings?.escalationEnabled == true && tonightSkipped) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Text(
                         "Dijeda untuk malam ini.",
@@ -405,7 +405,7 @@ fun HomeTab(
                             tonightSkipped = false
                         }
                     }) { Text("Nyalakan lagi") }
-                } else if (settings?.masterEnabled == true) {
+                } else if (settings?.masterEnabled == true && settings?.escalationEnabled == true) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     TextButton(enabled = ready, onClick = { confirmSkip = true }) {
                         Text("Jeda malam ini", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -472,17 +472,19 @@ fun HomeTab(
         LastRunRow(lastRecord)
         TextButton(onClick = { infoExpanded = !infoExpanded }) { Text("Tentang aplikasi", style = MaterialTheme.typography.bodyMedium) }
         if (infoExpanded) DisclaimerCard()
-        TextButton(onClick = { diagnosticsExpanded = !diagnosticsExpanded }) {
-            Text(if (diagnosticsExpanded) "Tutup alat pengujian" else "Alat pengujian")
-        }
-        if (diagnosticsExpanded) {
-            Text("Uji mesin memakai halaman tiruan. Tes alarm memakai pengaturan Pengisian dan sesi aktif.", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(
-                onClick = { AutoFillService.startBench(context); running = true },
-                enabled = ready && !running,
-            ) { Text("Uji mesin") }
-            TextButton(enabled = ready, onClick = { AlarmScheduler.quickFireForTest(context, 90) }) {
-                Text("Tes alarm 90 detik")
+        if (BuildConfig.DEBUG) {
+            TextButton(onClick = { diagnosticsExpanded = !diagnosticsExpanded }) {
+                Text(if (diagnosticsExpanded) "Tutup alat pengujian" else "Alat pengujian")
+            }
+            if (diagnosticsExpanded) {
+                Text("Uji mesin memakai halaman tiruan. Tes alarm Pengisian darurat belum tersedia.", style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(
+                    onClick = { AutoFillService.startBench(context); running = true },
+                    enabled = ready && !running,
+                ) { Text("Uji mesin") }
+                TextButton(enabled = ready && settings?.escalationEnabled == true, onClick = { AlarmScheduler.quickFireForTest(context, 90) }) {
+                    Text("Tes alarm 90 detik")
+                }
             }
         }
 

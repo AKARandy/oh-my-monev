@@ -49,13 +49,24 @@ class AlarmSchedulerTest {
         assertEquals(1, shadowOf(alarms).scheduledAlarms.size)
     }
 
-    @Test fun masterOffCancelsNormalRetryAndTestAlarmsOnly() {
+    @Test fun stableUpgradeCancelsEmergencyAndRejectsStaleTriggers() = kotlinx.coroutines.runBlocking {
         AlarmScheduler.armAll(context, ScheduleSettings(escalationEnabled = true))
+        for (code in listOf(21, 99)) {
+            val intent = android.content.Intent(context, AutoFillReceiver::class.java)
+                .setAction(AutoFillReceiver.ACTION_AUTOFILL)
+            val pending = android.app.PendingIntent.getBroadcast(context, code, intent, android.app.PendingIntent.FLAG_IMMUTABLE)
+            alarms.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 120_000, pending)
+        }
+        assertEquals(4, shadowOf(alarms).scheduledAlarms.size)
+        val stable = TimeSettingsStore(context).settingsOnce()
+        assertEquals(listOf("reminder"), AlarmScheduler.armAll(context, stable).armedKeys)
+        assertEquals(1, shadowOf(alarms).scheduledAlarms.size)
+        AutoFillReceiver().onReceive(context, android.content.Intent(AutoFillReceiver.ACTION_AUTOFILL))
+        EscalationReceiver().onReceive(context, android.content.Intent(EscalationReceiver.ACTION_ESCALATION))
+        org.junit.Assert.assertNull(shadowOf(context.applicationContext as Application).nextStartedService)
         AlarmScheduler.scheduleRetry(context, java.time.ZonedDateTime.now().plusMinutes(5))
         AlarmScheduler.quickFireForTest(context)
-        assertEquals(4, shadowOf(alarms).scheduledAlarms.size)
-        AlarmScheduler.ensureArmed(context, ScheduleSettings(masterEnabled = false))
-        assertTrue(shadowOf(alarms).scheduledAlarms.isEmpty())
+        assertEquals(1, shadowOf(alarms).scheduledAlarms.size)
     }
 
     @Test fun clockDetailsOpenTheAppInsteadOfRunningAReceiver() {

@@ -238,25 +238,13 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             title = "Pengisian darurat",
             time = current.escalationTime,
             days = workingDays?.let { current.escalationDays intersect it } ?: current.escalationDays,
-            enabled = current.escalationEnabled,
-            controlsEnabled = ready && current.masterEnabled && !modelBusy,
-            effective = ready && current.escalationEnabled && current.masterEnabled,
-            detail = when (current.escalationSource) {
-                ScheduleSettings.ContentSource.TEMPLATE ->
-                    "Terpicu pada jam terjadwal bila laporan belum terkirim. Isian memakai templat Anda."
-                ScheduleSettings.ContentSource.AUTOMATIC ->
-                    "Terpicu pada jam terjadwal bila belum terkirim. Isian melanjutkan laporan hari kerja sebelumnya (eksperimental)."
-            },
-            onToggle = { on ->
-                if (!on) save { it.copy(escalationEnabled = false) }
-                else if (current.escalationSource == ScheduleSettings.ContentSource.AUTOMATIC && !modelReady ||
-                    current.escalationSource == ScheduleSettings.ContentSource.TEMPLATE && template == null
-                ) editing = AlarmId.ESCALATION
-                else pendingSubmit = { save { it.copy(escalationEnabled = true) } }
-            },
-        ) {
-            editing = AlarmId.ESCALATION
-        }
+            enabled = false,
+            controlsEnabled = false,
+            effective = false,
+            detail = "Pengisian darurat belum tersedia.",
+            onToggle = {},
+            onOpen = {},
+        )
 
         TemplateCard(
             status = if (template == null) "Belum dibuat" else "Siap dipakai",

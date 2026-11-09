@@ -108,7 +108,8 @@ object AlarmScheduler {
     /** Alarm uji cepat: autofill penuh menyala [inSeconds] dari sekarang. */
     @Synchronized
     fun quickFireForTest(context: Context, inSeconds: Int = 90) {
-        if (!kotlinx.coroutines.runBlocking { TimeSettingsStore(context).settingsOnce() }.masterEnabled) return
+        val settings = kotlinx.coroutines.runBlocking { TimeSettingsStore(context).settingsOnce() }
+        if (!settings.masterEnabled || !settings.escalationEnabled) return
         val am = context.getSystemService(AlarmManager::class.java) ?: return
         val intent = Intent(context, AutoFillReceiver::class.java)
             .setAction(AutoFillReceiver.ACTION_AUTOFILL)
@@ -129,7 +130,7 @@ object AlarmScheduler {
     @Synchronized
     fun scheduleRetry(context: Context, at: ZonedDateTime) {
         val settings = kotlinx.coroutines.runBlocking { TimeSettingsStore(context).settingsOnce() }
-        if (!settings.masterEnabled) return
+        if (!settings.masterEnabled || !settings.escalationEnabled) return
         val am = context.getSystemService(AlarmManager::class.java) ?: return
         val intent = Intent(context, AutoFillReceiver::class.java)
             .setAction(AutoFillReceiver.ACTION_AUTOFILL)

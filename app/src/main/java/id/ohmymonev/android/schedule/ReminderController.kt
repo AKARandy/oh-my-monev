@@ -12,6 +12,7 @@ import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
+import id.ohmymonev.android.BuildConfig
 import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.engine.SiteStatusProbe
 import id.ohmymonev.core.enginecore.TodayState
@@ -169,7 +170,7 @@ internal class ReminderController(private val context: Context) {
             }
             when {
                 account != null && result?.account != null && result.account != account -> {
-                    Log.i(TAG, "Check failed date=$date reason=account_changed")
+                    if (BuildConfig.DEBUG) Log.i(TAG, "Check failed date=$date reason=account_changed")
                     preferences.edit().remove(key).apply()
                     notifications.cancel(key)
                 }
@@ -206,7 +207,7 @@ internal class ReminderController(private val context: Context) {
     private fun warn(key: String, reason: String, detail: String) {
         val marker = "$key:$detail"
         if (warned.add(marker)) {
-            Log.i(TAG, "Check failed date=${key.substringAfterLast('/')} reason=$reason")
+            if (BuildConfig.DEBUG) Log.i(TAG, "Check failed date=${key.substringAfterLast('/')} reason=$reason")
             notifications.post(key, "Status laporan belum dapat diperiksa.", detail)
         }
     }
@@ -217,7 +218,7 @@ internal class ReminderController(private val context: Context) {
         state: TodayState,
         now: ZonedDateTime = ZonedDateTime.now(ScheduleCalculator.asiaJakarta),
     ) {
-        Log.i(TAG, "Check complete date=$date state=$state")
+        if (BuildConfig.DEBUG) Log.i(TAG, "Check complete date=$date state=$state")
         val today = date == now.toLocalDate()
         val day = if (today) "hari ini" else date.format(
             java.time.format.DateTimeFormatter.ofPattern("d MMMM yyyy", java.util.Locale.forLanguageTag("id")))
@@ -230,7 +231,7 @@ internal class ReminderController(private val context: Context) {
                 if (today && now.toLocalTime() < LocalTime.of(23, 59)) {
                     startAlarm(key, now)
                 } else {
-                    Log.i(TAG, "Alarm suppressed date=$date reason=deadline_passed")
+                    if (BuildConfig.DEBUG) Log.i(TAG, "Alarm suppressed date=$date reason=deadline_passed")
                     notifications.post(key, "Laporan $day belum terkirim.", "Periksa laporan di situs.")
                 }
             }
@@ -244,7 +245,7 @@ internal class ReminderController(private val context: Context) {
         val channel = notifications.alarmChannel()
         if (!notifications.post(key, "Laporan hari ini belum terkirim.",
                 "Buka situs dan kirim laporan sebelum 23.59 WIB.", alarm = true)) {
-            Log.i(TAG, "Alarm suppressed date=${now.toLocalDate()} reason=notification_blocked")
+            if (BuildConfig.DEBUG) Log.i(TAG, "Alarm suppressed date=${now.toLocalDate()} reason=notification_blocked")
             return
         }
         playing = key
@@ -288,7 +289,7 @@ internal class ReminderController(private val context: Context) {
                     }
                     if (firstCycle) {
                         val date = now.toLocalDate()
-                        when {
+                        if (BuildConfig.DEBUG) when {
                             ringtone != null || vibrationRequested ->
                                 Log.i(TAG, "Alarm started date=$date sound=${ringtone != null} vibration=$vibrationRequested")
                             !allowed -> Log.i(TAG, "Alarm suppressed date=$date reason=interruption_filter")
@@ -350,7 +351,7 @@ internal class ReminderController(private val context: Context) {
             if (store.contains(key) || store.getLong("$UNBOUND/$date", DONE) >= 0) return
             if (store.edit().putLong(key, 0).commit()) {
                 val reason = if (account == null) "resolve_account" else "scheduled"
-                Log.i(TAG, "Check queued date=$date reason=$reason")
+                if (BuildConfig.DEBUG) Log.i(TAG, "Check queued date=$date reason=$reason")
             } else {
                 Log.w(TAG, "Check failed date=$date reason=queue_write")
             }

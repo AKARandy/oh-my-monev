@@ -339,4 +339,13 @@ class UiRenderTest {
         ScheduleTab()
     }
 
+
+    @Test fun stableEmergencyDisabledProof() {
+        id.ohmymonev.android.schedule.readySession(ApplicationProvider.getApplicationContext<Context>())
+        capture("stable-emergency-disabled", "Pengisian darurat belum tersedia.") { ScheduleTab() }
+        compose.onNodeWithTag("alarm-toggle-Pengisian darurat").assertIsNotEnabled()
+        compose.onNodeWithTag("alarm-edit-Pengisian darurat").assertIsNotEnabled()
+        compose.onNodeWithTag("alarm-toggle-Pengingat").assertIsEnabled()
+    }
+
 }
