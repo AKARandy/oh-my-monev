@@ -53,6 +53,7 @@ class ModelStore internal constructor(
      * onProgress memberi persen 0..100. Melempar IOException/IllegalState bila gagal.
      */
     suspend fun download(onProgress: suspend (Int) -> Unit) = withContext(Dispatchers.IO) {
+        ActionLog.record(context, "model.download.start")
         downloadLock.withLock {
             if (present()) return@withLock
             check(modelDir.isDirectory || modelDir.mkdirs()) { "Penyimpanan model tidak dapat dibuka." }

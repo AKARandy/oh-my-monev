@@ -98,6 +98,24 @@ fun HomeTab(
     val store = remember { TimeSettingsStore(context) }
     val appStore = remember { AppStore(context) }
     val scope = rememberCoroutineScope()
+    var exportingLog by remember { mutableStateOf(false) }
+    val exportLog = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        if (uri != null) scope.launch {
+            exportingLog = true
+            try {
+                id.ohmymonev.android.data.ActionLog.record(context, "logs.export")
+                val snapshot = id.ohmymonev.android.data.ActionLog.snapshot(context)
+                withContext(Dispatchers.IO) {
+                    (context.contentResolver.openOutputStream(uri) ?: throw java.io.IOException("Cannot open log export")).bufferedWriter().use { it.write(snapshot) }
+                }
+                android.widget.Toast.makeText(context, "Log tersimpan.", android.widget.Toast.LENGTH_SHORT).show()
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                throw kotlinx.coroutines.CancellationException()
+            } catch (_: Exception) {
+                android.widget.Toast.makeText(context, "Log tidak dapat disimpan.", android.widget.Toast.LENGTH_LONG).show()
+            } finally { exportingLog = false }
+        }
+    }
     val sessionRepository = remember { SessionRepository.get(context) }
     val session by sessionRepository.state.collectAsState()
     val sessionActive = session.record?.active
@@ -143,6 +161,8 @@ fun HomeTab(
     fun refreshPermissions() {
         locationGranted = hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
         notificationsOn = NotificationManagerCompat.from(context).areNotificationsEnabled()
+        id.ohmymonev.android.data.ActionLog.record(context, "permission.result",
+            "location=$locationGranted notifications=$notificationsOn")
     }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -166,6 +186,7 @@ fun HomeTab(
     }
 
     fun requestLocation() {
+        id.ohmymonev.android.data.ActionLog.record(context, "permission.location.request")
         locationLauncher.launch(arrayOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -173,6 +194,7 @@ fun HomeTab(
     }
 
     fun requestNotifications() {
+        id.ohmymonev.android.data.ActionLog.record(context, "permission.notifications.request")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationRequested &&
             !hasPermission(context, Manifest.permission.POST_NOTIFICATIONS)
         ) {
@@ -210,6 +232,7 @@ fun HomeTab(
 
     /** Baca keadaan sesungguhnya dari situs: status hari ini (isi/kosong/libur) + riwayat. */
     fun refreshSiteStatus() {
+        id.ohmymonev.android.data.ActionLog.record(context, "status.check.start")
         val request = ++statusRequest
         statusJob?.cancel()
         checkingStatus = true
@@ -218,6 +241,8 @@ fun HomeTab(
                 val result = SiteStatusProbe(context).check()
                 if (request != statusRequest) return@launch
                 siteStatus = result
+                id.ohmymonev.android.data.ActionLog.record(context, "status.check.result",
+                    "session=${result.sessionActive} state=${result.today}")
                 val current = withContext(Dispatchers.IO) { store.settingsOnce() }
                 armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, current) }
             }
@@ -318,7 +343,7 @@ fun HomeTab(
             )
             if (!ready) Text(readiness.missing(), style = MaterialTheme.typography.bodyMedium)
             if (!session.usable) {
-                TextButton(onClick = onOpenSession) { Text("Login ke Monev") }
+                TextButton(onClick = loggedClick("HomeTab:346", onOpenSession)) { Text("Login ke Monev") }
             }
         }
 
@@ -335,7 +360,7 @@ fun HomeTab(
             )
             if (visibleDraft != null && draftValid && status?.today == TodayState.UNFILLED) {
                 Button(
-                    onClick = {
+                    onClick = loggedClick("HomeTab:363") {
                         if (!locationGranted) requestLocation()
                         else confirmSend = ManualReportRequest(visibleDraft, account, session.version)
                     },
@@ -351,6 +376,7 @@ fun HomeTab(
                 onSend = {
                     confirmSend = null
                     recheckedManual = null
+                    id.ohmymonev.android.data.ActionLog.record(context, "manual.confirm")
                     AutoFillService.startManual(context, reviewed)
                 },
                 onDismiss = { confirmSend = null },
@@ -399,7 +425,7 @@ fun HomeTab(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    TextButton(enabled = ready, onClick = {
+                    TextButton(enabled = ready, onClick = loggedClick("HomeTab:428") {
                         scope.launch {
                             withContext(Dispatchers.IO) { appStore.clearTonightSkip() }
                             tonightSkipped = false
@@ -407,7 +433,7 @@ fun HomeTab(
                     }) { Text("Nyalakan lagi") }
                 } else if (settings?.masterEnabled == true && settings?.escalationEnabled == true) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    TextButton(enabled = ready, onClick = { confirmSkip = true }) {
+                    TextButton(enabled = ready, onClick = loggedClick("HomeTab:436") { confirmSkip = true }) {
                         Text("Jeda malam ini", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -421,7 +447,7 @@ fun HomeTab(
                             )
                         },
                         confirmButton = {
-                            TextButton(onClick = {
+                            TextButton(onClick = loggedClick("HomeTab:450") {
                                 confirmSkip = false
                                 scope.launch {
                                     withContext(Dispatchers.IO) { appStore.setTonightSkip(todayIso) }
@@ -431,7 +457,7 @@ fun HomeTab(
                             }) { Text("Ya, matikan") }
                         },
                         dismissButton = {
-                            TextButton(onClick = { confirmSkip = false }) { Text("Batal") }
+                            TextButton(onClick = loggedClick("HomeTab:460") { confirmSkip = false }) { Text("Batal") }
                         },
                     )
                 }
@@ -447,7 +473,7 @@ fun HomeTab(
                     title = { Text("Hapus tulisan hari ini?") },
                     text = { Text("Aplikasi akan memakai sumber yang dipilih di Pengisian darurat.") },
                     confirmButton = {
-                        TextButton(onClick = {
+                        TextButton(onClick = loggedClick("HomeTab:476") {
                             confirmDelete = false
                             scope.launch {
                                 withContext(Dispatchers.IO) { appStore.clearTodayDraft() }
@@ -457,12 +483,12 @@ fun HomeTab(
                         }) { Text("Hapus") }
                     },
                     dismissButton = {
-                        TextButton(onClick = { confirmDelete = false }) { Text("Batal") }
+                        TextButton(onClick = loggedClick("HomeTab:486") { confirmDelete = false }) { Text("Batal") }
                     },
                 )
             }
             TextButton(
-                onClick = { confirmDelete = true },
+                onClick = loggedClick("HomeTab:491") { confirmDelete = true },
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             ) {
                 Text("Hapus tulisan hari ini", color = MaterialTheme.colorScheme.error)
@@ -470,19 +496,19 @@ fun HomeTab(
         }
 
         LastRunRow(lastRecord)
-        TextButton(onClick = { infoExpanded = !infoExpanded }) { Text("Tentang aplikasi", style = MaterialTheme.typography.bodyMedium) }
+        TextButton(onClick = loggedClick("HomeTab:499") { infoExpanded = !infoExpanded }) { Text("Tentang aplikasi", style = MaterialTheme.typography.bodyMedium) }
         if (infoExpanded) DisclaimerCard()
         if (BuildConfig.DEBUG) {
-            TextButton(onClick = { diagnosticsExpanded = !diagnosticsExpanded }) {
+            TextButton(onClick = loggedClick("HomeTab:502") { diagnosticsExpanded = !diagnosticsExpanded }) {
                 Text(if (diagnosticsExpanded) "Tutup alat pengujian" else "Alat pengujian")
             }
             if (diagnosticsExpanded) {
                 Text("Uji mesin memakai halaman tiruan. Tes alarm memerlukan Pengisian darurat aktif.", style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(
-                    onClick = { AutoFillService.startBench(context); running = true },
+                    onClick = loggedClick("HomeTab:508") { AutoFillService.startBench(context); running = true },
                     enabled = ready && !running,
                 ) { Text("Uji mesin") }
-                TextButton(enabled = ready && settings?.escalationEnabled == true, onClick = { AlarmScheduler.quickFireForTest(context, 90) }) {
+                TextButton(enabled = ready && settings?.escalationEnabled == true, onClick = loggedClick("HomeTab:511") { AlarmScheduler.quickFireForTest(context, 90) }) {
                     Text("Tes alarm 90 detik")
                 }
             }
@@ -494,6 +520,15 @@ fun HomeTab(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
+        }
+        if (BuildConfig.DEBUG) {
+            TextButton(
+                enabled = !exportingLog,
+                onClick = loggedClick("HomeTab:549") {
+                    exportLog.launch("oh-my-monev-debug-${LocalDate.now()}.jsonl")
+                },
+                modifier = Modifier.testTag("download-logs"),
+            ) { Text(if (exportingLog) "Menyimpan log…" else "Download logs") }
         }
         }
 
@@ -517,6 +552,8 @@ private fun DisclaimerCard() {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+
         }
     }
 }
@@ -534,7 +571,7 @@ internal enum class ReportStatusLabel(val text: String, val color: Color) {
 internal fun ReportStatus(status: ReportStatusLabel, canRecheck: Boolean, onRecheck: () -> Unit) {
     Text("Status laporan hari ini", style = MaterialTheme.typography.headlineMedium)
     Text(status.text, color = status.color, style = MaterialTheme.typography.bodyLarge)
-    TextButton(onClick = onRecheck, enabled = canRecheck) { Text("Cek ulang") }
+    TextButton(onClick = loggedClick("HomeTab:573", onRecheck), enabled = canRecheck) { Text("Cek ulang") }
 }
 
 @Composable
@@ -544,9 +581,9 @@ internal fun ConfirmManualReport(enabled: Boolean, onSend: () -> Unit, onDismiss
         title = { Text("Kirim laporan hari ini ke Monev?") },
         text = { Text("Pastikan draf yang tersimpan sudah benar.") },
         confirmButton = {
-            TextButton(enabled = enabled, onClick = onSend) { Text("Kirim ke Monev") }
+            TextButton(enabled = enabled, onClick = loggedClick("HomeTab:583", onSend)) { Text("Kirim ke Monev") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } },
+        dismissButton = { TextButton(onClick = loggedClick("HomeTab:585", onDismiss)) { Text("Batal") } },
     )
 }
 
@@ -633,11 +670,11 @@ private fun SiteStatusCard(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onCheck, enabled = !checking) {
+                Button(onClick = loggedClick("HomeTab:672", onCheck), enabled = !checking) {
                     Text(if (checking) "Membaca…" else "Cek situs")
                 }
                 if (BuildConfig.DEBUG) {
-                    TextButton(onClick = onCheckBench, enabled = !checking) {
+                    TextButton(onClick = loggedClick("HomeTab:676", onCheckBench), enabled = !checking) {
                         Text("Contoh")
                     }
                 }
@@ -697,7 +734,7 @@ private fun ReadyRow(
             Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (action != null) {
-            TextButton(onClick = onAction) { Text(action) }
+            TextButton(onClick = loggedClick("HomeTab:736", onAction)) { Text(action) }
         }
     }
 }
@@ -777,6 +814,6 @@ internal fun ScheduleStatus(state: AlarmScheduler.ArmedState?, onCheck: () -> Un
             )
         }
         state?.lastError?.let { Text(it, fontSize = 18.sp, lineHeight = 26.sp, color = MaterialTheme.colorScheme.error) }
-        TextButton(onClick = onCheck) { Text("Periksa jadwal", fontSize = 18.sp) }
+        TextButton(onClick = loggedClick("HomeTab:816", onCheck)) { Text("Periksa jadwal", fontSize = 18.sp) }
     }
 }

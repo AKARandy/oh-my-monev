@@ -11,6 +11,7 @@ import kotlinx.coroutines.runBlocking
  */
 class AutoFillReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        id.ohmymonev.android.data.ActionLog.record(context, "alarm.received", "AutoFillReceiver")
         val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
         if (!FeatureReadiness.read(context).ready) {
             AlarmScheduler.armAll(context, settings)

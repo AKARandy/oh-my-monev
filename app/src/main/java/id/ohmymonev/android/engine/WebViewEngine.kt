@@ -71,6 +71,7 @@ class WebViewEngine(
     ) {
         lateinit var webView: WebView
         lateinit var watchdog: Runnable
+        val runId = java.util.UUID.randomUUID().toString()
         var stage = "membuka Monev"
         fun viewOrNull(): WebView? = if (::webView.isInitialized) webView else null
         var httpStatusCode: Int = 200
@@ -91,6 +92,7 @@ class WebViewEngine(
         state.watchdog = Runnable {
             finish(state, EngineOutcome.LOADING_TIMEOUT, "Batas waktu saat ${state.stage}.")
         }
+        id.ohmymonev.android.data.ActionLog.record(appContext, "send.start", state.runId)
         main.post {
             main.postDelayed(state.watchdog, 90_000)
             try {
@@ -126,6 +128,8 @@ class WebViewEngine(
     private fun buildClient(state: RunState) = object : WebViewClient() {
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             if (request.isForMainFrame) {
+                id.ohmymonev.android.data.ActionLog.record(appContext, "web.load.error",
+                    "${state.runId} code=${error.errorCode}")
                 state.mainFrameError = "gagal memuat (kesalahan ${error.errorCode})"
                 state.httpStatusCode = 0
             }
@@ -134,6 +138,8 @@ class WebViewEngine(
         override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
             if (request.isForMainFrame) {
                 state.httpStatusCode = errorResponse.statusCode
+                id.ohmymonev.android.data.ActionLog.record(appContext, "web.http.error",
+                    "${state.runId} status=${errorResponse.statusCode}")
             }
         }
     }
@@ -192,6 +198,7 @@ class WebViewEngine(
     /** Loads the per-date riwayat edit URL and polls for the 3 textareas, matched by placeholder. */
     private fun openForm(state: RunState) {
         state.stage = "membuka formulir"
+        id.ohmymonev.android.data.ActionLog.record(appContext, "send.stage", "${state.runId} ${state.stage}")
         val deadline = SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs
         state.webView.loadUrl(profile.riwayatEditUrl(state.dateISO))
         main.postDelayed({ waitTextareas(state, deadline) }, profile.timing.spaSettleMs)
@@ -226,6 +233,7 @@ class WebViewEngine(
     /** The site shows the location OK text above the Kehadiran selector once the check passes. */
     private fun checkLocation(state: RunState) {
         state.stage = "memeriksa lokasi"
+        id.ohmymonev.android.data.ActionLog.record(appContext, "send.stage", "${state.runId} ${state.stage}")
         val deadline = SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs
         waitLocation(state, deadline)
     }
@@ -235,6 +243,8 @@ class WebViewEngine(
         state.webView.evaluateJavascript(bodyTextJs) { raw ->
             if (state.finished) return@evaluateJavascript
             val pageText = unwrap(raw)
+            id.ohmymonev.android.data.ActionLog.record(appContext, "send.location.check",
+                "${state.runId} callback=true success=${pageText?.contains(profile.markers.locationOkText)}")
             when {
                 pageText != null && pageText.contains(profile.markers.locationOkText) -> fillForm(state)
                 SystemClock.elapsedRealtime() >= deadline ->
@@ -246,6 +256,7 @@ class WebViewEngine(
 
     private fun fillForm(state: RunState) {
         state.stage = "mengisi formulir"
+        id.ohmymonev.android.data.ActionLog.record(appContext, "send.stage", "${state.runId} ${state.stage}")
         if (!currentDraftScope(state)) return
         val js = JsSnippets.fillTextareas(
             profile,
@@ -328,6 +339,7 @@ class WebViewEngine(
                 return@evaluateJavascript
             }
             state.stage = "menunggu tombol kirim"
+        id.ohmymonev.android.data.ActionLog.record(appContext, "send.stage", "${state.runId} ${state.stage}")
             waitSubmitEnabled(state, SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs)
         }
     }
@@ -337,9 +349,12 @@ class WebViewEngine(
         state.webView.evaluateJavascript(JsSnippets.clickSubmit(profile)) { raw ->
             if (state.finished) return@evaluateJavascript
             val result = unwrapObject(raw)
+            id.ohmymonev.android.data.ActionLog.record(appContext, "send.button.result",
+                "${state.runId} clicked=${result?.optBoolean("clicked")} blocked=${result?.optBoolean("blocked")}")
             when {
                 result?.optBoolean("clicked") == true -> {
                     state.stage = "memeriksa hasil pengiriman"
+        id.ohmymonev.android.data.ActionLog.record(appContext, "send.stage", "${state.runId} ${state.stage}")
                     events(state, "Tombol kirim ditekan")
                     waitSubmitLanding(state, SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs)
                 }
@@ -376,6 +391,8 @@ class WebViewEngine(
     private fun finish(state: RunState, outcome: EngineOutcome, detail: String?) {
         if (state.finished) return
         state.finished = true
+        id.ohmymonev.android.data.ActionLog.record(appContext, "send.finish",
+            "${state.runId} outcome=$outcome stage=${state.stage}")
         main.removeCallbacks(state.watchdog)
         runCatching { CookieManager.getInstance().flush() }
         events(state, "Hasil: $outcome" + (detail?.let { " ($it)" } ?: ""))

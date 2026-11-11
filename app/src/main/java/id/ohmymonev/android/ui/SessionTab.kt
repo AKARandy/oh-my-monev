@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import id.ohmymonev.android.data.ActionLog
 import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.data.SessionSnapshot
 import id.ohmymonev.android.engine.SessionWebView
@@ -52,6 +53,7 @@ fun SessionTab(modifier: Modifier = Modifier) {
     var checkJob by remember { mutableStateOf<Job?>(null) }
 
     fun checkSession() {
+        ActionLog.record(context, "session.check")
         val number = ++checkNumber
         checkJob?.cancel()
         checkJob = scope.launch {
@@ -124,6 +126,8 @@ fun SessionTab(modifier: Modifier = Modifier) {
                                 return false
                             }
                             override fun onPageFinished(view: WebView, url: String?) {
+                                ActionLog.record(ctx, "session.page.loaded",
+                                    "monev=${SessionWebView.trusted(url)}")
                                 android.webkit.CookieManager.getInstance().flush()
                             }
                         }
@@ -159,7 +163,7 @@ internal fun SessionStatusCard(session: SessionSnapshot, checking: Boolean, onCh
                 fontSize = 20.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold,
             )
             session.issue?.let { Text(it, fontSize = 18.sp, lineHeight = 26.sp) }
-            TextButton(onClick = onCheck, enabled = !checking && !session.initializing) {
+            TextButton(onClick = loggedClick("SessionTab:163", onCheck), enabled = !checking && !session.initializing) {
                 Text("Cek sesi", fontSize = 18.sp)
             }
         }

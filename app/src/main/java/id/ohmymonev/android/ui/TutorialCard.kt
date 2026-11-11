@@ -93,7 +93,7 @@ fun TutorialCard(
                     }
                 }
             }
-            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+            TextButton(onClick = loggedClick("TutorialCard:96", onDismiss), modifier = Modifier.align(Alignment.End)) {
                 Text("Sembunyikan", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

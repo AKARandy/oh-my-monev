@@ -19,8 +19,25 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.actionMasked == android.view.MotionEvent.ACTION_UP) {
+            id.ohmymonev.android.data.ActionLog.record(this, "ui.touch")
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.action == android.view.KeyEvent.ACTION_UP) {
+            id.ohmymonev.android.data.ActionLog.record(this, "ui.key")
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onResume() {
         super.onResume()
+        val readiness = id.ohmymonev.android.schedule.FeatureReadiness.read(this)
+        id.ohmymonev.android.data.ActionLog.record(this, "activity.resume",
+            "session=${readiness.session} location=${readiness.location} notifications=${readiness.notifications}")
         lifecycleScope.launch { id.ohmymonev.android.schedule.FeatureReadiness.rearm(applicationContext) }
     }
 

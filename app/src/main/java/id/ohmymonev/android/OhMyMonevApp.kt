@@ -16,9 +16,11 @@ import id.ohmymonev.android.schedule.FeatureReadiness
 class OhMyMonevApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        id.ohmymonev.android.data.ActionLog.record(this, "process.start")
         AutoFillDelegateProvider.delegate = EngineAutoFillDelegate(applicationContext)
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             SessionRepository.get(applicationContext).state.map { it.usable }.distinctUntilChanged().collect {
+                id.ohmymonev.android.data.ActionLog.record(applicationContext, "session.readiness", "usable=$it")
                 FeatureReadiness.rearm(applicationContext)
             }
         }

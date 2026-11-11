@@ -154,6 +154,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
     }
 
     fun save(update: (ScheduleSettings) -> ScheduleSettings) {
+        id.ohmymonev.android.data.ActionLog.record(context, "schedule.save")
         if (!ready || modelBusy) return
         scope.launch {
             saveMutex.withLock {
@@ -279,7 +280,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             onOpen = { editingTemplate = true },
         )
         if (modelReady) {
-            TextButton(enabled = ready && !modelBusy, onClick = { confirmModelDelete = true }) {
+            TextButton(enabled = ready && !modelBusy, onClick = loggedClick("ScheduleTab:283") { confirmModelDelete = true }) {
                 Text("Hapus model")
             }
         }
@@ -404,13 +405,13 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(onClick = loggedClick("ScheduleTab:408") {
                     pendingAuto?.invoke()
                     pendingAuto = null
                 }) { Text("Paham, pakai otomatis") }
             },
             dismissButton = {
-                TextButton(onClick = { pendingAuto = null }) { Text("Batal") }
+                TextButton(onClick = loggedClick("ScheduleTab:414") { pendingAuto = null }) { Text("Batal") }
             },
         )
     }
@@ -426,13 +427,13 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(onClick = loggedClick("ScheduleTab:430") {
                     pendingSubmit?.invoke()
                     pendingSubmit = null
                 }) { Text("Nyalakan") }
             },
             dismissButton = {
-                TextButton(onClick = { pendingSubmit = null }) { Text("Batal") }
+                TextButton(onClick = loggedClick("ScheduleTab:436") { pendingSubmit = null }) { Text("Batal") }
             },
         )
     }
@@ -447,13 +448,13 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(onClick = loggedClick("ScheduleTab:451") {
                     save { it.copy(masterEnabled = false) }
                     confirmMasterOff = false
                 }) { Text("Ya, matikan") }
             },
             dismissButton = {
-                TextButton(onClick = { confirmMasterOff = false }) { Text("Batal") }
+                TextButton(onClick = loggedClick("ScheduleTab:457") { confirmMasterOff = false }) { Text("Batal") }
             },
         )
     }
@@ -574,7 +575,7 @@ internal fun AlarmEditor(
                                 color = MaterialTheme.colorScheme.primary,
                             )
                             onDownloadModel != null -> Button(
-                                onClick = onDownloadModel,
+                                onClick = loggedClick("ScheduleTab:578", onDownloadModel),
                                 modifier = Modifier.fillMaxWidth().testTag("download-model"),
                             ) { Text(if (modelError == null) "Unduh model" else "Coba lagi", fontSize = 18.sp) }
                         }
@@ -588,10 +589,10 @@ internal fun AlarmEditor(
         confirmButton = {
             Button(
                 enabled = days.isNotEmpty() && selectedTime != null && !templateBlocked && !autoBlocked,
-                onClick = { editorView.clearFocus(); parseTimeParts(hour, minute)?.let { onSave(it, enabled, days, source) } },
+                onClick = loggedClick("ScheduleTab:592") { editorView.clearFocus(); parseTimeParts(hour, minute)?.let { onSave(it, enabled, days, source) } },
             ) { Text("Simpan", fontSize = 18.sp) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal", fontSize = 18.sp) } },
+        dismissButton = { TextButton(onClick = loggedClick("ScheduleTab:595", onDismiss)) { Text("Batal", fontSize = 18.sp) } },
     )
 }
 
@@ -614,7 +615,7 @@ private fun TemplateCard(status: String, enabled: Boolean, onOpen: () -> Unit) {
                 Text("Templat laporan", style = MaterialTheme.typography.titleMedium)
                 Text(status, fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TextButton(onClick = onOpen, enabled = enabled, modifier = Modifier.testTag("template-edit")) {
+            TextButton(onClick = loggedClick("ScheduleTab:618", onOpen), enabled = enabled, modifier = Modifier.testTag("template-edit")) {
                 Text("Atur", fontSize = 18.sp)
             }
         }
@@ -688,15 +689,15 @@ internal fun TemplateEditor(
         confirmButton = {
             Button(
                 enabled = issues.isEmpty(),
-                onClick = { onSave(ReportTemplate(aktivitas, pelajaran, kendala)) },
+                onClick = loggedClick("ScheduleTab:692") { onSave(ReportTemplate(aktivitas, pelajaran, kendala)) },
             ) { Text("Simpan", fontSize = 16.sp) }
         },
         dismissButton = {
             Row {
                 if (current != null && !clearBlocked) {
-                    TextButton(onClick = onClear) { Text("Hapus", fontSize = 16.sp) }
+                    TextButton(onClick = loggedClick("ScheduleTab:698", onClear)) { Text("Hapus", fontSize = 16.sp) }
                 }
-                TextButton(onClick = onDismiss) { Text("Batal", fontSize = 16.sp) }
+                TextButton(onClick = loggedClick("ScheduleTab:700", onDismiss)) { Text("Batal", fontSize = 16.sp) }
             }
         },
     )
@@ -751,7 +752,7 @@ private fun AlarmCard(
                     fontWeight = FontWeight.Medium,
                     color = textColor,
                 )
-                TextButton(onClick = onOpen, enabled = controlsEnabled,
+                TextButton(onClick = loggedClick("ScheduleTab:755", onOpen), enabled = controlsEnabled,
                     colors = ButtonDefaults.textButtonColors(disabledContentColor = textColor),
                     modifier = Modifier.align(Alignment.CenterVertically).testTag("alarm-edit-$title")) {
                     Text("Atur fitur", fontSize = 16.sp)
@@ -780,7 +781,7 @@ private fun AlarmCard(
             }
             if (actionLabel != null && onAction != null && effective) {
                 TextButton(
-                    onClick = onAction,
+                    onClick = loggedClick("ScheduleTab:784", onAction),
                     modifier = Modifier.testTag("alarm-action-$title"),
                 ) {
                     Text(actionLabel, style = MaterialTheme.typography.labelLarge)
@@ -809,7 +810,7 @@ private fun DayChipsRow(
             FilterChip(
                 enabled = allowed == null || day in allowed,
                 selected = on,
-                onClick = { onToggle(day) },
+                onClick = loggedClick("ScheduleTab:813") { onToggle(day) },
                 leadingIcon = {
                     if (on) {
                         Icon(
@@ -846,7 +847,7 @@ private fun SourceOption(label: String, selected: Boolean, enabled: Boolean = tr
             selected = selected,
             role = Role.RadioButton,
             enabled = enabled,
-            onClick = onSelect,
+            onClick = loggedClick("ScheduleTab:850", onSelect),
         ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -865,7 +866,7 @@ internal fun ModelActionDialog(delete: Boolean, onDismiss: () -> Unit, onConfirm
             Text(if (delete) "Aplikasi menghapus model dan sisa unduhan. Jika sumbernya Otomatis, Pengisian darurat dimatikan."
                 else "Aplikasi akan mengunduh IndoT5 FP16 (845 MB) dari GitHub. Model ini membantu menulis ulang kalimat aktivitas dari laporan sebelumnya. Aplikasi menjalankan model di ponsel. Model dapat mengubah makna. Periksa draf sebelum mengirim.")
         },
-        confirmButton = { TextButton(onClick = onConfirm) { Text(if (delete) "Hapus" else "Unduh") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } },
+        confirmButton = { TextButton(onClick = loggedClick("ScheduleTab:869", onConfirm)) { Text(if (delete) "Hapus" else "Unduh") } },
+        dismissButton = { TextButton(onClick = loggedClick("ScheduleTab:870", onDismiss)) { Text("Batal") } },
     )
 }

@@ -13,6 +13,7 @@ import kotlinx.coroutines.runBlocking
  */
 class EscalationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        id.ohmymonev.android.data.ActionLog.record(context, "alarm.received", "EscalationReceiver")
         val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
         if (!FeatureReadiness.read(context).ready) {
             AlarmScheduler.armAll(context, settings)

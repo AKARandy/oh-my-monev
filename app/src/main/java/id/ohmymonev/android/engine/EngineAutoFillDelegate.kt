@@ -51,12 +51,15 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
     }
 
     override fun startManual(request: ManualReportRequest) {
+        id.ohmymonev.android.data.ActionLog.record(appContext, "manual.request",
+            "activityChars=${request.draft.aktivitas.length} lessonChars=${request.draft.pelajaran.length} obstacleChars=${request.draft.kendala.length}")
         scope.launch {
             val store = AppStore(appContext)
             val draft = request.draft
             val report = ReportDraft(draft.aktivitas, draft.pelajaran, draft.kendala)
             val sessions = SessionRepository.get(appContext)
             fun complete(message: String) {
+                id.ohmymonev.android.data.ActionLog.record(appContext, "manual.complete", message)
                 AutoFillService.manualFinished(request, message)
                 AutoFillService.finished(appContext)
             }
@@ -176,6 +179,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             AutoFillService.finished(appContext)
             return
         }
+        id.ohmymonev.android.data.ActionLog.record(appContext, "emergency.prepare")
         val prepared = PreparedReportService(appContext).prepare()
         val outcome = if (prepared.date == todayIso) prepared.outcome() else GenerationOutcome.Failed(
             id.ohmymonev.core.generator.FailureReason.INVALID_REPORT, "Tanggal berubah. Perbarui pratinjau.",

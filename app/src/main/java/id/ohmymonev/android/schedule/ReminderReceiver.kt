@@ -9,6 +9,7 @@ import kotlinx.coroutines.runBlocking
 
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        id.ohmymonev.android.data.ActionLog.record(context, "alarm.received", "ReminderReceiver")
         if (intent.action != ACTION_REMINDER) return
         val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
         val date = intent.getStringExtra("date")?.let(LocalDate::parse)

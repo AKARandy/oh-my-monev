@@ -37,6 +37,8 @@ internal object SessionWebView {
             val allowed = trusted(origin) &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED
+            id.ohmymonev.android.data.ActionLog.record(context, "web.location.permission",
+                "trusted=${trusted(origin)} allowed=$allowed")
             callback?.invoke(origin, allowed, false)
         }
     }

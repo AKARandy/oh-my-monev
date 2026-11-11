@@ -103,7 +103,7 @@ fun DraftCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(enabled = editable && !saving, onClick = {
+                TextButton(enabled = editable && !saving, onClick = loggedClick("DraftCard:106") {
                     if (expanded && dirty) {
                         confirmDiscard = true
                     } else {
@@ -137,7 +137,8 @@ fun DraftCard(
                 }
 
                 Button(
-                    onClick = {
+                    onClick = loggedClick("DraftCard:140") {
+                        id.ohmymonev.android.data.ActionLog.record(context, "draft.save")
                         val toSave = StoredDraft(todayIso, aktivitas, pelajaran, kendala, account)
                         saving = true
                         scope.launch {
@@ -175,14 +176,14 @@ fun DraftCard(
             title = { Text("Buang perubahan?") },
             text = { Text("Tulisan yang belum disimpan akan hilang dari layar ini. Yang tersimpan sebelumnya tetap aman.") },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(onClick = loggedClick("DraftCard:179") {
                     confirmDiscard = false
                     dirty = false
                     onExpandedChange(false)
                 }) { Text("Buang") }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDiscard = false }) { Text("Lanjut menulis") }
+                TextButton(onClick = loggedClick("DraftCard:186") { confirmDiscard = false }) { Text("Lanjut menulis") }
             },
         )
     }
@@ -196,9 +197,13 @@ internal fun EditorField(
     value: String,
     onChange: (String) -> Unit,
 ) {
+    val context = LocalContext.current
     OutlinedTextField(
         value = value,
-        onValueChange = onChange,
+        onValueChange = {
+            id.ohmymonev.android.data.ActionLog.record(context, "ui.field.change", "$label chars=${it.length}")
+            onChange(it)
+        },
         label = { Text(label) },
         placeholder = { Text(hint, style = MaterialTheme.typography.bodySmall) },
         minLines = 3,

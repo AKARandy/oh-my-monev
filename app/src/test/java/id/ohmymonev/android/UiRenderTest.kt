@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsEnabled
@@ -105,6 +106,7 @@ class UiRenderTest {
                 compose.onNodeWithTag("alarm-edit-$title").assertIsNotEnabled()
             }
         }
+        if (captureTag == "download-logs") compose.onNodeWithTag("download-logs").performScrollTo()
         val root = requireNotNull(File(requireNotNull(System.getProperty("user.dir"))).parentFile)
         val output = File(root, "screenshots/$name.png")
         requireNotNull(output.parentFile).mkdirs()
@@ -356,6 +358,11 @@ class UiRenderTest {
         capture("diagnostic-emergency-controls", "Pengisian darurat") { ScheduleTab() }
         compose.onNodeWithTag("alarm-toggle-Pengisian darurat").assertIsEnabled()
         compose.onNodeWithTag("alarm-edit-Pengisian darurat").assertIsEnabled()
+    }
+
+
+    @Test fun downloadLogsProof() = capture("download-logs-button", "Download logs", captureTag = "download-logs") {
+        id.ohmymonev.android.ui.HomeTab()
     }
 
 }

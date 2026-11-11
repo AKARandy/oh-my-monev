@@ -109,7 +109,7 @@ fun LogTab(modifier: Modifier = Modifier) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            TextButton(onClick = { refreshKey++ }, enabled = !loading) {
+            TextButton(onClick = loggedClick("LogTab:112") { refreshKey++ }, enabled = !loading) {
                 Text("Muat ulang")
             }
         }

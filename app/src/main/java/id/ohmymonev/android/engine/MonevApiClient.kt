@@ -102,6 +102,8 @@ internal class MonevApiClient(
     }
 
     private suspend fun get(path: String): String? {
+        id.ohmymonev.android.data.ActionLog.record(context, "api.read.start",
+            path.substringBefore('?'))
         if (access == null) access = session.credentials()
         val credential = access ?: run { failed("Login melalui halaman situs pada tab Sesi."); return null }
         try {
@@ -124,9 +126,12 @@ internal class MonevApiClient(
                 if (response.status == 401) return expired(updated)
             }
             if (!session.matches(access ?: return null)) return null
+            id.ohmymonev.android.data.ActionLog.record(context, "api.read.response",
+                "status=${response.status}")
             if (response.status !in 200..299) { failed("Situs belum dapat memproses permintaan. Coba lagi."); return null }
             return if (response.status == 204) "[]" else response.body
         } catch (_: IOException) {
+            id.ohmymonev.android.data.ActionLog.record(context, "api.read.failed", "io")
             failed("Aplikasi belum dapat menghubungi situs. Status login terakhir tidak berubah.")
         } catch (_: JSONException) {
             failed("Situs mengirim data login yang tidak dikenali.")

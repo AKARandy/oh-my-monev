@@ -44,6 +44,7 @@ private const val TAB_SESSION = 3
 
 @Composable
 fun AppRoot() {
+    val context = androidx.compose.ui.platform.LocalContext.current
     OhMyMonevTheme {
         var selectedTab by remember { mutableIntStateOf(TAB_HOME) }
         Scaffold(
@@ -57,7 +58,10 @@ fun AppRoot() {
                     tabs.forEachIndexed { index, tab ->
                         NavigationBarItem(
                             selected = selectedTab == index,
-                            onClick = { selectedTab = index },
+                            onClick = loggedClick("AppRoot:61") {
+                                id.ohmymonev.android.data.ActionLog.record(context, "ui.tab", index.toString())
+                                selectedTab = index
+                            },
                             icon = { Icon(tab.icon, contentDescription = null) },
                             label = { Text(tab.label, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Visible) },
                             colors = NavigationBarItemDefaults.colors(
@@ -78,7 +82,10 @@ fun AppRoot() {
             ) { index ->
                 when (index) {
                     TAB_HOME -> HomeTab(
-                        onOpenSession = { selectedTab = TAB_SESSION },
+                        onOpenSession = {
+                            id.ohmymonev.android.data.ActionLog.record(context, "ui.open_session")
+                            selectedTab = TAB_SESSION
+                        },
                     )
                     TAB_SCHEDULE -> ScheduleTab()
                     TAB_LOG -> LogTab()
