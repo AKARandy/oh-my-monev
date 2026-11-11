@@ -12,6 +12,14 @@ import kotlinx.coroutines.runBlocking
 class AutoFillReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         id.ohmymonev.android.data.ActionLog.record(context, "alarm.received", "AutoFillReceiver")
+        if (intent.action == AutoFillService.ACTION_LOCATION_PROBE && id.ohmymonev.android.BuildConfig.DEBUG) {
+            if (FeatureReadiness.backgroundLocation(context)) {
+                try { context.startForegroundService(Intent(context, AutoFillService::class.java).setAction(intent.action)) }
+                catch (_: RuntimeException) { id.ohmymonev.android.data.ActionLog.record(context, "location.probe.failed", "background start denied") }
+            }
+            return
+        }
+        if (!FeatureReadiness.backgroundLocation(context)) return
         val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
         if (!FeatureReadiness.read(context).ready) {
             AlarmScheduler.armAll(context, settings)

@@ -12,7 +12,7 @@ import org.robolectric.util.ReflectionHelpers
 
 internal fun readySession(context: Context) = runBlocking {
     val app = context.applicationContext as Application
-    shadowOf(app).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.POST_NOTIFICATIONS)
+    shadowOf(app).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_BACKGROUND_LOCATION, Manifest.permission.POST_NOTIFICATIONS)
     val vault = SessionTokenStore(context) { SecretKeySpec(ByteArray(16), "AES") }
     vault.save("fixture-token")
     val session = SessionRepository(context, vault)

@@ -53,6 +53,9 @@ class WebViewEngine(
 
     private val appContext: Context = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
+    private var active: RunState? = null
+
+    fun cancel() { main.post { active?.let { finish(it, EngineOutcome.RETRYABLE_ERROR, "Pengiriman terhenti.", notify = false) } } }
 
     /** Body text of the current main frame, as a single-line JS expression. */
     private val bodyTextJs: String = "(function(){return document.body?document.body.textContent:'';})()"
@@ -78,9 +81,12 @@ class WebViewEngine(
         var mainFrameError: String? = null
         var finished = false
         var sessionVersion = 0L
+        var location: LocationBridge? = null
+        var bootstrap: kotlinx.coroutines.Job? = null
+        var locationOnly = false
     }
 
-    fun runAutomation(dateISO: String, draft: ReportDraft, attempt: Int, expectedSessionVersion: Long? = null, draftStillCurrent: (() -> Boolean)? = null) {
+    fun runAutomation(dateISO: String, draft: ReportDraft, attempt: Int, expectedSessionVersion: Long? = null, draftStillCurrent: (() -> Boolean)? = null, locationOnly: Boolean = false) {
         val state = RunState(
             dateISO = dateISO,
             draftStillCurrent = draftStillCurrent,
@@ -92,6 +98,8 @@ class WebViewEngine(
         state.watchdog = Runnable {
             finish(state, EngineOutcome.LOADING_TIMEOUT, "Batas waktu saat ${state.stage}.")
         }
+        state.locationOnly = locationOnly
+        active = state
         id.ohmymonev.android.data.ActionLog.record(appContext, "send.start", state.runId)
         main.post {
             main.postDelayed(state.watchdog, 90_000)
@@ -122,7 +130,28 @@ class WebViewEngine(
         webView.webViewClient = buildClient(state)
         webView.webChromeClient = SessionWebView.locationClient(appContext)
         events(state, "Mulai otomatisasi tanggal ${state.dateISO} (percobaan ${state.attempt})")
-        openDashboard(state)
+        if (SessionWebView.trusted(profile.urls.baseUrl)) {
+            state.stage = "mengambil lokasi perangkat"
+            id.ohmymonev.android.data.ActionLog.record(appContext, "send.stage", "${state.runId} ${state.stage}")
+            id.ohmymonev.android.data.ActionLog.record(appContext, "send.environment",
+                "${state.runId} webview=${WebView.getCurrentWebViewPackage()?.versionName} locationEnabled=${androidx.core.location.LocationManagerCompat.isLocationEnabled(appContext.getSystemService(android.location.LocationManager::class.java))} background=${id.ohmymonev.android.schedule.FeatureReadiness.backgroundLocation(appContext)}")
+            state.bootstrap = CoroutineScope(Dispatchers.Main).launch {
+                try {
+                    val bridge = LocationBridge(appContext, webView, state.runId)
+                    state.location = bridge
+                    bridge.install()
+                    bridge.prepare()
+                    if (state.finished) return@launch
+                    if (state.locationOnly) {
+                        webView.loadDataWithBaseURL(profile.urls.baseUrl + "/", "<html><body><script>navigator.geolocation.getCurrentPosition(function(){document.body.textContent='Lokasi berhasil diakses';},function(){document.body.textContent='Lokasi gagal';},{maximumAge:60000,timeout:12000});</script></body></html>", "text/html", "UTF-8", null)
+                        checkLocation(state)
+                    } else openDashboard(state)
+                } catch (failure: LocationFailure) {
+                    id.ohmymonev.android.data.ActionLog.record(appContext, "send.location.failed", "${state.runId} reason=${failure.reason}")
+                    finish(state, EngineOutcome.LOCATION_CHECK_FAILS, failure.message)
+                }
+            }
+        } else openDashboard(state)
     }
 
     private fun buildClient(state: RunState) = object : WebViewClient() {
@@ -246,7 +275,8 @@ class WebViewEngine(
             id.ohmymonev.android.data.ActionLog.record(appContext, "send.location.check",
                 "${state.runId} callback=true success=${pageText?.contains(profile.markers.locationOkText)}")
             when {
-                pageText != null && pageText.contains(profile.markers.locationOkText) -> fillForm(state)
+                pageText != null && pageText.contains(profile.markers.locationOkText) ->
+                    if (state.locationOnly) finish(state, EngineOutcome.FILL_OK, "Lokasi otomatis tersedia.") else fillForm(state)
                 SystemClock.elapsedRealtime() >= deadline ->
                     finish(state, EngineOutcome.LOCATION_CHECK_FAILS, "tanda '${profile.markers.locationOkText}' tidak ditemukan")
                 else -> main.postDelayed({ waitLocation(state, deadline) }, profile.timing.pollIntervalMs)
@@ -388,9 +418,12 @@ class WebViewEngine(
         }
     }
 
-    private fun finish(state: RunState, outcome: EngineOutcome, detail: String?) {
+    private fun finish(state: RunState, outcome: EngineOutcome, detail: String?, notify: Boolean = true) {
         if (state.finished) return
         state.finished = true
+        if (active === state) active = null
+        state.bootstrap?.cancel()
+        state.location?.close()
         id.ohmymonev.android.data.ActionLog.record(appContext, "send.finish",
             "${state.runId} outcome=$outcome stage=${state.stage}")
         main.removeCallbacks(state.watchdog)
@@ -399,7 +432,7 @@ class WebViewEngine(
         state.viewOrNull()?.let { view ->
             SessionWebView.release(view, SessionRepository.get(appContext), state.sessionVersion)
         }
-        callbacks.onRunFinished(
+        if (notify) callbacks.onRunFinished(
             RunRecord(
                 date = state.dateISO,
                 attemptedAtISO = state.attemptedAtISO,

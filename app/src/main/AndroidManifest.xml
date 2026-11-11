@@ -8,6 +8,8 @@
          latitude/longitude with the report; the WebView is granted real device location. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
@@ -79,7 +81,7 @@
         <service
             android:name=".schedule.AutoFillService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="dataSync|location" />
 
         <!-- Layanan penjaga: notifikasi permanen sebagai bukti status otomatisasi.
              specialUse diperlukan di Android 14+ karena layanan ini bukan data-sync. -->

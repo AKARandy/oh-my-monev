@@ -28,6 +28,12 @@ class AutoFillService : Service() {
 
     private var running = false
     private var manualRequest: ManualReportRequest? = null
+    private var probeEngine: id.ohmymonev.android.engine.WebViewEngine? = null
+    private val deadlineHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val deadline = Runnable {
+        manualRequest?.let { manualFinished(it, "Batas waktu pengiriman. Cek ulang status laporan.") }
+        stopSelf()
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val request = if (intent?.action == ACTION_MANUAL) manual.value?.takeIf { it.sending }?.request else null
@@ -40,19 +46,46 @@ class AutoFillService : Service() {
             return START_NOT_STICKY
         }
         running = true
+        deadlineHandler.postDelayed(deadline, 185_000)
         manualRequest = request
         val factory = NotificationFactory(this)
         factory.ensureChannels()
         val notification: Notification = factory.autofillProgress()
+        val bench = intent?.action == ACTION_BENCH
+        try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceCompat.startForeground(
                 this,
                 NotificationFactory.NOTIF_ID_AUTOFILL,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or (if (bench) 0 else ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION),
             )
         } else {
             startForeground(NotificationFactory.NOTIF_ID_AUTOFILL, notification)
+        }
+        } catch (_: RuntimeException) {
+            request?.let { manualFinished(it, "Periksa izin lokasi aplikasi.") }
+            id.ohmymonev.android.data.ActionLog.record(this, "service.start.failed", "location permission or background restriction")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        if (intent?.action == ACTION_LOCATION_PROBE && id.ohmymonev.android.BuildConfig.DEBUG) {
+            val engine = id.ohmymonev.android.engine.WebViewEngine(this,
+                id.ohmymonev.core.siteprofile.DEFAULT_SITE_PROFILE,
+                object : id.ohmymonev.android.engine.WebViewEngine.Callbacks {
+                    override fun onEvent(message: String) = Unit
+                    override fun onRunFinished(record: id.ohmymonev.core.enginecore.RunRecord) {
+                        val result = record.detail ?: "Lokasi tidak tersedia."
+                        id.ohmymonev.android.data.ActionLog.record(this@AutoFillService, "location.probe.complete", result)
+                        if (factory.canPostNotifications()) NotificationManagerCompat.from(this@AutoFillService)
+                            .notify(NotificationFactory.NOTIF_ID_REMINDER, factory.info("Uji lokasi", result))
+                        stopSelf()
+                    }
+                })
+            probeEngine = engine
+            engine.runAutomation(java.time.LocalDate.now().toString(), id.ohmymonev.core.model.ReportDraft("", "", ""), 1, locationOnly = true)
+            return START_NOT_STICKY
         }
 
         val delegate = AutoFillDelegateProvider.delegate
@@ -80,6 +113,10 @@ class AutoFillService : Service() {
     }
 
     override fun onDestroy() {
+        deadlineHandler.removeCallbacks(deadline)
+        probeEngine?.cancel()
+        AutoFillDelegateProvider.delegate?.cancel()
+        id.ohmymonev.android.data.ActionLog.record(this, "service.stop")
         manualRequest?.let { manualFinished(it, "Pengiriman terhenti. Cek ulang status laporan.") }
         super.onDestroy()
     }
@@ -87,6 +124,7 @@ class AutoFillService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        const val ACTION_LOCATION_PROBE = "id.ohmymonev.android.LOCATION_PROBE"
         private const val ACTION_BENCH = "id.ohmymonev.android.BENCH"
         private const val ACTION_MANUAL = "id.ohmymonev.android.MANUAL_REPORT"
         private val mutableManual = MutableStateFlow<ManualReportState?>(null)
@@ -113,7 +151,14 @@ class AutoFillService : Service() {
 
         fun start(context: Context) {
             val intent = Intent(context, AutoFillService::class.java)
-            context.startForegroundService(intent)
+            try { context.startForegroundService(intent) }
+            catch (_: RuntimeException) {
+                id.ohmymonev.android.data.ActionLog.record(context, "service.start.failed", "background start denied")
+                val factory = NotificationFactory(context)
+                factory.ensureChannels()
+                if (factory.canPostNotifications()) NotificationManagerCompat.from(context).notify(
+                    NotificationFactory.NOTIF_ID_REMINDER, factory.info("Pengiriman belum dimulai", "Periksa izin lokasi dan alarm aplikasi."))
+            }
         }
 
         /** Satu putaran uji mesin terhadap halaman tiruan di dalam aplikasi (debug). */

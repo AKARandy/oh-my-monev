@@ -29,6 +29,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelChildren
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZonedDateTime
@@ -43,6 +44,12 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var activeEngine: WebViewEngine? = null
+    override fun cancel() {
+        activeEngine?.cancel()
+        activeEngine = null
+        scope.coroutineContext.cancelChildren()
+    }
 
     override fun startAutoFill(context: Context) {
         val factory = NotificationFactory(appContext)
@@ -107,6 +114,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                         }
                     }
                 })
+                activeEngine = engine
                 engine.runAutomation(draft.date, report, attempt = 1,
                     expectedSessionVersion = request.sessionVersion, draftStillCurrent = ::draftStillCurrent)
             } catch (e: CancellationException) {
@@ -181,6 +189,11 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
         }
         id.ohmymonev.android.data.ActionLog.record(appContext, "emergency.prepare")
         val prepared = PreparedReportService(appContext).prepare()
+        if (prepared.participantId != status.account ||
+            prepared.sessionVersion != SessionRepository.get(appContext).state.value.version) {
+            AutoFillService.finished(appContext)
+            return
+        }
         val outcome = if (prepared.date == todayIso) prepared.outcome() else GenerationOutcome.Failed(
             id.ohmymonev.core.generator.FailureReason.INVALID_REPORT, "Tanggal berubah. Perbarui pratinjau.",
         )
@@ -191,7 +204,8 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                 // ditinjau ulang; lanjutan otomatis harus selalu disebut terang-terangan.
                 val fromTemplate = outcome.tier == GenerationTier.TEMPLATE && prepared.written == null
                 val fromContinuation = outcome.tier != GenerationTier.TEMPLATE
-                val engine = WebViewEngine(appContext, DEFAULT_SITE_PROFILE, runCallbacks(todayIso, store, factory, settings, usedTemplate = fromTemplate, usedContinuation = fromContinuation))
+                val engine = WebViewEngine(appContext, DEFAULT_SITE_PROFILE, runCallbacks(todayIso, store, factory, settings, usedTemplate = fromTemplate, usedContinuation = fromContinuation, account = prepared.participantId))
+                activeEngine = engine
                 engine.runAutomation(
                     dateISO = todayIso,
                     draft = outcome.draft,
@@ -244,17 +258,27 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
         bench: Boolean = false,
         usedTemplate: Boolean = false,
         usedContinuation: Boolean = false,
+        account: String? = null,
     ) = object : WebViewEngine.Callbacks {
         override fun onRunFinished(record: RunRecord) {
             scope.launch {
-                store.appendRecord(record)
                 if (bench) {
                     // Bukti uji mesin: catat hasil, jangan masukkan ke riwayat dan jangan beri notifikasi.
                     if (BuildConfig.DEBUG) Log.d("ohmymonev", "BENCH selesai: ${record.outcome} (${record.detail})")
                     AutoFillService.finished(appContext)
                     return@launch
                 }
-                when (record.outcome) {
+                val verified = try {
+                    withTimeoutOrNull(45_000) { SiteStatusProbe(appContext).checkReminder(LocalDate.parse(dateIso), account) }
+                } catch (e: CancellationException) { throw e }
+                catch (_: Exception) { null }
+                val finalRecord = if (account != null && verified?.account == account && verified.today == TodayState.FILLED)
+                    record.copy(outcome = EngineOutcome.SUBMITTED)
+                else if (record.outcome == EngineOutcome.SUBMITTED)
+                    record.copy(outcome = EngineOutcome.RETRYABLE_ERROR, detail = "Pengiriman belum terkonfirmasi. Periksa status sebelum mencoba lagi.")
+                else record
+                store.appendRecord(finalRecord)
+                when (finalRecord.outcome) {
                     EngineOutcome.SUBMITTED -> {
                         val detail = if (usedContinuation) "Tanggal $dateIso sudah dikirim dan tercatat di situs. Isian memakai lanjutan otomatis."
                         else "Tanggal $dateIso sudah dikirim dan tercatat di situs."
@@ -281,7 +305,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
                     else -> {
                         post(factory, NotificationFactory.NOTIF_ID_ESCALATION, factory.escalation())
-                        maybeScheduleRetry(record, store, settings)
+                        maybeScheduleRetry(finalRecord, store, settings)
                     }
                 }
                 AutoFillService.finished(appContext)
@@ -352,7 +376,7 @@ internal fun manualPreflightIssue(
 
 private fun manualSendFailure(record: RunRecord): String = when (record.outcome) {
     EngineOutcome.LOGIN_REQUIRED -> "Sesi Monev tidak siap. Periksa sesi, lalu cek ulang status laporan."
-    EngineOutcome.LOCATION_CHECK_FAILS -> "Monev belum dapat memeriksa lokasi. Cek ulang status laporan."
+    EngineOutcome.LOCATION_CHECK_FAILS -> (record.detail ?: "Monev belum dapat memeriksa lokasi.") + " Cek ulang status laporan."
     EngineOutcome.DAY_NOT_FILLABLE -> "Formulir Monev tidak dapat diisi. Cek ulang status laporan."
     EngineOutcome.READBACK_MISMATCH -> "Isian formulir berbeda dari draf. Cek ulang status laporan."
     EngineOutcome.LOADING_TIMEOUT -> (record.detail ?: "Monev tidak merespons.") + " Cek ulang status laporan."

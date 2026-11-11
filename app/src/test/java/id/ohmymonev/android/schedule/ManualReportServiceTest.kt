@@ -75,7 +75,7 @@ class ManualReportServiceTest {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val outcomes = mutableListOf<id.ohmymonev.core.enginecore.EngineOutcome>()
         val engine = id.ohmymonev.android.engine.WebViewEngine(
-            app, id.ohmymonev.core.siteprofile.DEFAULT_SITE_PROFILE,
+            app, id.ohmymonev.android.engine.BenchSite.profile,
             object : id.ohmymonev.android.engine.WebViewEngine.Callbacks {
                 override fun onEvent(message: String) = Unit
                 override fun onRunFinished(record: id.ohmymonev.core.enginecore.RunRecord) {

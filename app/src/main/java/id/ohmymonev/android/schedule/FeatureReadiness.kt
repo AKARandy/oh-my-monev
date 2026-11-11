@@ -17,6 +17,9 @@ internal data class FeatureReadiness(val session: Boolean, val location: Boolean
     ).joinToString(" · ")
 
     companion object {
+        fun backgroundLocation(context: Context): Boolean = android.os.Build.VERSION.SDK_INT < 29 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
+
         fun read(context: Context, session: Boolean = SessionRepository.get(context).state.value.usable) =
             FeatureReadiness(
                 session,

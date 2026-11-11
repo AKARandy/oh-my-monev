@@ -34,6 +34,14 @@ class AlarmSchedulerTest {
         assertEquals(1, shadowOf(alarms).scheduledAlarms.size)
     }
 
+    @Test fun backgroundLocationIsRequiredOnlyForEmergency() {
+        shadowOf(context.applicationContext as Application).denyPermissions(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        val report = AlarmScheduler.armAll(context, ScheduleSettings(escalationEnabled = true))
+        assertEquals(listOf("reminder"), report.armedKeys)
+        assertTrue(FeatureReadiness.read(context).ready)
+        assertTrue(!FeatureReadiness.backgroundLocation(context))
+    }
+
     @Test fun foreignAlarmIsNeverUsedAsTheFeatureSchedule() {
         val foreign = android.app.PendingIntent.getBroadcast(context, 777,
             android.content.Intent("other.app.ALARM"), android.app.PendingIntent.FLAG_IMMUTABLE)

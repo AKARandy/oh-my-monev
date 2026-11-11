@@ -4,7 +4,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.github.takahirom.roborazzi.captureRoboImage
 import id.ohmymonev.android.ui.AppRoot
 import id.ohmymonev.android.ui.HomeTab
@@ -70,6 +74,23 @@ class ScreenshotCaptureTest {
     @Test
     fun beranda() {
         capture("01-beranda", waitForText = "Pengingat") { HomeTab() }
+    }
+
+    @Test
+    fun locationDiagnostic() {
+        compose.setContent {
+            OhMyMonevTheme {
+                HomeTab()
+            }
+        }
+        compose.waitUntil(timeoutMillis = 8_000) {
+            compose.onAllNodesWithText("Alat pengujian").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("Alat pengujian").performScrollTo().performClick()
+        compose.onNodeWithTag("location-diagnostic").performScrollTo()
+        compose.waitForIdle()
+        compose.onNodeWithTag("location-diagnostic").captureRoboImage(target("location-permissions"))
+        println("SCREENSHOT-WRITTEN: ${target("location-permissions")}")
     }
 
     @Test

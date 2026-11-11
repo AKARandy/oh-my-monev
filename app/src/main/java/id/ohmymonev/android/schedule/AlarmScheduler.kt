@@ -22,6 +22,18 @@ data class ArmReport(val armedKeys: List<String>, val errors: List<String>)
  * (kejujuran bagi pengguna; malam ini money-critical: D4).
  */
 object AlarmScheduler {
+    fun scheduleLocationProbe(context: Context) {
+        if (!id.ohmymonev.android.BuildConfig.DEBUG || !FeatureReadiness.backgroundLocation(context)) return
+        val alarm = context.getSystemService(AlarmManager::class.java) ?: return
+        val pending = PendingIntent.getBroadcast(context, 9109,
+            Intent(context, AutoFillReceiver::class.java).setAction(AutoFillService.ACTION_LOCATION_PROBE),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val at = System.currentTimeMillis() + 90_000
+        if (Build.VERSION.SDK_INT < 31 || alarm.canScheduleExactAlarms())
+            alarm.setAlarmClock(AlarmManager.AlarmClockInfo(at, showApp(context)), pending)
+        else alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
+        id.ohmymonev.android.data.ActionLog.record(context, "location.probe.scheduled", "delaySeconds=90")
+    }
 
     private const val TAG = "AlarmScheduler"
 
@@ -40,7 +52,8 @@ object AlarmScheduler {
         }
         val now = ZonedDateTime.now(ScheduleCalculator.asiaJakarta)
         val ready = FeatureReadiness.read(context).ready
-        val fires = if (ready) ScheduleCalculator.nextFires(now, WorkDaysStore(context).restrict(settings), horizonDays = 7) else emptyMap()
+        val fires = if (ready) ScheduleCalculator.nextFires(now, WorkDaysStore(context).restrict(settings), horizonDays = 7)
+            .filterKeys { it == ScheduleCalculator.KEY_REMINDER || FeatureReadiness.backgroundLocation(context) } else emptyMap()
         // LEGACY_KEY_AUTOFILL tidak pernah dijadwalkan lagi; tetap di daftar agar
         // alarm warisan 21:00 dari versi lama ikut dibatalkan.
         for (key in listOf(ScheduleCalculator.KEY_REMINDER, LEGACY_KEY_AUTOFILL, ScheduleCalculator.KEY_ESCALATION)) {
@@ -56,7 +69,7 @@ object AlarmScheduler {
                 pending.cancel()
             }
         }
-        if (!ready || !settings.masterEnabled || !settings.escalationEnabled || !WorkDaysStore(context).isWorkday(now.toLocalDate())) {
+        if (!ready || !FeatureReadiness.backgroundLocation(context) || !settings.masterEnabled || !settings.escalationEnabled || !WorkDaysStore(context).isWorkday(now.toLocalDate())) {
             for (code in listOf(REQUEST_CODE_RETRY, REQUEST_CODE_TEST)) {
                 val intent = Intent(context, AutoFillReceiver::class.java).setAction(AutoFillReceiver.ACTION_AUTOFILL)
                 PendingIntent.getBroadcast(context, code, intent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)?.let {
@@ -69,9 +82,13 @@ object AlarmScheduler {
             lastArmError = "Periksa sesi dan izin aplikasi."
             return ArmReport(emptyList(), listOfNotNull(lastArmError))
         }
-        if (fires.isEmpty()) return ArmReport(emptyList(), emptyList())
+        val locationIssue = "Izinkan lokasi selalu untuk pengisian darurat."
+            .takeIf { settings.escalationEnabled && !FeatureReadiness.backgroundLocation(context) }
+        if (locationIssue != null) lastArmError = locationIssue
+        if (fires.isEmpty()) return ArmReport(emptyList(), listOfNotNull(locationIssue))
         val armedKeys = mutableListOf<String>()
         val errors = mutableListOf<String>()
+        locationIssue?.let { errors.add(it) }
         for ((key, fire) in fires) {
             try {
                 val intent = Intent(context, receiverFor(key)).apply {
@@ -163,6 +180,7 @@ object AlarmScheduler {
         if (!settings.masterEnabled) return ArmedState(false, null, "Semua fitur nonaktif")
         if (WorkDaysStore(context).days() == null) return ArmedState(false, null, "Hari kerja belum dimuat. Periksa sesi.")
         val next = ScheduleCalculator.nextFires(now.withZoneSameInstant(ScheduleCalculator.asiaJakarta), WorkDaysStore(context).restrict(settings))
+            .filterKeys { it == ScheduleCalculator.KEY_REMINDER || FeatureReadiness.backgroundLocation(context) }
             .entries.minByOrNull { it.value.toInstant() }
             ?: return ArmedState(false, null, "Tidak ada jadwal aktif")
         return ArmedState(false, next.value.toInstant().toString(), featureLabel(next.key))

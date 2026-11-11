@@ -3,6 +3,7 @@ package id.ohmymonev.android.ui
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import android.content.pm.PackageManager
 import android.os.Build
@@ -137,6 +138,10 @@ fun HomeTab(
     var locationGranted by remember {
         mutableStateOf(hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION))
     }
+    var backgroundLocationGranted by remember {
+        mutableStateOf(Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            hasPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+    }
     var notificationsOn by remember {
         mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
     }
@@ -160,9 +165,11 @@ fun HomeTab(
 
     fun refreshPermissions() {
         locationGranted = hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+        backgroundLocationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            hasPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         notificationsOn = NotificationManagerCompat.from(context).areNotificationsEnabled()
         id.ohmymonev.android.data.ActionLog.record(context, "permission.result",
-            "location=$locationGranted notifications=$notificationsOn")
+            "location=$locationGranted backgroundLocation=$backgroundLocationGranted notifications=$notificationsOn")
     }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -176,6 +183,9 @@ fun HomeTab(
 
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
+    ) { refreshPermissions() }
+    val backgroundLocationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
     ) { refreshPermissions() }
     var notificationRequested by remember { mutableStateOf(false) }
     val notificationLauncher = rememberLauncherForActivityResult(
@@ -191,6 +201,21 @@ fun HomeTab(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
         ))
+    }
+
+    fun requestBackgroundLocation() {
+        id.ohmymonev.android.data.ActionLog.record(context, "permission.background_location.request")
+        if (!locationGranted) {
+            requestLocation()
+        } else if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+            backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        } else {
+            context.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", context.packageName, null)
+                },
+            )
+        }
     }
 
     fun requestNotifications() {
@@ -504,6 +529,43 @@ fun HomeTab(
             }
             if (diagnosticsExpanded) {
                 Text("Uji mesin memakai halaman tiruan. Tes alarm memerlukan Pengisian darurat aktif.", style = MaterialTheme.typography.bodySmall)
+                Surface(
+                    modifier = Modifier.fillMaxWidth().testTag("location-diagnostic"),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text("Lokasi saat aplikasi tertutup", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "Pilih Selalu izinkan untuk pengisian terjadwal.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        OutlinedButton(
+                            onClick = loggedClick("HomeTab:513") { requestBackgroundLocation() },
+                        ) {
+                            Text(
+                                when {
+                                    !locationGranted -> "Izinkan lokasi akurat"
+                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !backgroundLocationGranted -> "Izinkan lokasi selalu"
+                                    else -> "Buka pengaturan lokasi"
+                                },
+                            )
+                        }
+                        Text(
+                            "Tidak mengirim laporan. Kunci layar setelah menjadwalkan.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        TextButton(
+                            enabled = locationGranted && backgroundLocationGranted,
+                            onClick = loggedClick("HomeTab:520") {
+                                AlarmScheduler.scheduleLocationProbe(context)
+                            },
+                        ) { Text("Uji lokasi 90 detik") }
+                    }
+                }
                 OutlinedButton(
                     onClick = loggedClick("HomeTab:508") { AutoFillService.startBench(context); running = true },
                     enabled = ready && !running,

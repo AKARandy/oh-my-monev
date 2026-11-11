@@ -82,8 +82,8 @@ android {
 androidComponents {
     onVariants(selector().withBuildType("debug")) { variant ->
         variant.outputs.forEach {
-            it.versionCode.set(18)
-            it.versionName.set("0.1.18")
+            it.versionCode.set(19)
+            it.versionName.set("0.1.19")
         }
     }
 }
@@ -98,6 +98,7 @@ dependencies {
     implementation(project(":core"))
 
     implementation(libs.androidx.core.ktx)
+    implementation("androidx.webkit:webkit:1.12.1")
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
