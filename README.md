@@ -10,6 +10,8 @@ English version: [README.en.md](README.en.md).
 MagangHub memberi uang kepada peserta magang. Tetapi peserta wajib mencatat kehadiran setiap hari.
 Jika peserta tidak mengirim catatan sebelum pukul 23.59 WIB, peserta kehilangan uang untuk hari itu.
 
+Oleh karena itu saya mengembangkan aplikasi **oh my monev** ini
+
 Aplikasi ini melakukan hal-hal ini:
 
 - Aplikasi memberi alarm pada jam yang ditetapkan oleh pengguna jika kehadiran belum tercatat (Defaultnya 20:00).
