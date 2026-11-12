@@ -12,7 +12,7 @@ Jika peserta tidak mengirim catatan sebelum pukul 23.59 WIB, peserta kehilangan 
 
 Oleh karena itu saya mengembangkan aplikasi **oh my monev** ini
 
-Aplikasi ini melakukan hal-hal ini:
+Aplikasi ini bisa melakukan hal-hal berikut:
 
 - Aplikasi memberi alarm pada jam yang ditetapkan oleh pengguna jika kehadiran belum tercatat (Defaultnya 20:00).
 - Aplikasi dapat mengisi formulir laporan, lalu mengirimnya pada jam yang Anda pilih. Sumber isian
@@ -23,7 +23,7 @@ Aplikasi ini melakukan hal-hal ini:
 - Aplikasi memeriksa semua teks sebelum mengisi formulir. Setiap bagian wajib berisi 100 sampai 5000 karakter.
 - Ponsel boleh dalam keadaan diam dan alarm tetap tepat waktu
 
-Status: masih dalam pengembangan. Lihat `docs/plan.md`.
+Status: masih dalam pengembangan.
 
 ## Struktur
 
@@ -42,9 +42,9 @@ Status: masih dalam pengembangan. Lihat `docs/plan.md`.
 .tools\gradle-8.10.2\bin\gradle.bat :app:assembleDebug
 ```
 
-## Penggunaan yang disetujui
+## Penggunaan aplikasi 
 
-Aplikasi memakai akun Anda dan sesi Anda. Aplikasi tidak mengarang isi laporan.
+Aplikasi memakai akun Anda dan sesi Anda.
 Anda bertanggung jawab atas teks yang dikirim aplikasi.
 Aplikasi menulis setiap tindakan otomatis ke dalam catatan. Anda dapat membaca teks setiap tindakan.
 Anda dapat menghentikan otomatisasi untuk satu hari.
