@@ -12,15 +12,14 @@ Jika peserta tidak mengirim catatan sebelum pukul 23.59 WIB, peserta kehilangan 
 
 Aplikasi ini melakukan hal-hal ini:
 
-- Aplikasi memberi alarm pada jam yang ditetapkan (bawaan: 20.00) jika kehadiran belum tercatat.
+- Aplikasi memberi alarm pada jam yang ditetapkan oleh pengguna jika kehadiran belum tercatat (Defaultnya 20:00).
 - Aplikasi dapat mengisi formulir laporan, lalu mengirimnya pada jam yang Anda pilih. Sumber isian
-  wajib dipilih satu: templat buatan Anda, atau lanjutan otomatis dari laporan hari sebelumnya.
-- Lanjutan otomatis itu eksperimen dan berisiko. Aplikasi meminta konfirmasi sebelum menyalakannya.
+  wajib dipilih satu: templat isi absen buatan Anda, atau lanjutan otomatis dari laporan hari sebelumnya.
+- Dimana lanjutan otomatis itu sifatnya MASIH eksperimental dan berisiko. Aplikasi meminta konfirmasi sebelum menyalakannya.
   Contoh: "Melakukan aktivitas X" menjadi "Melanjutkan aktivitas X". Aplikasi tidak mengarang kata.
   Pratinjau menunjukkan teks yang akan dikirim.
 - Aplikasi memeriksa semua teks sebelum mengisi formulir. Setiap bagian wajib berisi 100 sampai 5000 karakter.
-- Ponsel boleh dalam keadaan diam. Alarm tetap tepat waktu. Sebuah layanan menjaga ponsel tetap
-  menyala selama pengisian berlangsung.
+- Ponsel boleh dalam keadaan diam dan alarm tetap tepat waktu
 
 Status: masih dalam pengembangan. Lihat `docs/plan.md`.
 
