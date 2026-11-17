@@ -52,20 +52,30 @@ class AutoFillService : Service() {
         factory.ensureChannels()
         val notification: Notification = factory.autofillProgress()
         val bench = intent?.action == ACTION_BENCH
+        var nativeLocation = !bench && FeatureReadiness.read(this).location &&
+            (request != null || id.ohmymonev.android.MainActivity.visible || FeatureReadiness.backgroundLocation(this)) &&
+            androidx.core.location.LocationManagerCompat.isLocationEnabled(getSystemService(android.location.LocationManager::class.java))
         try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceCompat.startForeground(
                 this,
                 NotificationFactory.NOTIF_ID_AUTOFILL,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or (if (bench) 0 else ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
             )
+            if (nativeLocation) {
+                try {
+                    ServiceCompat.startForeground(this, NotificationFactory.NOTIF_ID_AUTOFILL, notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+                } catch (_: SecurityException) { nativeLocation = false }
+            }
         } else {
             startForeground(NotificationFactory.NOTIF_ID_AUTOFILL, notification)
         }
+        nativeLocationAllowed = nativeLocation
         } catch (_: RuntimeException) {
-            request?.let { manualFinished(it, "Periksa izin lokasi aplikasi.") }
-            id.ohmymonev.android.data.ActionLog.record(this, "service.start.failed", "location permission or background restriction")
+            request?.let { manualFinished(it, "Pengiriman tidak dapat dimulai Periksa izin aplikasi") }
+            id.ohmymonev.android.data.ActionLog.record(this, "service.start.failed", "foreground service start denied")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -76,7 +86,13 @@ class AutoFillService : Service() {
                 object : id.ohmymonev.android.engine.WebViewEngine.Callbacks {
                     override fun onEvent(message: String) = Unit
                     override fun onRunFinished(record: id.ohmymonev.core.enginecore.RunRecord) {
-                        val result = record.detail ?: "Lokasi tidak tersedia."
+                        val result = if (record.outcome == id.ohmymonev.core.enginecore.EngineOutcome.FILL_OK)
+                            "Lokasi tersedia\n" + when (record.locationSource) {
+                                "IP" -> "Perkiraan lokasi IP"
+                                "DEVICE" -> "Lokasi perangkat"
+                                else -> "Sumber tidak diketahui"
+                            }
+                        else record.detail ?: "Lokasi tidak tersedia"
                         id.ohmymonev.android.data.ActionLog.record(this@AutoFillService, "location.probe.complete", result)
                         if (factory.canPostNotifications()) NotificationManagerCompat.from(this@AutoFillService)
                             .notify(NotificationFactory.NOTIF_ID_REMINDER, factory.info("Uji lokasi", result))
@@ -113,6 +129,7 @@ class AutoFillService : Service() {
     }
 
     override fun onDestroy() {
+        nativeLocationAllowed = false
         deadlineHandler.removeCallbacks(deadline)
         probeEngine?.cancel()
         AutoFillDelegateProvider.delegate?.cancel()
@@ -124,6 +141,8 @@ class AutoFillService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        @Volatile var nativeLocationAllowed: Boolean = false
+            private set
         const val ACTION_LOCATION_PROBE = "id.ohmymonev.android.LOCATION_PROBE"
         private const val ACTION_BENCH = "id.ohmymonev.android.BENCH"
         private const val ACTION_MANUAL = "id.ohmymonev.android.MANUAL_REPORT"

@@ -8,11 +8,10 @@ import androidx.core.content.ContextCompat
 import id.ohmymonev.android.data.SessionRepository
 
 internal data class FeatureReadiness(val session: Boolean, val location: Boolean, val notifications: Boolean) {
-    val ready get() = session && location && notifications
+    val ready get() = session && notifications
 
     fun missing(): String = listOfNotNull(
         "Login ke Monev".takeUnless { session },
-        "Izinkan lokasi akurat".takeUnless { location },
         "Aktifkan notifikasi".takeUnless { notifications },
     ).joinToString(" · ")
 
@@ -27,7 +26,7 @@ internal data class FeatureReadiness(val session: Boolean, val location: Boolean
                 NotificationManagerCompat.from(context).areNotificationsEnabled(),
             )
 
-        suspend fun rearm(context: Context) {
+        suspend fun rearm(context: Context) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val settings = TimeSettingsStore(context).settingsOnce()
             AlarmScheduler.armAll(context, settings)
             if (read(context).ready) {

@@ -82,8 +82,8 @@ android {
 androidComponents {
     onVariants(selector().withBuildType("debug")) { variant ->
         variant.outputs.forEach {
-            it.versionCode.set(19)
-            it.versionName.set("0.1.19")
+            it.versionCode.set(21)
+            it.versionName.set("0.1.21")
         }
     }
 }
@@ -105,6 +105,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     // Mesin neural mode Otomatis: runtime ONNX di perangkat.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")

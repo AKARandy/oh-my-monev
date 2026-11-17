@@ -4,7 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationManagerCompat
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.ensureActive
 
 /**
  * Alarm pengisian darurat 22:30 (default) — satu-satunya pengisi otomatis, selalu
@@ -13,9 +13,13 @@ import kotlinx.coroutines.runBlocking
  */
 class EscalationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        ReceiverWork.launch(this) { handle(context, intent) }
+    }
+
+    private suspend fun handle(context: Context, intent: Intent) {
         id.ohmymonev.android.data.ActionLog.record(context, "alarm.received", "EscalationReceiver")
-        if (!FeatureReadiness.backgroundLocation(context)) return
-        val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
+        val settings = TimeSettingsStore(context).settingsOnce()
+        kotlin.coroutines.coroutineContext.ensureActive()
         if (!FeatureReadiness.read(context).ready) {
             AlarmScheduler.armAll(context, settings)
             return
@@ -32,6 +36,7 @@ class EscalationReceiver : BroadcastReceiver() {
             NotificationManagerCompat.from(context)
                 .notify(NotificationFactory.NOTIF_ID_ESCALATION, factory.escalation())
         }
+        kotlin.coroutines.coroutineContext.ensureActive()
         AutoFillService.start(context)
     }
 

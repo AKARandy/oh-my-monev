@@ -69,7 +69,7 @@ internal class ReminderController(private val context: Context) {
                         check?.cancel()
                         timer?.cancel()
                         stopAlarm()
-                        clear(context)
+                        withContext(Dispatchers.IO) { clear(context) }
                         failures.clear()
                         warned.clear()
                     }
@@ -81,7 +81,7 @@ internal class ReminderController(private val context: Context) {
                     if (!initializing) {
                         if (!FeatureReadiness.read(context).ready) {
                             stopAlarm()
-                            clear(context)
+                            withContext(Dispatchers.IO) { clear(context) }
                         }
                         requestCheck()
                     }
@@ -133,15 +133,15 @@ internal class ReminderController(private val context: Context) {
     }
 
     private suspend fun runChecks() {
-        val keys = preferences.all.keys.sorted()
+        val keys = withContext(Dispatchers.IO) { preferences.all.keys.sorted() }
         val now = System.currentTimeMillis()
         for (key in keys) {
             if (!enabled || !FeatureReadiness.read(context).ready) {
                 stopAlarm()
-                clear(context)
+                withContext(Dispatchers.IO) { clear(context) }
                 return
             }
-            val due = due(key)
+            val due = withContext(Dispatchers.IO) { due(key) }
             if (due < 0 || due > now) continue
             val date = LocalDate.parse(key.substringAfterLast('/'))
             val account = key.substringBeforeLast('/').takeUnless { it == UNBOUND }
@@ -197,7 +197,7 @@ internal class ReminderController(private val context: Context) {
                 }
             }
         }
-        val next = preferences.all.values.filterIsInstance<Long>().filter { it > now }.minOrNull()
+        val next = withContext(Dispatchers.IO) { preferences.all.values.filterIsInstance<Long>().filter { it > now }.minOrNull() }
         if (next != null) timer = scope.launch {
             delay((next - System.currentTimeMillis()).coerceAtLeast(1))
             requestCheck()

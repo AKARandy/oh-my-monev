@@ -72,6 +72,7 @@ class WebViewEngine(
         val attemptedAtISO: String,
         val expectedSessionVersion: Long?,
     ) {
+        lateinit var scope: CoroutineScope
         lateinit var webView: WebView
         lateinit var watchdog: Runnable
         val runId = java.util.UUID.randomUUID().toString()
@@ -95,6 +96,13 @@ class WebViewEngine(
             attempt = attempt,
             attemptedAtISO = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(OffsetDateTime.now()),
         )
+        state.scope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main +
+            kotlinx.coroutines.CoroutineExceptionHandler { _, failure ->
+                if (failure !is kotlinx.coroutines.CancellationException) {
+                    id.ohmymonev.android.data.ActionLog.record(appContext, "send.exception", state.runId)
+                    main.post { finish(state, EngineOutcome.RETRYABLE_ERROR, "Pengiriman terhenti Cek ulang status laporan") }
+                }
+            })
         state.watchdog = Runnable {
             finish(state, EngineOutcome.LOADING_TIMEOUT, "Batas waktu saat ${state.stage}.")
         }
@@ -131,13 +139,14 @@ class WebViewEngine(
         webView.webChromeClient = SessionWebView.locationClient(appContext)
         events(state, "Mulai otomatisasi tanggal ${state.dateISO} (percobaan ${state.attempt})")
         if (SessionWebView.trusted(profile.urls.baseUrl)) {
-            state.stage = "mengambil lokasi perangkat"
+            state.stage = "memeriksa lokasi"
             id.ohmymonev.android.data.ActionLog.record(appContext, "send.stage", "${state.runId} ${state.stage}")
             id.ohmymonev.android.data.ActionLog.record(appContext, "send.environment",
                 "${state.runId} webview=${WebView.getCurrentWebViewPackage()?.versionName} locationEnabled=${androidx.core.location.LocationManagerCompat.isLocationEnabled(appContext.getSystemService(android.location.LocationManager::class.java))} background=${id.ohmymonev.android.schedule.FeatureReadiness.backgroundLocation(appContext)}")
-            state.bootstrap = CoroutineScope(Dispatchers.Main).launch {
+            state.bootstrap = state.scope.launch {
                 try {
-                    val bridge = LocationBridge(appContext, webView, state.runId)
+                    val bridge = LocationBridge(appContext, webView, state.runId,
+                        deviceAllowed = { id.ohmymonev.android.schedule.AutoFillService.nativeLocationAllowed })
                     state.location = bridge
                     bridge.install()
                     bridge.prepare()
@@ -175,7 +184,7 @@ class WebViewEngine(
 
     /** Loads the dashboard and polls until the loggedInTabs markers appear (session sanity). */
     private fun openDashboard(state: RunState) {
-        CoroutineScope(Dispatchers.Main).launch {
+        state.scope.launch {
             val session = SessionRepository.get(appContext)
             val credentials = session.credentials()
             if (state.finished) return@launch
@@ -284,10 +293,10 @@ class WebViewEngine(
         }
     }
 
-    private fun fillForm(state: RunState) {
+    private fun fillForm(state: RunState): kotlinx.coroutines.Job = state.scope.launch {
         state.stage = "mengisi formulir"
         id.ohmymonev.android.data.ActionLog.record(appContext, "send.stage", "${state.runId} ${state.stage}")
-        if (!currentDraftScope(state)) return
+        if (!currentDraftScope(state)) return@launch
         val js = JsSnippets.fillTextareas(
             profile,
             aktivitas = state.draft.aktivitas,
@@ -324,7 +333,10 @@ class WebViewEngine(
         }
     }
 
-    private fun currentDraftScope(state: RunState): Boolean {
+    private suspend fun currentDraftScope(state: RunState): Boolean {
+        if (state.finished) return false
+        val draftCurrent = kotlinx.coroutines.withContext(Dispatchers.IO) { state.draftStillCurrent?.invoke() != false }
+        if (state.finished) return false
         // Bench runs have no participant-bound draft and stay on the local fixture.
         if (state.expectedSessionVersion == null) return true
         if (!id.ohmymonev.android.schedule.FeatureReadiness.read(appContext).ready) {
@@ -339,7 +351,7 @@ class WebViewEngine(
             finish(state, EngineOutcome.LOGIN_REQUIRED, "Sesi berubah. Perbarui pratinjau.")
             return false
         }
-        if (state.draftStillCurrent?.invoke() == false) {
+        if (!draftCurrent) {
             finish(state, EngineOutcome.READBACK_MISMATCH, "Draf berubah. Tinjau draf lagi.")
             return false
         }
@@ -359,8 +371,8 @@ class WebViewEngine(
     }
 
     /** Tick the confirmation checkbox, then click 'Simpan dan Kirim'. */
-    private fun tickAndSubmit(state: RunState) {
-        if (!currentDraftScope(state)) return
+    private fun tickAndSubmit(state: RunState): kotlinx.coroutines.Job = state.scope.launch {
+        if (!currentDraftScope(state)) return@launch
         val webView = state.webView
         webView.evaluateJavascript(JsSnippets.tickCheckbox(profile)) { raw ->
             if (state.finished) return@evaluateJavascript
@@ -374,8 +386,8 @@ class WebViewEngine(
         }
     }
 
-    private fun waitSubmitEnabled(state: RunState, deadline: Long) {
-        if (state.finished || !currentDraftScope(state)) return
+    private fun waitSubmitEnabled(state: RunState, deadline: Long): kotlinx.coroutines.Job = state.scope.launch {
+        if (state.finished || !currentDraftScope(state)) return@launch
         state.webView.evaluateJavascript(JsSnippets.clickSubmit(profile)) { raw ->
             if (state.finished) return@evaluateJavascript
             val result = unwrapObject(raw)
@@ -421,9 +433,12 @@ class WebViewEngine(
     private fun finish(state: RunState, outcome: EngineOutcome, detail: String?, notify: Boolean = true) {
         if (state.finished) return
         state.finished = true
+        val locationSource = state.location?.lastSource
+        val fallbackReason = state.location?.lastFallbackReason
+        state.scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
         if (active === state) active = null
         state.bootstrap?.cancel()
-        state.location?.close()
+        runCatching { state.location?.close() }
         id.ohmymonev.android.data.ActionLog.record(appContext, "send.finish",
             "${state.runId} outcome=$outcome stage=${state.stage}")
         main.removeCallbacks(state.watchdog)
@@ -439,6 +454,9 @@ class WebViewEngine(
                 outcome = outcome,
                 attempt = state.attempt,
                 detail = detail,
+                locationSource = locationSource,
+                fallbackReason = fallbackReason,
+                lastStage = state.stage,
             ),
         )
     }

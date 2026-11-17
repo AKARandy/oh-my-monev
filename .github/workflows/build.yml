@@ -28,6 +28,9 @@ jobs:
       - name: Core tests (pure logic)
         run: gradle --no-daemon :core:test
 
+      - name: Compile debug and release unit tests
+        run: gradle --no-daemon :app:compileDebugUnitTestKotlin :app:compileReleaseUnitTestKotlin
+
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
 

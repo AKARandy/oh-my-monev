@@ -23,7 +23,7 @@ data class ArmReport(val armedKeys: List<String>, val errors: List<String>)
  */
 object AlarmScheduler {
     fun scheduleLocationProbe(context: Context) {
-        if (!id.ohmymonev.android.BuildConfig.DEBUG || !FeatureReadiness.backgroundLocation(context)) return
+        if (!id.ohmymonev.android.BuildConfig.DEBUG) return
         val alarm = context.getSystemService(AlarmManager::class.java) ?: return
         val pending = PendingIntent.getBroadcast(context, 9109,
             Intent(context, AutoFillReceiver::class.java).setAction(AutoFillService.ACTION_LOCATION_PROBE),
@@ -53,7 +53,7 @@ object AlarmScheduler {
         val now = ZonedDateTime.now(ScheduleCalculator.asiaJakarta)
         val ready = FeatureReadiness.read(context).ready
         val fires = if (ready) ScheduleCalculator.nextFires(now, WorkDaysStore(context).restrict(settings), horizonDays = 7)
-            .filterKeys { it == ScheduleCalculator.KEY_REMINDER || FeatureReadiness.backgroundLocation(context) } else emptyMap()
+             else emptyMap()
         // LEGACY_KEY_AUTOFILL tidak pernah dijadwalkan lagi; tetap di daftar agar
         // alarm warisan 21:00 dari versi lama ikut dibatalkan.
         for (key in listOf(ScheduleCalculator.KEY_REMINDER, LEGACY_KEY_AUTOFILL, ScheduleCalculator.KEY_ESCALATION)) {
@@ -69,7 +69,7 @@ object AlarmScheduler {
                 pending.cancel()
             }
         }
-        if (!ready || !FeatureReadiness.backgroundLocation(context) || !settings.masterEnabled || !settings.escalationEnabled || !WorkDaysStore(context).isWorkday(now.toLocalDate())) {
+        if (!ready || !settings.masterEnabled || !settings.escalationEnabled || !WorkDaysStore(context).isWorkday(now.toLocalDate())) {
             for (code in listOf(REQUEST_CODE_RETRY, REQUEST_CODE_TEST)) {
                 val intent = Intent(context, AutoFillReceiver::class.java).setAction(AutoFillReceiver.ACTION_AUTOFILL)
                 PendingIntent.getBroadcast(context, code, intent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)?.let {
@@ -82,13 +82,12 @@ object AlarmScheduler {
             lastArmError = "Periksa sesi dan izin aplikasi."
             return ArmReport(emptyList(), listOfNotNull(lastArmError))
         }
-        val locationIssue = "Izinkan lokasi selalu untuk pengisian darurat."
-            .takeIf { settings.escalationEnabled && !FeatureReadiness.backgroundLocation(context) }
-        if (locationIssue != null) lastArmError = locationIssue
-        if (fires.isEmpty()) return ArmReport(emptyList(), listOfNotNull(locationIssue))
+        if (fires.isEmpty()) {
+            clearRecoveryFailure(context)
+            return ArmReport(emptyList(), emptyList())
+        }
         val armedKeys = mutableListOf<String>()
         val errors = mutableListOf<String>()
-        locationIssue?.let { errors.add(it) }
         for ((key, fire) in fires) {
             try {
                 val intent = Intent(context, receiverFor(key)).apply {
@@ -119,13 +118,23 @@ object AlarmScheduler {
         if (!exactAllowed && errors.isEmpty()) {
             lastArmError = "izin exact alarm belum diberikan; alarm memakai mode toleran (bisa telat beberapa menit). Berikan izin alarm di pengaturan untuk ketepatan penuh."
         }
+        if (errors.isEmpty()) clearRecoveryFailure(context) else recordRecoveryFailure(context)
         return ArmReport(armedKeys, errors)
     }
 
+    internal fun recordRecoveryFailure(context: Context) {
+        context.getSharedPreferences(RECOVERY_PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(RECOVERY_FAILED, true).apply()
+    }
+
+    private fun clearRecoveryFailure(context: Context) {
+        context.getSharedPreferences(RECOVERY_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(RECOVERY_FAILED).apply()
+    }
+
     /** Alarm uji cepat: autofill penuh menyala [inSeconds] dari sekarang. */
-    @Synchronized
-    fun quickFireForTest(context: Context, inSeconds: Int = 90) {
-        val settings = kotlinx.coroutines.runBlocking { TimeSettingsStore(context).settingsOnce() }
+    suspend fun quickFireForTest(context: Context, inSeconds: Int = 90) {
+        val settings = TimeSettingsStore(context).settingsOnce()
         if (!settings.masterEnabled || !settings.escalationEnabled) return
         val am = context.getSystemService(AlarmManager::class.java) ?: return
         val intent = Intent(context, AutoFillReceiver::class.java)
@@ -144,9 +153,8 @@ object AlarmScheduler {
      * Percobaan ulang berikutnya pada [at] (tangga +5/+20/+60 dari ScheduleCalculator).
      * requestCode tetap: percobaan berikutnya menggantikan yang lama.
      */
-    @Synchronized
-    fun scheduleRetry(context: Context, at: ZonedDateTime) {
-        val settings = kotlinx.coroutines.runBlocking { TimeSettingsStore(context).settingsOnce() }
+    suspend fun scheduleRetry(context: Context, at: ZonedDateTime) {
+        val settings = TimeSettingsStore(context).settingsOnce()
         if (!settings.masterEnabled || !settings.escalationEnabled) return
         val am = context.getSystemService(AlarmManager::class.java) ?: return
         val intent = Intent(context, AutoFillReceiver::class.java)
@@ -168,7 +176,7 @@ object AlarmScheduler {
         val state = readArmedState(context, settings)
         return state.copy(
             armed = report.armedKeys.isNotEmpty() && report.errors.isEmpty(),
-            lastError = report.errors.takeIf { it.isNotEmpty() }?.joinToString("; ") ?: lastArmError,
+            lastError = state.lastError ?: report.errors.takeIf { it.isNotEmpty() }?.joinToString("; ") ?: lastArmError,
         )
     }
 
@@ -177,13 +185,15 @@ object AlarmScheduler {
         settings: ScheduleSettings,
         now: ZonedDateTime = ZonedDateTime.now(ScheduleCalculator.asiaJakarta),
     ): ArmedState {
-        if (!settings.masterEnabled) return ArmedState(false, null, "Semua fitur nonaktif")
-        if (WorkDaysStore(context).days() == null) return ArmedState(false, null, "Hari kerja belum dimuat. Periksa sesi.")
+        val error = if (context.getSharedPreferences(RECOVERY_PREFS, Context.MODE_PRIVATE)
+                .getBoolean(RECOVERY_FAILED, false)) RECOVERY_ERROR else lastArmError
+        if (!settings.masterEnabled) return ArmedState(false, null, "Semua fitur nonaktif", error)
+        if (WorkDaysStore(context).days() == null) return ArmedState(false, null, "Hari kerja belum dimuat. Periksa sesi.", error)
         val next = ScheduleCalculator.nextFires(now.withZoneSameInstant(ScheduleCalculator.asiaJakarta), WorkDaysStore(context).restrict(settings))
-            .filterKeys { it == ScheduleCalculator.KEY_REMINDER || FeatureReadiness.backgroundLocation(context) }
+
             .entries.minByOrNull { it.value.toInstant() }
-            ?: return ArmedState(false, null, "Tidak ada jadwal aktif")
-        return ArmedState(false, next.value.toInstant().toString(), featureLabel(next.key))
+            ?: return ArmedState(false, null, "Tidak ada jadwal aktif", error)
+        return ArmedState(false, next.value.toInstant().toString(), featureLabel(next.key), error)
     }
 
     private fun featureLabel(key: String): String = when (key) {
@@ -235,6 +245,10 @@ object AlarmScheduler {
     private const val REQUEST_CODE_ESCALATION = 13
     private const val REQUEST_CODE_RETRY = 21
     private const val REQUEST_CODE_TEST = 99
+
+    private const val RECOVERY_PREFS = "alarm_recovery"
+    private const val RECOVERY_FAILED = "rearm_failed"
+    private const val RECOVERY_ERROR = "Alarm belum pulih. Periksa jadwal."
 
     private const val LEGACY_KEY_AUTOFILL = "autofill"
 }

@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,6 +38,25 @@ class TimeSettingsStoreTest {
     private val store = TimeSettingsStore(preferences)
 
     @After fun closeStore() = runBlocking { job.cancelAndJoin() }
+
+    @Test fun slowReadSuspendsWithoutStartingAWriteTransaction() = runBlocking {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val slow = object : androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences> {
+            override val data = kotlinx.coroutines.flow.flow {
+                entered.complete(Unit)
+                gate.await()
+                emit(androidx.datastore.preferences.core.emptyPreferences())
+            }
+            override suspend fun updateData(transform: suspend (androidx.datastore.preferences.core.Preferences) -> androidx.datastore.preferences.core.Preferences): androidx.datastore.preferences.core.Preferences =
+                error("Reading settings must not write")
+        }
+        val result = kotlinx.coroutines.CoroutineScope(Dispatchers.Default).async { TimeSettingsStore(slow).settingsOnce() }
+        entered.await()
+        org.junit.Assert.assertFalse(result.isCompleted)
+        gate.complete(Unit)
+        assertEquals(ScheduleSettings(), result.await())
+    }
 
     @Test fun freshStoreStartsWithTemplateSourceAndSafeDefaults() = runBlocking {
         val s = store.settingsOnce()

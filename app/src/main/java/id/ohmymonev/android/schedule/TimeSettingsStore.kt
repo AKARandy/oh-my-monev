@@ -12,6 +12,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import id.ohmymonev.core.schedule.ScheduleSettings
 import java.time.DayOfWeek
 import java.time.LocalTime
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -39,26 +40,12 @@ class TimeSettingsStore internal constructor(private val dataStore: DataStore<Pr
         val MASTER_ENABLED = booleanPreferencesKey("master_enabled")
         val REMINDER_ENABLED = booleanPreferencesKey("reminder_enabled")
         val ESCALATION_ENABLED = booleanPreferencesKey("escalation_enabled")
-        val DEFAULTS_VERSION = intPreferencesKey("defaults_version")
     }
 
     val settings: Flow<ScheduleSettings> = dataStore.data.map { build(it) }
 
-    /**
-     * Pembacaan sekali pukur untuk dipakai di BroadcastReceiver.
-     * Sekali sejak pembaruan: tulis penanda versi. Kunci fitur yang dihapus
-     * (autofill dan kebijakan versi lama) cukup diabaikan, tidak perlu ditulis ulang.
-     */
-    suspend fun settingsOnce(): ScheduleSettings {
-        var result = DEFAULT
-        dataStore.edit { prefs ->
-            result = build(prefs)
-            if (prefs[Keys.DEFAULTS_VERSION] == null) {
-                prefs[Keys.DEFAULTS_VERSION] = DEFAULTS_VERSION
-            }
-        }
-        return result
-    }
+    /** Read a snapshot without writing to the store. */
+    suspend fun settingsOnce(): ScheduleSettings = dataStore.data.first().let(::build)
 
     suspend fun save(settings: ScheduleSettings) {
         dataStore.edit { prefs ->
@@ -76,9 +63,6 @@ class TimeSettingsStore internal constructor(private val dataStore: DataStore<Pr
 
     private companion object {
         val DEFAULT = ScheduleSettings()
-
-        /** Versi bawaan yang sudah pernah diterapkan pada perangkat ini. */
-        const val DEFAULTS_VERSION = 3
 
         fun build(prefs: Preferences): ScheduleSettings {
             val legacyDays = activeDays(prefs[Keys.ACTIVE_DAYS])

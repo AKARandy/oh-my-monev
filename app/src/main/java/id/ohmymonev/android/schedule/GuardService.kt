@@ -8,7 +8,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.ServiceCompat
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 
 /**
  * Layanan penjaga: notifikasi permanen yang menjadi BUKTI nyata status otomatisasi.
@@ -22,6 +22,9 @@ import kotlinx.coroutines.runBlocking
  */
 class GuardService : Service() {
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var command: Job? = null
+    private var refresh: Job? = null
     private lateinit var reminders: ReminderController
 
     override fun onCreate() {
@@ -32,30 +35,42 @@ class GuardService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startAsForeground()
-        val settings = runBlocking { TimeSettingsStore(this@GuardService).settingsOnce() }
+        if (intent?.action in listOf("stop", "snooze")) {
+            reminders.handle(intent)
+            refreshContent()
+            return START_STICKY
+        }
+        command?.cancel()
+        command = scope.launch {
+        try {
+        val settings = TimeSettingsStore(this@GuardService).settingsOnce()
         if (!settings.masterEnabled) {
             stopSelf()
-            return START_NOT_STICKY
+            return@launch
         }
         if (intent == null) {
             // Dihidupkan ulang oleh sistem (START_STICKY): perbaiki alarm yang mungkin hilang.
-            AlarmScheduler.armAll(this, settings)
+            withContext(Dispatchers.IO) { AlarmScheduler.armAll(this@GuardService, settings) }
         }
         reminders.handle(intent)
         refreshContent()
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) { android.util.Log.w("GuardService", "Cannot read schedule"); stopSelf(startId) }
+        }
         return START_STICKY
     }
 
     /** Aplikasi di-swipe dari Recents: layanan tetap hidup; pastikan alarm tetap terpasang. */
     override fun onTaskRemoved(rootIntent: Intent?) {
-        val settings = runBlocking { TimeSettingsStore(this@GuardService).settingsOnce() }
-        if (settings.masterEnabled) {
-            AlarmScheduler.armAll(this, settings)
+        scope.launch(Dispatchers.IO) {
+            val settings = TimeSettingsStore(this@GuardService).settingsOnce()
+            if (settings.masterEnabled) AlarmScheduler.armAll(this@GuardService, settings)
         }
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
+        scope.cancel()
         reminders.close()
         super.onDestroy()
     }
@@ -87,13 +102,21 @@ class GuardService : Service() {
 
     /** Perbarui isi notifikasi dari keadaan sesungguhnya (alarm OS + pilihan skip malam ini). */
     fun refreshContent() {
-        val factory = NotificationFactory(this)
-        val settings = runBlocking { TimeSettingsStore(this@GuardService).settingsOnce() }
-        val state = AlarmScheduler.ensureArmed(this, settings)
-        val skipped = AppStoreBridge.isTodaySkipped(this)
-        val notification: Notification = factory.guard(nextFireISO = state.nextFireISO, skipped = skipped, feature = state.source, error = state.lastError)
-        androidx.core.app.NotificationManagerCompat.from(this)
-            .notify(NotificationFactory.NOTIF_ID_GUARD, notification)
+        refresh?.cancel()
+        refresh = scope.launch {
+            try {
+                val notification = withContext(Dispatchers.IO) {
+                    val factory = NotificationFactory(this@GuardService)
+                    val settings = TimeSettingsStore(this@GuardService).settingsOnce()
+                    val state = AlarmScheduler.ensureArmed(this@GuardService, settings)
+                    factory.guard(nextFireISO = state.nextFireISO, skipped = AppStoreBridge.isTodaySkipped(this@GuardService), feature = state.source, error = state.lastError)
+                }
+                ensureActive()
+                androidx.core.app.NotificationManagerCompat.from(this@GuardService)
+                    .notify(NotificationFactory.NOTIF_ID_GUARD, notification)
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { android.util.Log.w("GuardService", "Cannot refresh schedule") }
+        }
     }
 
     companion object {

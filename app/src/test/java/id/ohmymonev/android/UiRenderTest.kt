@@ -2,6 +2,7 @@ package id.ohmymonev.android
 
 import android.app.Application
 import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,13 +21,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.Density
@@ -48,6 +52,7 @@ import id.ohmymonev.core.schedule.ScheduleSettings
 import java.io.File
 import java.time.DayOfWeek
 import java.time.LocalTime
+import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
@@ -106,7 +111,7 @@ class UiRenderTest {
                 compose.onNodeWithTag("alarm-edit-$title").assertIsNotEnabled()
             }
         }
-        if (captureTag == "download-logs") compose.onNodeWithTag("download-logs").performScrollTo()
+        if (captureTag == "download-logs" || captureTag == "last-run") compose.onNodeWithTag(captureTag).performScrollTo()
         val root = requireNotNull(File(requireNotNull(System.getProperty("user.dir"))).parentFile)
         val output = File(root, "screenshots/$name.png")
         requireNotNull(output.parentFile).mkdirs()
@@ -316,8 +321,101 @@ class UiRenderTest {
         )
     }
 
-    @Test fun manualConfirmationProof() = capture("manual-confirmation-proof", "Kirim laporan hari ini ke Monev?") {
-        id.ohmymonev.android.ui.ConfirmManualReport(true, {}, {})
+    @Test fun manualConfirmationProof() = capture("manual-confirmation-proof-v2", "Kirim laporan hari ini ke Monev?") {
+        id.ohmymonev.android.ui.ConfirmManualReport(
+            locationFallback = false, locationEnabled = true, enabled = true,
+            onSend = {}, onEnableLocation = {}, onDismiss = {},
+        )
+    }
+
+    @Test fun manualLocationDisabledConfirmationProof() = capture(
+        "manual-location-disabled-confirmation", "Lokasi mati",
+    ) {
+        id.ohmymonev.android.ui.ConfirmManualReport(
+            locationFallback = true, locationEnabled = false, enabled = true,
+            onSend = {}, onEnableLocation = {}, onDismiss = {},
+        )
+    }.also {
+        compose.onNodeWithText("Aktifkan untuk hasil lebih akurat\n\nTetap kirim dengan perkiraan IP?").assertExists()
+        compose.onNodeWithText("Aktifkan lokasi").assertExists()
+        compose.onNodeWithText("Kirim dengan IP").assertExists()
+        compose.onNodeWithText("Batal").assertExists()
+    }
+
+    @Test fun manualLocationUnavailableConfirmationProof() = capture(
+        "manual-location-unavailable-confirmation", "Lokasi tidak tersedia",
+    ) {
+        id.ohmymonev.android.ui.ConfirmManualReport(
+            locationFallback = true, locationEnabled = true, enabled = true,
+            onSend = {}, onEnableLocation = {}, onDismiss = {},
+        )
+    }
+
+    @Test fun expandedLogProvenanceProof() {
+        val base = ApplicationProvider.getApplicationContext<Context>()
+        val directory = File(base.cacheDir, "provenance-log-${UUID.randomUUID()}").apply { mkdirs() }
+        val fixtureContext = object : ContextWrapper(base) {
+            override fun getFilesDir() = directory
+        }
+        id.ohmymonev.android.data.AppStore(fixtureContext).appendRecord(
+            id.ohmymonev.core.enginecore.RunRecord(
+                date = "2026-11-12",
+                attemptedAtISO = "2026-11-12T21:00:00+07:00",
+                outcome = id.ohmymonev.core.enginecore.EngineOutcome.SUBMITTED,
+                attempt = 1,
+                trigger = "EMERGENCY",
+                contentSource = "TEMPLATE",
+                sourceDate = "2026-11-12",
+                reusedPreview = true,
+                locationSource = "IP",
+                fallbackReason = "disabled",
+                lastStage = "submit",
+                verification = "CONFIRMED",
+            ),
+        )
+        capture("expanded-log-provenance", "Catatan") {
+            CompositionLocalProvider(LocalContext provides fixtureContext) {
+                id.ohmymonev.android.ui.LogTab()
+            }
+        }
+        compose.onNodeWithText("Lihat rincian").performClick()
+        compose.onNodeWithText("Tanggal sumber").assertExists()
+        compose.onNodeWithText("Alasan IP").assertExists()
+        compose.onNodeWithText("Terkonfirmasi").assertExists()
+        compose.waitForIdle()
+        val root = requireNotNull(File(requireNotNull(System.getProperty("user.dir"))).parentFile)
+        compose.onAllNodes(isRoot()).onLast().captureRoboImage(File(root, "screenshots/expanded-log-provenance.png").absolutePath)
+    }
+
+    @Test fun homeProvenanceSummaryProof() {
+        val base = ApplicationProvider.getApplicationContext<Context>()
+        val directory = File(base.cacheDir, "provenance-home-${UUID.randomUUID()}").apply { mkdirs() }
+        val fixtureContext = object : ContextWrapper(base) {
+            override fun getFilesDir() = directory
+        }
+        id.ohmymonev.android.data.AppStore(fixtureContext).appendRecord(
+            id.ohmymonev.core.enginecore.RunRecord(
+                date = "2026-11-12",
+                attemptedAtISO = "2026-11-12T21:00:00+07:00",
+                outcome = id.ohmymonev.core.enginecore.EngineOutcome.SUBMITTED,
+                attempt = 1,
+                trigger = "EMERGENCY",
+                contentSource = "TEMPLATE",
+                locationSource = "IP",
+                verification = "CONFIRMED",
+            ),
+        )
+        capture("home-provenance-summary", "Templat Anda", captureTag = "last-run") {
+            val activityContext = LocalContext.current
+            val screenContext = androidx.compose.runtime.remember(activityContext) {
+                object : ContextWrapper(activityContext) { override fun getFilesDir() = directory }
+            }
+            CompositionLocalProvider(LocalContext provides screenContext) {
+                id.ohmymonev.android.ui.HomeTab()
+            }
+        }
+        compose.onNodeWithText("Perkiraan lokasi IP", substring = true).assertExists()
+        compose.onNodeWithText("Tercatat di Monev", substring = true).assertExists()
     }
 
     @Test fun manualResultProof() = capture("report-status-colors", "Sudah terkirim") {

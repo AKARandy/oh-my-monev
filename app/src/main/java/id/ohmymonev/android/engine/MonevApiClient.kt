@@ -40,9 +40,11 @@ internal class MonevApiClient(
         return try {
             val data = JSONObject(body).let { it.optJSONObject("data") ?: it }
             if (path == "/users/me" && isCurrent()) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 id.ohmymonev.android.schedule.WorkDaysStore(context).save(data)
                 id.ohmymonev.android.schedule.AlarmScheduler.armAll(context,
                     id.ohmymonev.android.schedule.TimeSettingsStore(context).settingsOnce())
+                }
             }
             data
         }

@@ -1,24 +1,35 @@
-# Uji pengiriman tanpa membuka Sesi
+# Uji lokasi perangkat dan fallback IP
 
-APK diagnostik v0.1.19 mengambil lokasi Android selama pengiriman dan meneruskannya ke formulir Monev.
+APK diagnostik v0.1.21 memakai lokasi perangkat jika tersedia dan perkiraan IP jika lokasi gagal atau mati
 
-## Uji lokasi tanpa mengirim laporan
+## Uji tanpa mengirim laporan
 
-1. Pasang APK sebagai pembaruan. Jangan hapus data aplikasi.
-2. Izinkan lokasi akurat dan notifikasi. Aktifkan lokasi perangkat.
-3. Buka Beranda → Alat pengujian → Izinkan lokasi selalu. Pilih **Selalu izinkan** di pengaturan Android.
-4. Aktifkan izin alarm yang tepat. Mulai ulang HP; jangan buka Sesi atau aplikasi peta.
-5. Buka Beranda → Alat pengujian → **Uji lokasi 90 detik**. Kunci layar.
-6. Tunggu notifikasi hasil. Ekspor **Download logs**. Tes ini tidak mengirim laporan.
+1. Pasang sebagai pembaruan tanpa menghapus data
+2. Siapkan login, notifikasi, dan izin alarm
+3. Matikan sakelar lokasi HP
+4. Buka Beranda → Alat pengujian → Uji lokasi 90 detik
+5. Kunci layar dan tunggu hasil
+6. Ekspor Download logs atau gunakan pintasan Diagnostik jika layar utama macet
 
-## Uji pengiriman terjadwal
+Hasil harus menunjukkan sumber IP tanpa meminta izin lokasi atau membuka Sesi terlebih dahulu
 
-Pada hari kerja yang laporannya belum diisi, simpan laporan nyata, aktifkan Pengisian darurat, dan atur waktunya. Kunci HP tanpa membuka Sesi. Setelah proses selesai, cocokkan laporan, tanggal, dan akun di Monev. Ekspor log sebelum mengirim manual jika percobaan gagal.
+Ulangi dengan lokasi aktif dan izin tersedia untuk memeriksa sumber perangkat
+Akses lokasi latar belakang bersifat opsional, diperlukan hanya untuk memilih lokasi perangkat saat aplikasi tertutup
 
-Lulus: lokasi diperoleh tanpa Sesi, laporan tercatat sekali, API membaca FILLED, dan layanan pengiriman berhenti. Login aktif, koneksi, lokasi perangkat, dan izin diperlukan. Force stop Android menghentikan alarm aplikasi.
+## Uji pengiriman nyata
+
+Pada hari kerja yang laporannya belum diisi, simpan laporan yang memang akan dikirim
+
+- Manual dengan lokasi mati harus menampilkan peringatan pendek dan pilihan Kirim dengan IP
+- Pengisian darurat dengan lokasi mati harus berjalan tanpa dialog
+- Periksa sumber isi, sumber lokasi, waktu WIB, dan hasil API di Log
+- Cocokkan akun, tanggal, dan isi laporan pada Monev
+- Periksa bahwa laporan tercatat sekali dan layanan berhenti
 
 ## Bukti dan batas
 
-Log lama membuktikan satu percobaan gagal di lokasi dan satu percobaan berhasil setelah membuka Sesi. Log tersebut tidak membuktikan bahwa Sesi menyebabkan keberhasilan. Tes JVM dan JavaScript memakai fixture; keberhasilan di Samsung dengan layar terkunci harus diverifikasi dari log perangkat. Tidak ada koordinat, token, atau isi laporan dalam log diagnostik.
-
-Uji JavaScript: `node scripts/test-location-bridge.cjs`.
+IP diperkirakan oleh ipwhois.io melalui HTTPS dari koneksi HP dan dapat mengikuti jaringan operator atau VPN
+Penyedia menerima IP koneksi tanpa token Monev atau isi laporan
+Jika lokasi perangkat dan lookup IP gagal, aplikasi mempertahankan draf
+Tes lokal tidak membuktikan Monev menerima koordinat IP pada akun nyata atau bahwa ANR perangkat telah hilang
+Publikasi GitHub tetap ditunda

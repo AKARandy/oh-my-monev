@@ -17,6 +17,8 @@ internal object ActionLog {
 
     fun record(context: Context, event: String, detail: String = "") {
         if (!BuildConfig.DEBUG) return
+        if (event.startsWith("send.") || event.startsWith("alarm.") || event.startsWith("model.") || event == "activity.resume")
+            id.ohmymonev.android.diagnostics.StallWatchdog.stage = event
         val app = context.applicationContext
         val row = JSONObject().put("time", OffsetDateTime.now().toString())
             .put("event", event).put("detail", detail.take(512)).toString()

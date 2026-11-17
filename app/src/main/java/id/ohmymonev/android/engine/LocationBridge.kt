@@ -7,17 +7,28 @@ import androidx.webkit.WebViewFeature
 import id.ohmymonev.android.data.ActionLog
 import id.ohmymonev.core.siteprofile.DEFAULT_SITE_PROFILE
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-internal class LocationBridge(private val context: Context, private val view: WebView, private val runId: String) {
+internal class LocationBridge(
+    private val context: Context,
+    private val view: WebView,
+    private val runId: String,
+    deviceAllowed: () -> Boolean = { true },
+) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val device = DeviceLocation(context)
+    private val resolver = LocationResolver(context, deviceAllowed)
     private var closed = false
     private var script: androidx.webkit.ScriptHandler? = null
+    @Volatile private var sourceSnapshot: String? = null
+    @Volatile private var fallbackSnapshot: String? = null
+
+    val lastSource: String? get() = sourceSnapshot
+    val lastFallbackReason: String? get() = fallbackSnapshot
 
     fun install() {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) ||
@@ -32,15 +43,26 @@ internal class LocationBridge(private val context: Context, private val view: We
             scope.launch {
                 val result = JSONObject().put("id", id)
                 try {
-                    val location = device.current(request.optLong("maximumAge", 0).coerceAtLeast(0), request.optLong("timeout", 30_000))
-                    ActionLog.record(context, "send.location.result", "$runId success=true ageMs=${DeviceLocation.ageMs(location)}")
-                    result.put("position", JSONObject().put("timestamp", location.time).put("coords", JSONObject()
-                        .put("latitude", location.latitude).put("longitude", location.longitude).put("accuracy", location.accuracy)
+                    val fix = resolver.resolve(request.optLong("maximumAge", 0).coerceAtLeast(0),
+                        request.optLong("timeout", 30_000).coerceIn(1, 30_000))
+                    remember(fix)
+                    val fallback = fix.fallbackReason ?: "none"
+                    ActionLog.record(context, "send.location.result", "$runId source=${fix.source.name} fallback=$fallback")
+                    result.put("position", JSONObject().put("timestamp", fix.obtainedAtMs).put("coords", JSONObject()
+                        .put("latitude", fix.latitude).put("longitude", fix.longitude)
+                        .put("accuracy", fix.accuracy ?: JSONObject.NULL)
                         .put("altitude", JSONObject.NULL).put("altitudeAccuracy", JSONObject.NULL)
                         .put("heading", JSONObject.NULL).put("speed", JSONObject.NULL)))
                 } catch (failure: LocationFailure) {
+                    rememberFailure(failure)
                     ActionLog.record(context, "send.location.result", "$runId reason=${failure.reason}")
                     result.put("error", JSONObject().put("code", failure.code).put("message", failure.message))
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    if (sourceSnapshot == null) fallbackSnapshot = "unavailable"
+                    ActionLog.record(context, "send.location.result", "$runId reason=unavailable")
+                    result.put("error", JSONObject().put("code", 2).put("message", "Lokasi tidak tersedia."))
                 }
                 if (!closed) reply.postMessage(result.toString())
             }
@@ -50,17 +72,32 @@ internal class LocationBridge(private val context: Context, private val view: We
 
     suspend fun prepare() {
         ActionLog.record(context, "send.location.start", runId)
-        val location = device.current(0, 30_000)
-        ActionLog.record(context, "send.location.ready", "$runId ageMs=${DeviceLocation.ageMs(location)}")
+        try {
+            val fix = resolver.resolve(0, 30_000)
+            remember(fix)
+            ActionLog.record(context, "send.location.ready", "$runId source=${fix.source.name} fallback=${fix.fallbackReason ?: "none"}")
+        } catch (failure: LocationFailure) {
+            rememberFailure(failure)
+            throw failure
+        }
     }
 
     fun close() {
         closed = true
         scope.cancel()
-        device.clear()
+        resolver.close()
         script?.remove()
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
             WebViewCompat.removeWebMessageListener(view, "monevDeviceLocation")
+    }
+
+    private fun remember(fix: LocationFix) {
+        sourceSnapshot = fix.source.name
+        fallbackSnapshot = fix.fallbackReason
+    }
+
+    private fun rememberFailure(failure: LocationFailure) {
+        if (sourceSnapshot == null) fallbackSnapshot = failure.reason
     }
 
     companion object {

@@ -3,7 +3,7 @@ package id.ohmymonev.android.schedule
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.ensureActive
 
 /**
  * Receiver umum untuk pemicu sistem (boot / paket diganti):
@@ -12,10 +12,15 @@ import kotlinx.coroutines.runBlocking
  */
 abstract class ArmAlarmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val settings = runBlocking { TimeSettingsStore(context).settingsOnce() }
-        AlarmScheduler.armAll(context, settings)
-        if (settings.masterEnabled && settings.reminderEnabled && ReminderController.hasPending(context)) {
-            GuardService.tryEnsure(context)
+        val recover = { AlarmRearmWork.enqueue(context) }
+        ReceiverWork.launch(this, onTimeout = recover, onFailure = recover) {
+            val settings = TimeSettingsStore(context).settingsOnce()
+            ensureActive()
+            val report = AlarmScheduler.armAll(context, settings)
+            if (report.errors.isNotEmpty()) recover()
+            if (settings.masterEnabled && settings.reminderEnabled && ReminderController.hasPending(context)) {
+                GuardService.tryEnsure(context)
+            }
         }
     }
 }

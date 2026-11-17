@@ -58,13 +58,17 @@ class WorkDaysStoreTest {
         val today = LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
         calendar.save(profile(today.dayOfWeek.name))
         ReminderReceiver().onReceive(context, android.content.Intent(ReminderReceiver.ACTION_REMINDER))
+        kotlinx.coroutines.runBlocking { ReceiverWork.awaitIdle() }
         AutoFillReceiver().onReceive(context, android.content.Intent(AutoFillReceiver.ACTION_AUTOFILL))
+        kotlinx.coroutines.runBlocking { ReceiverWork.awaitIdle() }
         EscalationReceiver().onReceive(context, android.content.Intent(EscalationReceiver.ACTION_ESCALATION))
+        kotlinx.coroutines.runBlocking { ReceiverWork.awaitIdle() }
         val notifications = org.robolectric.Shadows.shadowOf(context.getSystemService(android.app.NotificationManager::class.java))
         assertTrue(notifications.allNotifications.isEmpty())
         assertNull(org.robolectric.Shadows.shadowOf(app).nextStartedService)
         calendar.save(profile())
         ReminderReceiver().onReceive(context, android.content.Intent(ReminderReceiver.ACTION_REMINDER))
+        kotlinx.coroutines.runBlocking { ReceiverWork.awaitIdle() }
         assertTrue(notifications.allNotifications.isEmpty())
         assertTrue(ReminderController.hasPending(context))
         assertEquals(GuardService::class.java.name,
@@ -84,6 +88,7 @@ class WorkDaysStoreTest {
 
         ReminderReceiver().onReceive(context, android.content.Intent(ReminderReceiver.ACTION_REMINDER)
             .putExtra("date", date.toString()))
+        kotlinx.coroutines.runBlocking { ReceiverWork.awaitIdle() }
 
         val queued = context.getSharedPreferences("reminder_checks", Context.MODE_PRIVATE)
         assertTrue(ReminderController.hasPending(context))

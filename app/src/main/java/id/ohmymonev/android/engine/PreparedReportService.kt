@@ -45,6 +45,7 @@ internal data class PreparedReport(
     val templateKey: String? = null,
     /** Draf dibuat dengan bantuan model neural (tier NEURAL saat outcome() dipanggil). */
     val neural: Boolean = false,
+    val reusedPreview: Boolean = false,
     @kotlinx.serialization.Transient val sessionVersion: Long? = null,
 ) {
     fun outcome(): GenerationOutcome {
@@ -119,14 +120,14 @@ internal class PreparedReportService(
             preferences.getString("draft", null)?.let { json.decodeFromString<PreparedReport>(it) }
         }.getOrNull() }
         if (!force && today() == date && cached?.date == date.toString() && cached.participantId == id && cached.written == written && cached.templateKey == templateKey && cached.sourceReadComplete && api.isCurrent()) {
-            return cached.copy(sessionVersion = api.credentialVersion)
+            return cached.copy(sessionVersion = api.credentialVersion, reusedPreview = true)
         }
         // Mode Otomatis: draf hari ini sudah pernah dibuat — Perbarui tidak menjalankan model lagi.
         if (neuralDone) {
             val fresh = cached?.takeIf {
                 it.date == date.toString() && it.participantId == id && it.draft != null && !it.sourceUnavailable
             }
-            if (fresh != null) return fresh.copy(sessionVersion = api.credentialVersion)
+            if (fresh != null) return fresh.copy(sessionVersion = api.credentialVersion, reusedPreview = true)
         }
         // A failed refresh must not leave an older preview available to the worker.
         withContext(Dispatchers.IO) { save(null) }
@@ -155,7 +156,13 @@ internal class PreparedReportService(
                 history = ReportHistory { null },
             ).generate(date)
         } else if (fillMode == ScheduleSettings.ContentSource.AUTOMATIC) {
-            val paraphraser = paraphraserFactory()
+            var created: NeuralParaphraser? = null
+            val paraphraser = try {
+                withContext(Dispatchers.IO) { paraphraserFactory().also { created = it } }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { created?.close() }
+                throw e
+            }
             if (paraphraser == null) {
                 sourceDate = date
                 source = "Model otomatis belum diunduh."
@@ -163,6 +170,7 @@ internal class PreparedReportService(
                     FailureReason.NO_SOURCE_MATERIAL,
                     "Model otomatis belum diunduh. Buka tab Jadwal, Pengisian darurat.")
             } else {
+                try {
                 val previous = PastReportReader(context).read(date, api, profile)
                 material = previous.material
                 sourceDate = material?.date?.let(LocalDate::parse) ?: date
@@ -170,6 +178,7 @@ internal class PreparedReportService(
                 sourceUnavailable = previous.unavailable
                 outcome = material?.let { report -> neuralOutcome(date, id, report, paraphraser) }
                     ?: GenerationOutcome.Failed(FailureReason.NO_SOURCE_MATERIAL, previous.message)
+                } finally { withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { paraphraser.close() } }
             }
         } else {
             return failed(date, "Mode isian tidak dikenal.")
@@ -213,10 +222,9 @@ internal class PreparedReportService(
             GenerationOutcome.Generated(
                 ReportDraft(bullets.joinToString("\n"), material.pelajaran, material.kendala),
                 GenerationTier.NEURAL, listOf("dari laporan ${material.date}"))
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
         } catch (e: Exception) {
             GenerationOutcome.Failed(FailureReason.INVALID_REPORT, "Pembuatan draf otomatis gagal. Coba Perbarui kembali.")
-        } finally {
-            paraphraser.close()
         }
     }
 

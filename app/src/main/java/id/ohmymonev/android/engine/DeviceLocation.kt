@@ -16,12 +16,17 @@ import kotlin.coroutines.resume
 
 internal class LocationFailure(val reason: String, val code: Int, message: String) : Exception(message)
 
-/** One run owns this cache. Never persists coordinates or keeps a location subscription. */
-internal class DeviceLocation(private val context: Context) {
-    private val manager = context.getSystemService(LocationManager::class.java)
-    private var cached: Location? = null
+internal interface NativeLocationSource {
+    suspend fun current(timeoutMs: Long): Location
+    fun clear()
+}
 
-    fun clear() { cached = null }
+/** One run owns this cache. Never persists coordinates or keeps a location subscription. */
+internal class DeviceLocation(private val context: Context) : NativeLocationSource {
+    private val manager = context.getSystemService(LocationManager::class.java)
+    @Volatile private var cached: Location? = null
+
+    override fun clear() { cached = null }
 
     suspend fun current(maxAgeMs: Long, timeoutMs: Long): Location {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)
@@ -62,6 +67,8 @@ internal class DeviceLocation(private val context: Context) {
             throw LocationFailure("unavailable", 2, "Lokasi tidak tersedia.")
         } finally { listeners.forEach { service.removeUpdates(it) } }
     }
+
+    override suspend fun current(timeoutMs: Long): Location = current(0, timeoutMs)
 
     companion object {
         fun ageMs(location: Location): Long = (SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) / 1_000_000

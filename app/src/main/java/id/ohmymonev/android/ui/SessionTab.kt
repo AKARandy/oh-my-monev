@@ -32,7 +32,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import id.ohmymonev.android.data.ActionLog
 import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.data.SessionSnapshot
+import id.ohmymonev.android.engine.LocationBridge
+import id.ohmymonev.android.engine.LocationFailure
 import id.ohmymonev.android.engine.SessionWebView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -46,7 +50,9 @@ fun SessionTab(modifier: Modifier = Modifier) {
     val repository = remember { SessionRepository.get(context) }
     val session by repository.state.collectAsState()
     val scope = rememberCoroutineScope()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     var browser by remember { mutableStateOf<WebView?>(null) }
+    val locationBridges = remember { mutableMapOf<WebView, LocationBridge>() }
     var browserVersion by remember { mutableStateOf(0L) }
     var checking by remember { mutableStateOf(false) }
     var checkNumber by remember { mutableStateOf(0) }
@@ -118,6 +124,22 @@ fun SessionTab(modifier: Modifier = Modifier) {
                         @Suppress("DEPRECATION")
                         settings.setGeolocationEnabled(true)
                         webChromeClient = SessionWebView.locationClient(ctx)
+                        val bridge = LocationBridge(
+                            ctx,
+                            this,
+                            "session-${java.util.UUID.randomUUID()}",
+                            deviceAllowed = { lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) },
+                        )
+                        try {
+                            bridge.install()
+                            locationBridges[this] = bridge
+                        } catch (failure: LocationFailure) {
+                            bridge.close()
+                            ActionLog.record(ctx, "session.location.bridge", "reason=${failure.reason}")
+                        } catch (_: Exception) {
+                            bridge.close()
+                            ActionLog.record(ctx, "session.location.bridge", "reason=unavailable")
+                        }
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                                 if (request.isForMainFrame && request.url.host == "account.kemnaker.go.id" && request.url.path == "/auth/logout") {
@@ -134,7 +156,10 @@ fun SessionTab(modifier: Modifier = Modifier) {
                         browser = this
                     }
                 },
-                onRelease = { SessionWebView.release(it, repository, browserVersion) },
+                onRelease = { view ->
+                    locationBridges.remove(view)?.close()
+                    SessionWebView.release(view, repository, browserVersion)
+                },
                 modifier = Modifier.fillMaxSize(),
             )
         }

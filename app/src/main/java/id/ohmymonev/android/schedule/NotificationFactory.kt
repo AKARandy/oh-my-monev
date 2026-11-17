@@ -118,7 +118,7 @@ class NotificationFactory(private val context: Context) {
     }
 
     /** Peringatan bersyarat: hanya berlaku kalau laporan memang belum terkirim. */
-    fun escalation(): Notification {
+    fun escalation(metadata: String? = null): Notification {
         val openApp = PendingIntent.getActivity(
             context,
             REQUEST_OPEN_APP,
@@ -128,6 +128,10 @@ class NotificationFactory(private val context: Context) {
         return builder(CHANNEL_ESCALATION)
             .setContentTitle("Cek: laporan malam ini sudah terkirim?")
             .setContentText("Kalau belum, kirim sekarang sebelum 23.59 WIB. Kalau sudah, abaikan pesan ini.")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(listOf(
+                "Kalau belum, kirim sekarang sebelum 23.59 WIB. Kalau sudah, abaikan pesan ini.",
+                metadata?.takeIf { it.isNotBlank() },
+            ).filterNotNull().joinToString("\n")))
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setFullScreenIntent(openApp, true)
             .setContentIntent(openApp)

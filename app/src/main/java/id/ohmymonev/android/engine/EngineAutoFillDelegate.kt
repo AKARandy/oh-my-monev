@@ -6,6 +6,7 @@ import android.util.Log
 import id.ohmymonev.android.BuildConfig
 import androidx.core.app.NotificationManagerCompat
 import id.ohmymonev.android.data.AppStore
+import id.ohmymonev.android.data.provenanceSummary
 import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.schedule.ManualReportRequest
 import id.ohmymonev.core.enginecore.TodayState
@@ -34,6 +35,7 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.io.IOException
 
 /**
  * Kombinasi mesin + penyimpanan untuk AutoFillService (plan.md §5).
@@ -54,18 +56,44 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
     override fun startAutoFill(context: Context) {
         val factory = NotificationFactory(appContext)
         factory.ensureChannels()
-        scope.launch { runCycle(factory) }
+        scope.launch {
+            try { runCycle(factory) }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) {
+                id.ohmymonev.android.data.ActionLog.record(appContext, "send.prepare.failed")
+                post(factory, NotificationFactory.NOTIF_ID_REMINDER,
+                    factory.info("Pengiriman terhenti", "Persiapan gagal. Draf tetap tersimpan. Cek ulang status laporan."))
+                AutoFillService.finished(appContext)
+            }
+        }
     }
 
     override fun startManual(request: ManualReportRequest) {
-        id.ohmymonev.android.data.ActionLog.record(appContext, "manual.request",
-            "activityChars=${request.draft.aktivitas.length} lessonChars=${request.draft.pelajaran.length} obstacleChars=${request.draft.kendala.length}")
+        id.ohmymonev.android.data.ActionLog.record(appContext, "manual.request")
         scope.launch {
             val store = AppStore(appContext)
             val draft = request.draft
             val report = ReportDraft(draft.aktivitas, draft.pelajaran, draft.kendala)
             val sessions = SessionRepository.get(appContext)
-            fun complete(message: String) {
+            fun manualRecord(
+                outcome: EngineOutcome,
+                detail: String?,
+                verification: String = "UNCONFIRMED",
+            ) = RunRecord(
+                date = draft.date,
+                attemptedAtISO = nowIso(),
+                outcome = outcome,
+                attempt = 1,
+                detail = detail,
+                trigger = "MANUAL",
+                contentSource = "AUTHORED",
+                sourceDate = draft.date,
+                reusedPreview = false,
+                lastStage = "preflight",
+                verification = verification,
+            )
+            fun complete(message: String, record: RunRecord) {
+                appendRecordSafely(store, record)
                 id.ohmymonev.android.data.ActionLog.record(appContext, "manual.complete", message)
                 AutoFillService.manualFinished(request, message)
                 AutoFillService.finished(appContext)
@@ -74,17 +102,20 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                 draft.date == LocalDate.now(ScheduleCalculator.asiaJakarta).toString()
             try {
                 if (!id.ohmymonev.android.schedule.FeatureReadiness.read(appContext).ready) {
-                    complete("Periksa sesi dan izin aplikasi.")
+                    val outcome = if (!sessions.state.value.usable) EngineOutcome.LOGIN_REQUIRED else EngineOutcome.RETRYABLE_ERROR
+                    complete("Periksa sesi dan izin aplikasi.", manualRecord(outcome, "Periksa sesi dan izin aplikasi."))
                     return@launch
                 }
                 if (!draftStillCurrent() || sessions.state.value.version != request.sessionVersion ||
                     (draft.participantId != null && draft.participantId != request.account)
                 ) {
-                    complete("Draf, tanggal, atau sesi berubah. Tinjau draf lagi.")
+                    complete("Draf, tanggal, atau sesi berubah. Tinjau draf lagi.",
+                        manualRecord(EngineOutcome.RETRYABLE_ERROR, "Draf, tanggal, atau sesi berubah."))
                     return@launch
                 }
                 if (!DeliveryGate().validate(report).passed) {
-                    complete("Periksa panjang setiap bagian draf.")
+                    complete("Periksa panjang setiap bagian draf.",
+                        manualRecord(EngineOutcome.SUBMIT_FAILED, "Draf tidak lolos validasi."))
                     return@launch
                 }
                 val probe = SiteStatusProbe(appContext)
@@ -92,7 +123,15 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                 val status = withTimeoutOrNull(45_000) { probe.checkReminder(date, request.account) }
                 val issue = manualPreflightIssue(status, request, draftStillCurrent(), sessions.state.value.version)
                 if (issue != null) {
-                    complete(issue)
+                    val record = when {
+                        status?.today == TodayState.FILLED -> manualRecord(EngineOutcome.SUBMITTED, null, "CONFIRMED")
+                        status?.today == TodayState.LIBUR || status?.today == TodayState.LEAVE ->
+                            manualRecord(EngineOutcome.DAY_NOT_FILLABLE, issue, "FAILED")
+                        status?.sessionActive == false || status?.account != null && status.account != request.account ->
+                            manualRecord(EngineOutcome.LOGIN_REQUIRED, issue)
+                        else -> manualRecord(EngineOutcome.RETRYABLE_ERROR, issue)
+                    }
+                    complete(issue, record)
                     return@launch
                 }
                 val engine = WebViewEngine(appContext, DEFAULT_SITE_PROFILE, object : WebViewEngine.Callbacks {
@@ -108,9 +147,23 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                                 if (BuildConfig.DEBUG) Log.w("ohmymonev", "Pemeriksaan setelah kirim gagal", e)
                                 null
                             }
-                            complete(if (verified?.account == request.account && verified.today == TodayState.FILLED)
-                                "Laporan sudah terkirim."
-                            else manualSendFailure(record))
+                            val confirmed = verified?.account == request.account && verified.today == TodayState.FILLED
+                            val finalRecord = record.copy(
+                                outcome = when {
+                                    confirmed -> EngineOutcome.SUBMITTED
+                                    record.outcome == EngineOutcome.SUBMITTED -> EngineOutcome.RETRYABLE_ERROR
+                                    else -> record.outcome
+                                },
+                                detail = if (!confirmed && record.outcome == EngineOutcome.SUBMITTED)
+                                    "Pengiriman belum terkonfirmasi. Periksa status sebelum mencoba lagi."
+                                else record.detail,
+                                trigger = "MANUAL",
+                                contentSource = "AUTHORED",
+                                sourceDate = draft.date,
+                                reusedPreview = false,
+                                verification = submissionVerification(verified, request.account),
+                            )
+                            complete(if (confirmed) "Laporan sudah terkirim." else manualSendFailure(finalRecord), finalRecord)
                         }
                     }
                 })
@@ -121,7 +174,8 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                 throw e
             } catch (e: Exception) {
                 if (BuildConfig.DEBUG) Log.w("ohmymonev", "Pengiriman manual gagal", e)
-                complete("Pengiriman belum dapat dikonfirmasi. Cek ulang status laporan.")
+                complete("Pengiriman belum dapat dikonfirmasi. Cek ulang status laporan.",
+                    manualRecord(EngineOutcome.RETRYABLE_ERROR, "Pengiriman belum dapat dikonfirmasi."))
             }
         }
     }
@@ -154,14 +208,18 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                 outcome = EngineOutcome.RETRYABLE_ERROR,
                 attempt = attemptToday(store, todayIso),
                 detail = "tidak ada internet",
+                trigger = "EMERGENCY",
+                lastStage = "preflight",
+                verification = "UNCONFIRMED",
             )
-            store.appendRecord(record)
+            appendRecordSafely(store, record)
             post(
                 factory,
                 NotificationFactory.NOTIF_ID_REMINDER,
                 factory.info(
                     "oh-my-monev: tidak ada internet",
-                    "Laporan belum bisa diisi sekarang. Akan dicoba lagi otomatis.",
+                    listOf("Laporan belum bisa diisi sekarang. Akan dicoba lagi otomatis.", record.provenanceSummary())
+                        .filter { it.isNotBlank() }.joinToString("\n"),
                 ),
             )
             maybeScheduleRetry(record, store, settings)
@@ -179,11 +237,13 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                 else -> EngineOutcome.RETRYABLE_ERROR
             }
             val record = RunRecord(todayIso, nowIso(), outcome, attemptToday(store, todayIso),
-                detail = status.error ?: "Laporan hari ini tidak perlu diisi.")
-            store.appendRecord(record)
+                detail = status.error ?: "Laporan hari ini tidak perlu diisi.",
+                trigger = "EMERGENCY", lastStage = "preflight", verification = "UNCONFIRMED")
+            appendRecordSafely(store, record)
             if (outcome == EngineOutcome.RETRYABLE_ERROR) maybeScheduleRetry(record, store, settings)
             if (outcome != EngineOutcome.DAY_NOT_FILLABLE) post(factory, NotificationFactory.NOTIF_ID_REMINDER,
-                factory.info("Laporan belum diisi", status.error ?: "Periksa sesi di aplikasi."))
+                factory.info("Laporan belum diisi", listOf(status.error ?: "Periksa sesi di aplikasi.", record.provenanceSummary())
+                    .filter { it.isNotBlank() }.joinToString("\n")))
             AutoFillService.finished(appContext)
             return
         }
@@ -202,9 +262,18 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             is GenerationOutcome.Generated -> {
                 // Asal isian menentukan notifikasi setelah terkirim: templat minta
                 // ditinjau ulang; lanjutan otomatis harus selalu disebut terang-terangan.
-                val fromTemplate = outcome.tier == GenerationTier.TEMPLATE && prepared.written == null
-                val fromContinuation = outcome.tier != GenerationTier.TEMPLATE
-                val engine = WebViewEngine(appContext, DEFAULT_SITE_PROFILE, runCallbacks(todayIso, store, factory, settings, usedTemplate = fromTemplate, usedContinuation = fromContinuation, account = prepared.participantId))
+                val contentSource = when {
+                    prepared.written != null -> "AUTHORED"
+                    outcome.tier == GenerationTier.TEMPLATE -> "TEMPLATE"
+                    outcome.tier == GenerationTier.NEURAL -> "MODEL"
+                    else -> "RULES"
+                }
+                val engine = WebViewEngine(appContext, DEFAULT_SITE_PROFILE, runCallbacks(
+                    todayIso, store, factory, settings,
+                    account = prepared.participantId,
+                    contentSource = contentSource, sourceDate = prepared.sourceDate.ifBlank { null },
+                    reusedPreview = prepared.reusedPreview,
+                ))
                 activeEngine = engine
                 engine.runAutomation(
                     dateISO = todayIso,
@@ -215,16 +284,29 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             }
 
             is GenerationOutcome.Failed -> {
-                store.appendRecord(
-                    RunRecord(
+                val failureSource = when {
+                    prepared.written != null -> "AUTHORED"
+                    prepared.draft != null && settings.escalationSource == ScheduleSettings.ContentSource.TEMPLATE -> "TEMPLATE"
+                    prepared.neural -> "MODEL"
+                    else -> null
+                }
+                val failureRecord = RunRecord(
                         date = todayIso,
                         attemptedAtISO = nowIso(),
                         outcome = EngineOutcome.SUBMIT_FAILED,
                         attempt = 1,
                         detail = "generator: ${outcome.reason.name} (${outcome.detail})",
-                    ),
-                )
-                post(factory, NotificationFactory.NOTIF_ID_ESCALATION, factory.info("Perbaiki laporan hari ini", outcome.detail))
+                        trigger = "EMERGENCY",
+                        contentSource = failureSource,
+                        sourceDate = prepared.sourceDate.takeIf { failureSource != null && it.isNotBlank() },
+                        reusedPreview = prepared.reusedPreview,
+                        lastStage = "prepare",
+                        verification = "FAILED",
+                    )
+                appendRecordSafely(store, failureRecord)
+                post(factory, NotificationFactory.NOTIF_ID_ESCALATION, factory.info("Perbaiki laporan hari ini",
+                    listOf(outcome.detail, failureRecord.provenanceSummary("\n"))
+                        .filter { it.isNotBlank() }.joinToString("\n")))
                 AutoFillService.finished(appContext)
             }
         }
@@ -256,9 +338,10 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
         factory: NotificationFactory,
         settings: ScheduleSettings,
         bench: Boolean = false,
-        usedTemplate: Boolean = false,
-        usedContinuation: Boolean = false,
         account: String? = null,
+        contentSource: String? = null,
+        sourceDate: String? = null,
+        reusedPreview: Boolean? = null,
     ) = object : WebViewEngine.Callbacks {
         override fun onRunFinished(record: RunRecord) {
             scope.launch {
@@ -268,47 +351,49 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                     AutoFillService.finished(appContext)
                     return@launch
                 }
-                val verified = try {
-                    withTimeoutOrNull(45_000) { SiteStatusProbe(appContext).checkReminder(LocalDate.parse(dateIso), account) }
-                } catch (e: CancellationException) { throw e }
-                catch (_: Exception) { null }
-                val finalRecord = if (account != null && verified?.account == account && verified.today == TodayState.FILLED)
-                    record.copy(outcome = EngineOutcome.SUBMITTED)
-                else if (record.outcome == EngineOutcome.SUBMITTED)
-                    record.copy(outcome = EngineOutcome.RETRYABLE_ERROR, detail = "Pengiriman belum terkonfirmasi. Periksa status sebelum mencoba lagi.")
-                else record
-                store.appendRecord(finalRecord)
-                when (finalRecord.outcome) {
-                    EngineOutcome.SUBMITTED -> {
-                        val detail = if (usedContinuation) "Tanggal $dateIso sudah dikirim dan tercatat di situs. Isian memakai lanjutan otomatis."
-                        else "Tanggal $dateIso sudah dikirim dan tercatat di situs."
-                        post(
-                            factory,
-                            NotificationFactory.NOTIF_ID_REMINDER,
-                            factory.info("oh-my-monev: laporan terkirim", detail),
-                        )
-                        if (usedTemplate) {
+                try {
+                    val verified = try {
+                        withTimeoutOrNull(45_000) { SiteStatusProbe(appContext).checkReminder(LocalDate.parse(dateIso), account) }
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { null }
+                    val confirmed = account != null && verified?.account == account && verified.today == TodayState.FILLED
+                    val finalRecord = record.copy(
+                        outcome = when {
+                            confirmed -> EngineOutcome.SUBMITTED
+                            record.outcome == EngineOutcome.SUBMITTED -> EngineOutcome.RETRYABLE_ERROR
+                            else -> record.outcome
+                        },
+                        detail = if (!confirmed && record.outcome == EngineOutcome.SUBMITTED)
+                            "Pengiriman belum terkonfirmasi. Periksa status sebelum mencoba lagi."
+                        else record.detail,
+                        trigger = "EMERGENCY",
+                        contentSource = contentSource,
+                        sourceDate = sourceDate,
+                        reusedPreview = reusedPreview,
+                        verification = submissionVerification(verified, account),
+                    )
+                    appendRecordSafely(store, finalRecord)
+                    when (finalRecord.outcome) {
+                        EngineOutcome.SUBMITTED -> {
                             post(
                                 factory,
                                 NotificationFactory.NOTIF_ID_REMINDER,
-                                factory.info(
-                                    "Templat laporan terpakai",
-                                    "Laporan hari ini memakai templat. Ganti templat di tab Jadwal bila perlu.",
-                                ),
+                                factory.info("Pengisian darurat terkirim", finalRecord.provenanceSummary("\n")),
                             )
                         }
-                    }
 
-                    EngineOutcome.DAY_NOT_FILLABLE ->
-                        // Hari sudah terisi atau libur: jangan pernah berbunyi "belum terkirim".
-                        if (BuildConfig.DEBUG) Log.d("ohmymonev", "Hari ini tidak perlu diisi (sudah terisi atau libur).")
+                        EngineOutcome.DAY_NOT_FILLABLE ->
+                            // Hari sudah terisi atau libur: jangan pernah berbunyi "belum terkirim".
+                            if (BuildConfig.DEBUG) Log.d("ohmymonev", "Hari ini tidak perlu diisi (sudah terisi atau libur).")
 
-                    else -> {
-                        post(factory, NotificationFactory.NOTIF_ID_ESCALATION, factory.escalation())
-                        maybeScheduleRetry(finalRecord, store, settings)
+                        else -> {
+                            post(factory, NotificationFactory.NOTIF_ID_ESCALATION, factory.escalation(finalRecord.provenanceSummary("\n")))
+                            maybeScheduleRetry(finalRecord, store, settings)
+                        }
                     }
+                } finally {
+                    AutoFillService.finished(appContext)
                 }
-                AutoFillService.finished(appContext)
             }
         }
 
@@ -318,7 +403,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
     }
 
     /** Menyiapkan tangga coba ulang; penerima memeriksa ulang hari kerja dan jeda saat alarm menyala. */
-    private fun maybeScheduleRetry(record: RunRecord, store: AppStore, settings: ScheduleSettings) {
+    private suspend fun maybeScheduleRetry(record: RunRecord, store: AppStore, settings: ScheduleSettings) {
         if (!settings.masterEnabled) return
         if (record.outcome !in RETRYABLE_OUTCOMES) return
         if (attemptToday(store, record.date) >= MAX_ATTEMPTS) {
@@ -335,7 +420,15 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
     }
 
     private fun attemptToday(store: AppStore, dateIso: String): Int =
-        store.records().count { it.date == dateIso } + 1
+        store.records().count { it.date == dateIso && it.trigger != "MANUAL" } + 1
+
+    private fun appendRecordSafely(store: AppStore, record: RunRecord) {
+        try {
+            store.appendRecord(record)
+        } catch (_: IOException) {
+            id.ohmymonev.android.data.ActionLog.record(appContext, "run.record.write.failed")
+        }
+    }
 
     private companion object {
         val RETRYABLE_OUTCOMES: Set<EngineOutcome> = setOf(
@@ -355,6 +448,13 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
     private fun nowIso(): String = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(OffsetDateTime.now())
 
+}
+
+internal fun submissionVerification(status: SiteStatus?, account: String?): String = when {
+    account == null || status?.sessionActive != true || status.account != account -> "UNCONFIRMED"
+    status.today == TodayState.FILLED -> "CONFIRMED"
+    status.today == TodayState.UNKNOWN -> "UNCONFIRMED"
+    else -> "FAILED"
 }
 
 internal fun manualPreflightIssue(

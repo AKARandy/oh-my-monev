@@ -27,4 +27,12 @@ data class RunRecord(
     /** 1-based retry index within the same date (ladder +5/+20/+60 min per docs/plan.md D4). */
     val attempt: Int,
     val detail: String? = null,
+    val trigger: String? = null,
+    val contentSource: String? = null,
+    val sourceDate: String? = null,
+    val reusedPreview: Boolean? = null,
+    val locationSource: String? = null,
+    val fallbackReason: String? = null,
+    val lastStage: String? = null,
+    val verification: String? = null,
 )

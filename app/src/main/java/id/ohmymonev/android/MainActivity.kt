@@ -12,6 +12,7 @@ import id.ohmymonev.android.ui.AppRoot
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        (application as? OhMyMonevApp)?.ensureAutomationStarted(fromMainActivity = true)
         openReminderSite(intent)
         setContent {
             MaterialTheme {
@@ -35,10 +36,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        visible = true
         val readiness = id.ohmymonev.android.schedule.FeatureReadiness.read(this)
         id.ohmymonev.android.data.ActionLog.record(this, "activity.resume",
             "session=${readiness.session} location=${readiness.location} notifications=${readiness.notifications}")
         lifecycleScope.launch { id.ohmymonev.android.schedule.FeatureReadiness.rearm(applicationContext) }
+    }
+
+    override fun onPause() {
+        visible = false
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        visible = false
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -57,5 +69,10 @@ class MainActivity : ComponentActivity() {
         } catch (_: android.content.ActivityNotFoundException) {
             // Keep the app open when no browser is installed.
         }
+    }
+
+    companion object {
+        @Volatile var visible: Boolean = false
+            private set
     }
 }

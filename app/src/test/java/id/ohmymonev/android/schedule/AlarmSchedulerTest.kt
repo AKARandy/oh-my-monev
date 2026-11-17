@@ -34,10 +34,10 @@ class AlarmSchedulerTest {
         assertEquals(1, shadowOf(alarms).scheduledAlarms.size)
     }
 
-    @Test fun backgroundLocationIsRequiredOnlyForEmergency() {
+    @Test fun backgroundLocationDoesNotBlockEmergencyWithIpFallback() {
         shadowOf(context.applicationContext as Application).denyPermissions(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         val report = AlarmScheduler.armAll(context, ScheduleSettings(escalationEnabled = true))
-        assertEquals(listOf("reminder"), report.armedKeys)
+        assertEquals(listOf("reminder", "escalation"), report.armedKeys)
         assertTrue(FeatureReadiness.read(context).ready)
         assertTrue(!FeatureReadiness.backgroundLocation(context))
     }
@@ -71,7 +71,9 @@ class AlarmSchedulerTest {
         assertEquals(listOf("reminder"), AlarmScheduler.armAll(context, stable).armedKeys)
         assertEquals(1, shadowOf(alarms).scheduledAlarms.size)
         AutoFillReceiver().onReceive(context, android.content.Intent(AutoFillReceiver.ACTION_AUTOFILL))
+        kotlinx.coroutines.runBlocking { ReceiverWork.awaitIdle() }
         EscalationReceiver().onReceive(context, android.content.Intent(EscalationReceiver.ACTION_ESCALATION))
+        kotlinx.coroutines.runBlocking { ReceiverWork.awaitIdle() }
         org.junit.Assert.assertNull(shadowOf(context.applicationContext as Application).nextStartedService)
         AlarmScheduler.scheduleRetry(context, java.time.ZonedDateTime.now().plusMinutes(5))
         AlarmScheduler.quickFireForTest(context)
@@ -98,21 +100,21 @@ class AlarmSchedulerTest {
         assertEquals("2026-11-07T15:30:00Z", state.nextFireISO)
     }
 
-    @Test fun missingLocationPausesUntilRestored() {
+    @Test fun missingLocationKeepsAlarmsArmedForIpFallback() {
         val settings = ScheduleSettings(escalationEnabled = true)
         AlarmScheduler.armAll(context, settings)
         val app = context.applicationContext as Application
         shadowOf(app).denyPermissions(android.Manifest.permission.ACCESS_FINE_LOCATION)
         AlarmScheduler.armAll(context, settings)
-        assertTrue(shadowOf(alarms).scheduledAlarms.isEmpty())
+        assertEquals(2, shadowOf(alarms).scheduledAlarms.size)
         shadowOf(app).grantPermissions(android.Manifest.permission.ACCESS_FINE_LOCATION)
         AlarmScheduler.armAll(context, settings)
         assertEquals(2, shadowOf(alarms).scheduledAlarms.size)
     }
 
-    @Test fun everyReadinessRequirementMustBePresent() {
+    @Test fun sessionAndNotificationsRemainRequiredWhileLocationIsOptional() {
         for (session in listOf(false, true)) for (location in listOf(false, true)) for (notifications in listOf(false, true)) {
-            assertEquals(session && location && notifications, FeatureReadiness(session, location, notifications).ready)
+            assertEquals(session && notifications, FeatureReadiness(session, location, notifications).ready)
         }
     }
 
@@ -125,6 +127,7 @@ class AlarmSchedulerTest {
         assertTrue(settings.escalationEnabled)
         assertTrue(AlarmScheduler.armAll(context, settings).armedKeys.contains("escalation"))
         EscalationReceiver().onReceive(context, android.content.Intent(EscalationReceiver.ACTION_ESCALATION))
+        kotlinx.coroutines.runBlocking { ReceiverWork.awaitIdle() }
         assertEquals(AutoFillService::class.java.name,
             shadowOf(context.applicationContext as Application).nextStartedService.component?.className)
     }

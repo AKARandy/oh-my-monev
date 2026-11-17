@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -58,6 +59,7 @@ import id.ohmymonev.android.BuildConfig
 import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.data.AppStore
 import id.ohmymonev.android.data.StoredDraft
+import id.ohmymonev.android.data.provenanceSummary
 import id.ohmymonev.android.engine.BenchStatusSite
 import id.ohmymonev.android.engine.PreparedReport
 import id.ohmymonev.android.engine.PreparedReportService
@@ -105,7 +107,9 @@ fun HomeTab(
             exportingLog = true
             try {
                 id.ohmymonev.android.data.ActionLog.record(context, "logs.export")
-                val snapshot = id.ohmymonev.android.data.ActionLog.snapshot(context)
+                val snapshot = kotlinx.coroutines.withTimeoutOrNull(10_000) {
+                    id.ohmymonev.android.data.ActionLog.snapshot(context)
+                } ?: throw java.io.IOException("Log export timed out")
                 withContext(Dispatchers.IO) {
                     (context.contentResolver.openOutputStream(uri) ?: throw java.io.IOException("Cannot open log export")).bufferedWriter().use { it.write(snapshot) }
                 }
@@ -138,6 +142,9 @@ fun HomeTab(
     var locationGranted by remember {
         mutableStateOf(hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION))
     }
+    var locationEnabled by remember {
+        mutableStateOf(LocationManagerCompat.isLocationEnabled(context.getSystemService(android.location.LocationManager::class.java)))
+    }
     var backgroundLocationGranted by remember {
         mutableStateOf(Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
             hasPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION))
@@ -159,26 +166,20 @@ fun HomeTab(
     val manual by AutoFillService.manual.collectAsState()
     val manualSending = manual?.sending == true
     var confirmSend by remember { mutableStateOf<ManualReportRequest?>(null) }
+    var confirmWithIp by remember { mutableStateOf(false) }
+    var refreshStatusOnResume by remember { mutableStateOf(false) }
     var recheckedManual by remember { mutableStateOf<ManualReportRequest?>(null) }
     var infoExpanded by remember { mutableStateOf(false) }
     var diagnosticsExpanded by remember { mutableStateOf(false) }
 
     fun refreshPermissions() {
         locationGranted = hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+        locationEnabled = LocationManagerCompat.isLocationEnabled(context.getSystemService(android.location.LocationManager::class.java))
         backgroundLocationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
             hasPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         notificationsOn = NotificationManagerCompat.from(context).areNotificationsEnabled()
         id.ohmymonev.android.data.ActionLog.record(context, "permission.result",
             "location=$locationGranted backgroundLocation=$backgroundLocationGranted notifications=$notificationsOn")
-    }
-
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(lifecycle, context) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) refreshPermissions()
-        }
-        lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer) }
     }
 
     val locationLauncher = rememberLauncherForActivityResult(
@@ -263,7 +264,8 @@ fun HomeTab(
         checkingStatus = true
         statusJob = scope.launch {
             try {
-                val result = SiteStatusProbe(context).check()
+                val result = kotlinx.coroutines.withTimeoutOrNull(45_000) { SiteStatusProbe(context).check() }
+                    ?: SiteStatus(null, TodayState.UNKNOWN, null, emptyList(), "Pemeriksaan terlalu lama. Coba lagi.")
                 if (request != statusRequest) return@launch
                 siteStatus = result
                 id.ohmymonev.android.data.ActionLog.record(context, "status.check.result",
@@ -273,6 +275,21 @@ fun HomeTab(
             }
             finally { if (request == statusRequest) checkingStatus = false }
         }
+    }
+
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshPermissions()
+                if (refreshStatusOnResume) {
+                    refreshStatusOnResume = false
+                    refreshSiteStatus()
+                }
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
     }
 
     DisposableEffect(Unit) {
@@ -288,17 +305,17 @@ fun HomeTab(
     LaunchedEffect(settings) {
         settings?.let { s -> armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) } }
     }
-    LaunchedEffect(session.version, session.usable, locationGranted, notificationsOn, todayIso) {
+    LaunchedEffect(session.version, session.usable, notificationsOn, todayIso) {
         previewJob?.cancel()
         pratinjau = null
         pratinjauLoading = false
-        if (session.usable && locationGranted && notificationsOn) refreshPratinjau(allowModelRun = false)
+        if (session.usable && notificationsOn) refreshPratinjau(allowModelRun = false)
     }
     LaunchedEffect(running) {
         if (running) {
             delay(15_000)
             refresh()
-            if (session.usable && locationGranted && notificationsOn) refreshPratinjau(allowModelRun = false)
+            if (session.usable && notificationsOn) refreshPratinjau(allowModelRun = false)
             val s = withContext(Dispatchers.IO) { store.settingsOnce() }
             armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
             running = false
@@ -332,7 +349,10 @@ fun HomeTab(
 
     LaunchedEffect(manual) {
         val result = manual
-        if (result != null && !result.sending) refreshSiteStatus()
+        if (result != null && !result.sending) {
+            refresh()
+            refreshSiteStatus()
+        }
     }
 
     val scrollState = rememberScrollState()
@@ -386,16 +406,18 @@ fun HomeTab(
             if (visibleDraft != null && draftValid && status?.today == TodayState.UNFILLED) {
                 Button(
                     onClick = loggedClick("HomeTab:363") {
-                        if (!locationGranted) requestLocation()
-                        else confirmSend = ManualReportRequest(visibleDraft, account, session.version)
+                        confirmWithIp = !locationGranted || !locationEnabled
+                        confirmSend = ManualReportRequest(visibleDraft, account, session.version)
                     },
                     enabled = maySend && !editorExpanded,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (locationGranted) "Kirim ke Monev" else "Izinkan lokasi akurat") }
+                ) { Text("Kirim ke Monev") }
             }
         }
         confirmSend?.let { reviewed ->
             ConfirmManualReport(
+                locationFallback = confirmWithIp,
+                locationEnabled = locationEnabled,
                 enabled = maySend && visibleDraft == reviewed.draft &&
                     account == reviewed.account && session.version == reviewed.sessionVersion,
                 onSend = {
@@ -404,17 +426,26 @@ fun HomeTab(
                     id.ohmymonev.android.data.ActionLog.record(context, "manual.confirm")
                     AutoFillService.startManual(context, reviewed)
                 },
+                onEnableLocation = {
+                    confirmSend = null
+                    refreshStatusOnResume = true
+                    val settingsIntent = if (!locationEnabled) {
+                        Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                    } else {
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.fromParts("package", context.packageName, null)
+                        }
+                    }
+                    context.startActivity(settingsIntent)
+                },
                 onDismiss = { confirmSend = null },
             )
         }
 
         // Satu kartu persiapan: tutorial dan status digabung; langkah mencentang dari keadaan nyata.
-        if ((!locationGranted || !notificationsOn) && !confirmingSession) {
+        if (!notificationsOn && !confirmingSession) {
             ReadinessCard(
-                locationGranted = locationGranted,
                 notificationsOn = notificationsOn,
-                // Satu fungsi satu tombol: memeriksa sesi hanya ada di tab Sesi.
-                onGrantLocation = { requestLocation() },
                 onGrantNotifications = { requestNotifications() },
             )
         }
@@ -520,7 +551,15 @@ fun HomeTab(
             }
         }
 
-        LastRunRow(lastRecord)
+        Column(
+            modifier = Modifier.fillMaxWidth().testTag("last-run"),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            LastRunRow(lastRecord)
+            lastRecord?.provenanceSummary()?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         TextButton(onClick = loggedClick("HomeTab:499") { infoExpanded = !infoExpanded }) { Text("Tentang aplikasi", style = MaterialTheme.typography.bodyMedium) }
         if (infoExpanded) DisclaimerCard()
         if (BuildConfig.DEBUG) {
@@ -570,7 +609,7 @@ fun HomeTab(
                     onClick = loggedClick("HomeTab:508") { AutoFillService.startBench(context); running = true },
                     enabled = ready && !running,
                 ) { Text("Uji mesin") }
-                TextButton(enabled = ready && settings?.escalationEnabled == true, onClick = loggedClick("HomeTab:511") { AlarmScheduler.quickFireForTest(context, 90) }) {
+                TextButton(enabled = ready && settings?.escalationEnabled == true, onClick = loggedClick("HomeTab:511") { scope.launch { AlarmScheduler.quickFireForTest(context, 90) } }) {
                     Text("Tes alarm 90 detik")
                 }
             }
@@ -637,15 +676,46 @@ internal fun ReportStatus(status: ReportStatusLabel, canRecheck: Boolean, onRech
 }
 
 @Composable
-internal fun ConfirmManualReport(enabled: Boolean, onSend: () -> Unit, onDismiss: () -> Unit) {
+internal fun ConfirmManualReport(
+    locationFallback: Boolean,
+    locationEnabled: Boolean,
+    enabled: Boolean,
+    onSend: () -> Unit,
+    onEnableLocation: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Kirim laporan hari ini ke Monev?") },
-        text = { Text("Pastikan draf yang tersimpan sudah benar.") },
-        confirmButton = {
-            TextButton(enabled = enabled, onClick = loggedClick("HomeTab:583", onSend)) { Text("Kirim ke Monev") }
+        title = {
+            Text(when {
+                !locationFallback -> "Kirim laporan hari ini ke Monev?"
+                !locationEnabled -> "Lokasi mati"
+                else -> "Lokasi tidak tersedia"
+            })
         },
-        dismissButton = { TextButton(onClick = loggedClick("HomeTab:585", onDismiss)) { Text("Batal") } },
+        text = {
+            Text(if (locationFallback) {
+                "Aktifkan untuk hasil lebih akurat\n\nTetap kirim dengan perkiraan IP?"
+            } else {
+                "Pastikan draf yang tersimpan sudah benar"
+            })
+        },
+        confirmButton = {
+            if (locationFallback) {
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(onClick = loggedClick("HomeTab:584", onEnableLocation)) { Text("Aktifkan lokasi") }
+                    TextButton(enabled = enabled, onClick = loggedClick("HomeTab:583", onSend)) { Text("Kirim dengan IP") }
+                    TextButton(onClick = loggedClick("HomeTab:585", onDismiss)) { Text("Batal") }
+                }
+            } else {
+                TextButton(enabled = enabled, onClick = loggedClick("HomeTab:583", onSend)) { Text("Kirim ke Monev") }
+            }
+        },
+        dismissButton = {
+            if (!locationFallback) {
+                TextButton(onClick = loggedClick("HomeTab:585", onDismiss)) { Text("Batal") }
+            }
+        },
     )
 }
 
@@ -747,9 +817,7 @@ private fun SiteStatusCard(
 
 @Composable
 private fun ReadinessCard(
-    locationGranted: Boolean,
     notificationsOn: Boolean,
-    onGrantLocation: () -> Unit,
     onGrantNotifications: () -> Unit,
 ) {
     Surface(
@@ -760,9 +828,6 @@ private fun ReadinessCard(
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Persiapan", style = MaterialTheme.typography.titleMedium)
-            if (!locationGranted) {
-                ReadyRow("Izin lokasi", false, "Pilih lokasi akurat", "Izinkan", onGrantLocation)
-            }
             if (!notificationsOn) {
                 ReadyRow("Notifikasi", false, "Aktifkan pengingat", "Izinkan", onGrantNotifications)
             }
@@ -832,7 +897,7 @@ private fun plainOutcome(record: RunRecord): String = when (record.outcome) {
 }
 
 private fun attemptTime(iso: String): String = try {
-    OffsetDateTime.parse(iso).format(TIME_FORMAT)
+    OffsetDateTime.parse(iso).atZoneSameInstant(ScheduleCalculator.asiaJakarta).format(TIME_FORMAT) + " WIB"
 } catch (_: Exception) {
     ""
 }

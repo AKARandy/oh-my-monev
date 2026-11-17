@@ -1,6 +1,7 @@
 package id.ohmymonev.android.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import id.ohmymonev.android.data.AppStore
+import id.ohmymonev.android.data.provenanceDetails
 import id.ohmymonev.core.enginecore.EngineOutcome
 import id.ohmymonev.core.enginecore.RunRecord
 import java.time.OffsetDateTime
@@ -132,6 +134,7 @@ fun LogTab(modifier: Modifier = Modifier) {
 
 @Composable
 private fun RecordRow(record: RunRecord) {
+    var expanded by remember(record) { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -147,7 +150,9 @@ private fun RecordRow(record: RunRecord) {
         Column(
             modifier = Modifier
                 .padding(start = 12.dp)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(vertical = 2.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Row(
@@ -169,13 +174,28 @@ private fun RecordRow(record: RunRecord) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            val details = record.provenanceDetails()
+            if (expanded) {
+                details.forEach { (label, value) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(value, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                Text("Tutup rincian", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+            } else if (details.isNotEmpty()) {
+                Text("Lihat rincian", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+            }
         }
     }
 }
 
 private fun attemptTime(iso: String): String = try {
-    val dt = OffsetDateTime.parse(iso)
-    dt.format(DATE_FMT) + ", " + dt.format(TIME_FMT)
+    val dt = OffsetDateTime.parse(iso).atZoneSameInstant(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
+    dt.format(DATE_FMT) + ", " + dt.format(TIME_FMT) + " WIB"
 } catch (_: Exception) {
     iso
 }

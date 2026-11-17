@@ -102,6 +102,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
     val saveMutex = remember { Mutex() }
 
     var loaded by remember { mutableStateOf<ScheduleSettings?>(null) }
+    var workingDays by remember { mutableStateOf<Set<java.time.DayOfWeek>?>(null) }
     var editing by remember { mutableStateOf<AlarmId?>(null) }
     var editingTemplate by remember { mutableStateOf(false) }
     var template by remember { mutableStateOf<ReportTemplate?>(null) }
@@ -141,7 +142,9 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
         loaded = store.settingsOnce()
     }
 
-    val workingDays = id.ohmymonev.android.schedule.WorkDaysStore(context).days()
+    LaunchedEffect(session.version, session.record) {
+        workingDays = withContext(Dispatchers.IO) { id.ohmymonev.android.schedule.WorkDaysStore(context).days() }
+    }
     val current = loaded
     if (current == null) {
         Column(
@@ -163,8 +166,10 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 if (settings == loaded) return@withLock
                 store.save(settings)
                 loaded = settings
-                AlarmScheduler.armAll(context, settings)
-                if (settings.masterEnabled) GuardService.ensure(context) else GuardService.stop(context)
+                withContext(Dispatchers.IO) {
+                    AlarmScheduler.armAll(context, settings)
+                    if (settings.masterEnabled) GuardService.ensure(context) else GuardService.stop(context)
+                }
                 Toast.makeText(context, "Tersimpan", Toast.LENGTH_SHORT).show()
             }
         }
@@ -378,7 +383,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                                     val disabled = latest.copy(escalationEnabled = false)
                                     store.save(disabled)
                                     loaded = disabled
-                                    AlarmScheduler.armAll(context, disabled)
+                                    withContext(Dispatchers.IO) { AlarmScheduler.armAll(context, disabled) }
                                 }
                             }
                         }

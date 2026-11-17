@@ -64,4 +64,38 @@ class EngineOutcomeTest {
         val round = Json.decodeFromString(RunRecord.serializer(), encoded)
         assertEquals(run, round)
     }
+
+    @Test
+    fun `legacy run record decodes with empty provenance`() {
+        val legacy = """{"date":"2026-11-06","attemptedAtISO":"2026-11-06T21:00:00+07:00","outcome":"UNKNOWN","attempt":1}"""
+        val run = Json.decodeFromString(RunRecord.serializer(), legacy)
+        assertNull(run.trigger)
+        assertNull(run.contentSource)
+        assertNull(run.sourceDate)
+        assertNull(run.reusedPreview)
+        assertNull(run.locationSource)
+        assertNull(run.fallbackReason)
+        assertNull(run.lastStage)
+        assertNull(run.verification)
+    }
+
+    @Test
+    fun `run record keeps provenance fields`() {
+        val run = RunRecord(
+            date = "2026-11-06",
+            attemptedAtISO = "2026-11-06T21:00:00+07:00",
+            outcome = EngineOutcome.SUBMITTED,
+            attempt = 1,
+            trigger = "EMERGENCY",
+            contentSource = "MODEL",
+            sourceDate = "2026-11-05",
+            reusedPreview = true,
+            locationSource = "IP",
+            fallbackReason = "disabled",
+            lastStage = "submit",
+            verification = "CONFIRMED",
+        )
+        val encoded = Json.encodeToString(RunRecord.serializer(), run)
+        assertEquals(run, Json.decodeFromString(RunRecord.serializer(), encoded))
+    }
 }

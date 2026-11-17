@@ -38,13 +38,15 @@ class PreparedReportServiceTest {
     private var participant = "participant-a"
     private var logCalls = 0
     private var unavailable = false
+    private var sourceUnavailable = false
     private var afterLogs: (suspend () -> Unit)? = null
+    private var closeCalls = 0
     private var paraphraseCalls = 0
     private var useFakeParaphraser = true
     private val fakeParaphraser = object : NeuralParaphraser {
         override suspend fun paraphrase(sentences: List<String>): List<String> =
             sentences.map { sentence -> paraphraseCalls++.let { "Melanjutkan $sentence" } }
-        override fun close() {}
+        override fun close() { closeCalls++ }
     }
     private var activity = "- Memeriksa data penerbangan 123 dengan hasil pemeriksaan awal.\n- Menyusun laporan hasil pemeriksaan untuk tim pengolah data.\n- Menguji hasil pemeriksaan data sebelum pekerjaan dilanjutkan."
     private var lesson = "Memahami urutan pemeriksaan kelengkapan data dan cara mencatat hasil pemeriksaan agar setiap perubahan dapat ditelusuri kembali."
@@ -67,6 +69,7 @@ class PreparedReportServiceTest {
         MonevApiClient(context, session) { _, path, _ ->
             when {
                 unavailable -> ApiResponse(503, "{}")
+                sourceUnavailable && path != "/users/me" -> ApiResponse(503, "{}")
                 path == "/users/me" -> ApiResponse(200, JSONObject().put("data", JSONObject()
                     .put("id", participant).put("internship_start_date", "2026-11-01").put("off_days", JSONArray().put("SATURDAY").put("SUNDAY"))).toString())
                 path.startsWith("/attendances?") -> ApiResponse(200, JSONObject().put("data", JSONArray().put(JSONObject()
@@ -86,16 +89,32 @@ class PreparedReportServiceTest {
         if (useFakeParaphraser) fakeParaphraser else null
     })
 
+    @Test fun closesModelWhenSourceReadFails() = runBlocking {
+        sourceUnavailable = true
+        service(session()).prepare()
+        assertEquals(1, closeCalls)
+    }
+
+    @Test fun closesModelWhenPreparationIsCancelled() = runBlocking {
+        afterLogs = { throw kotlinx.coroutines.CancellationException("fixture") }
+        try { service(session()).prepare(); fail("Cancellation must propagate") }
+        catch (_: kotlinx.coroutines.CancellationException) { }
+        assertEquals(1, closeCalls)
+    }
+
     @Test fun workerReusesPersistedPreviewTextUntilExplicitRefresh() = runBlocking {
         val session = session()
         val preview = service(session).prepare()
         assertTrue(preview.outcome() is GenerationOutcome.Generated)
+        assertFalse(preview.reusedPreview)
         assertEquals("2026-11-06", preview.sourceDate)
         lesson = lesson.replace("Memahami", "Mempelajari")
         val worker = service(session).prepare()
         assertEquals(preview.draft, worker.draft)
+        assertTrue(worker.reusedPreview)
         assertEquals(1, logCalls)
         val refreshed = service(session).prepare(force = true)
+        assertFalse(refreshed.reusedPreview)
         assertNotEquals(preview.draft?.pelajaran, refreshed.draft?.pelajaran)
         assertEquals(lesson, refreshed.draft?.pelajaran)
         assertEquals(obstacle, refreshed.draft?.kendala)
