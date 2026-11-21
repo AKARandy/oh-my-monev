@@ -240,7 +240,7 @@ class PreparedReportServiceTest {
         useFakeParaphraser = false
         val result = service(session).prepare()
         assertTrue(result.outcome() is GenerationOutcome.Failed)
-        assertTrue(result.issues.single().contains("Model otomatis belum diunduh"))
+        assertTrue(result.issues.single().contains("File mode otomatis belum diunduh"))
         assertEquals(0, logCalls)
     }
 

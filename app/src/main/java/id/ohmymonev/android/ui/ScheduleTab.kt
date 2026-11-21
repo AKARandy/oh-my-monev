@@ -193,7 +193,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Jadwal", style = MaterialTheme.typography.headlineMedium)
+            Text("Otomatis", style = MaterialTheme.typography.headlineMedium)
             if (!ready) Text(readiness.missing() + ". Buka Beranda atau Sesi.")
             Text(
                 "Mengikuti hari kerja profil Monev (WIB).",
@@ -252,7 +252,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
         }
 
         AlarmCard(
-            title = "Pengingat",
+            title = "Alarm absen",
             time = current.reminderTime,
             days = workingDays?.let { current.reminderDays intersect it } ?: current.reminderDays,
             enabled = current.reminderEnabled,
@@ -283,6 +283,28 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 ScheduleSettings.ContentSource.AUTOMATIC ->
                     "Terpicu pada jam terjadwal bila belum terkirim. Isian melanjutkan laporan hari kerja sebelumnya (eksperimental)."
             },
+            extraContent = {
+                Row(
+                    modifier = Modifier.fillMaxWidth().testTag("template-card"),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Templat laporan", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            if (template == null) "Belum dibuat" else "Siap dipakai",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(
+                        onClick = loggedClick("ScheduleTab:618") { editingTemplate = true },
+                        enabled = ready && !modelBusy,
+                        modifier = Modifier.testTag("template-edit"),
+                    ) {
+                        Text("Atur", fontSize = 16.sp)
+                    }
+                }
+            },
             actionLabel = if (modelReady) "Hapus file otomatis" else null,
             actionEnabled = ready && !modelBusy,
             showActionWhenInactive = true,
@@ -298,18 +320,12 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
         ) {
             editing = AlarmId.ESCALATION
         }
-
-        TemplateCard(
-            status = if (template == null) "Belum dibuat" else "Siap dipakai",
-            enabled = ready && !modelBusy,
-            onOpen = { editingTemplate = true },
-        )
     }
 
     if (ready) editing?.let { which ->
         AlarmEditor(
             title = when (which) {
-                AlarmId.REMINDER -> "Pengingat"
+                AlarmId.REMINDER -> "Alarm absen"
                 AlarmId.ESCALATION -> "Pengisian darurat"
             },
             initialTime = when (which) {
@@ -333,6 +349,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             modelProgress = modelProgress,
             modelError = modelError,
             profileDays = workingDays,
+            onOpenTemplate = if (which == AlarmId.ESCALATION) { { editingTemplate = true } } else null,
             onDownloadModel = { confirmDownload = true },
             onCancelDownload = { ModelTransferController.cancelDownload() },
             onDismiss = { editing = null },
@@ -444,7 +461,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             title = { Text("Matikan kedua fitur?") },
             text = {
                 Text(
-                    "Pengingat dan Pengisian darurat dimatikan. Anda tetap dapat mengisi melalui Beranda.",
+                    "Alarm absen dan Pengisian darurat dimatikan. Anda tetap dapat mengisi melalui Beranda.",
                 )
             },
             confirmButton = {
@@ -496,6 +513,7 @@ internal fun AlarmEditor(
     modelProgress: Int? = null,
     modelError: String? = null,
     profileDays: Set<DayOfWeek>? = null,
+    onOpenTemplate: (() -> Unit)? = null,
     onDownloadModel: (() -> Unit)? = null,
     onCancelDownload: (() -> Unit)? = null,
     onDismiss: () -> Unit,
@@ -562,10 +580,9 @@ internal fun AlarmEditor(
                     SourceOption(
                         "Templat saya",
                         selected = source == ScheduleSettings.ContentSource.TEMPLATE,
-                        enabled = templateReady,
                     ) { source = ScheduleSettings.ContentSource.TEMPLATE }
                     SourceOption(
-                        "Otomatis (eksperimen)",
+                        "Otomatis (eksperimental)",
                         selected = source == ScheduleSettings.ContentSource.AUTOMATIC,
                     ) { source = ScheduleSettings.ContentSource.AUTOMATIC }
                     Text(
@@ -580,11 +597,17 @@ internal fun AlarmEditor(
                     )
                     if (templateBlocked) {
                         Text(
-                            "Templat belum lengkap. Buka Templat laporan.",
+                            "Templat belum lengkap.",
                             fontSize = 18.sp,
                             lineHeight = 26.sp,
                             color = MaterialTheme.colorScheme.error,
                         )
+                    }
+                    if (source == ScheduleSettings.ContentSource.TEMPLATE && onOpenTemplate != null) {
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = loggedClick("ScheduleTab:editorOpenTemplate", onOpenTemplate),
+                            modifier = Modifier.fillMaxWidth().testTag("editor-open-template"),
+                        ) { Text(if (templateReady) "Ubah templat" else "Atur templat", fontSize = 18.sp) }
                     }
                     if (source == ScheduleSettings.ContentSource.AUTOMATIC && !autoReady) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -637,30 +660,6 @@ internal fun AlarmEditor(
 }
 
 private enum class AlarmId { REMINDER, ESCALATION }
-
-/** Kartu ringkas templat: status satu baris + tombol Atur (editor dalam dialog). */
-@Composable
-private fun TemplateCard(status: String, enabled: Boolean, onOpen: () -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().testTag("template-card"),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Templat laporan", style = MaterialTheme.typography.titleMedium)
-                Text(status, fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            TextButton(onClick = loggedClick("ScheduleTab:618", onOpen), enabled = enabled, modifier = Modifier.testTag("template-edit")) {
-                Text("Atur", fontSize = 18.sp)
-            }
-        }
-    }
-}
 
 /** Check the report after replacing the date marker, as the delivery path does. */
 internal fun templateIssues(aktivitas: String, pelajaran: String, kendala: String): List<String> {
@@ -794,6 +793,7 @@ private fun AlarmCard(
     controlsEnabled: Boolean,
     paused: Boolean = false,
     detail: String,
+    extraContent: (@Composable () -> Unit)? = null,
     actionLabel: String? = null,
     actionEnabled: Boolean = true,
     showActionWhenInactive: Boolean = false,
@@ -867,6 +867,7 @@ private fun AlarmCard(
                     color = textColor,
                 )
             }
+            extraContent?.invoke()
             if (actionLabel != null && onAction != null && (effective || showActionWhenInactive)) {
                 TextButton(
                     onClick = loggedClick("ScheduleTab:784", onAction),

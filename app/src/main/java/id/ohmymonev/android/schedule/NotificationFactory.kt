@@ -97,7 +97,7 @@ class NotificationFactory(private val context: Context) {
             nextFireISO != null -> "oh-my-monev: jadwal fitur berikutnya" to
                 "$feature · " + formatFire(nextFireISO) + " WIB."
             else -> "oh-my-monev: tidak ada jadwal aktif" to
-                "Periksa pilihan fitur dan hari di Jadwal."
+                "Periksa pilihan fitur dan hari di tab Otomatis."
         }
         return builder(CHANNEL_GUARD)
             .setContentTitle(title)

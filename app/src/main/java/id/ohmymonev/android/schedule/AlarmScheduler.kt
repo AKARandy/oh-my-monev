@@ -209,7 +209,7 @@ object AlarmScheduler {
     }
 
     private fun featureLabel(key: String): String = when (key) {
-        ScheduleCalculator.KEY_REMINDER -> "Pengingat"
+        ScheduleCalculator.KEY_REMINDER -> "Alarm absen"
         else -> "Pengisian darurat"
     }
 

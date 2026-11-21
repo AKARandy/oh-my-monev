@@ -163,7 +163,7 @@ internal class PreparedReportService(
             // Mode templat: tanpa fallback. Templat kosong gagal jelas, bukan melompat ke lanjutan otomatis.
             sourceDate = date
             source = if (template == null) "Templat belum dibuat." else "Dari templat Anda."
-            outcome = if (template == null) GenerationOutcome.Failed(FailureReason.NO_SOURCE_MATERIAL, "Templat belum dibuat. Buka tab Jadwal, kartu Templat laporan.")
+            outcome = if (template == null) GenerationOutcome.Failed(FailureReason.NO_SOURCE_MATERIAL, "Templat belum dibuat. Buka tab Otomatis, kartu Pengisian darurat.")
             else GeneratorPipeline(
                 templates = { ReportDraft(template.aktivitas, template.pelajaran, template.kendala) },
                 history = ReportHistory { null },
@@ -184,7 +184,7 @@ internal class PreparedReportService(
                 source = "Model otomatis belum diunduh."
                 outcome = GenerationOutcome.Failed(
                     FailureReason.NO_SOURCE_MATERIAL,
-                    "Model otomatis belum diunduh. Buka tab Jadwal, Pengisian darurat.")
+                    "File mode otomatis belum diunduh. Buka tab Otomatis, kartu Pengisian darurat.")
             } else {
                 try {
                 val previous = PastReportReader(context).read(date, api, profile)

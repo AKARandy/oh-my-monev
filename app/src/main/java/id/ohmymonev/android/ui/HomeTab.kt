@@ -591,7 +591,7 @@ internal fun HomeTab(
                         title = { Text("Jeda Pengisian darurat malam ini?") },
                         text = {
                             Text(
-                                "Pengingat tetap mengikuti jadwal. Kirim laporan sendiri sebelum 23.59 WIB.",
+                                "Alarm absen tetap mengikuti jadwal. Kirim laporan sendiri sebelum 23.59 WIB.",
                             )
                         },
                         confirmButton = {

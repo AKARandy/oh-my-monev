@@ -35,7 +35,7 @@ class WorkDaysStoreTest {
         calendar.save(profile("SATURDAY", "SUNDAY"))
         val state = AlarmScheduler.readArmedState(context, ScheduleSettings(), ZonedDateTime.parse("2026-11-08T12:20:00+07:00[Asia/Jakarta]"))
         assertEquals("2026-11-09T13:00:00Z", state.nextFireISO)
-        assertEquals("Pengingat", state.source)
+        assertEquals("Alarm absen", state.source)
     }
     @Test fun featureDaysRemainAnAdditionalLimitAndAreNotOverwritten() {
         calendar.save(profile("SUNDAY"))

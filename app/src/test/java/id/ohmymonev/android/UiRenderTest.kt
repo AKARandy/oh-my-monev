@@ -106,7 +106,7 @@ class UiRenderTest {
         }
         if (!masterEnabled || name == "locked-schedule") {
             compose.onNodeWithTag("master-toggle").assertIsNotEnabled()
-            for (title in listOf("Pengingat", "Pengisian darurat")) {
+            for (title in listOf("Alarm absen", "Pengisian darurat")) {
                 compose.onNodeWithTag("alarm-toggle-$title").assertIsNotEnabled()
                 compose.onNodeWithTag("alarm-edit-$title").assertIsNotEnabled()
             }
@@ -118,7 +118,7 @@ class UiRenderTest {
         if (captureTag == null) compose.onAllNodes(isRoot()).onLast().captureRoboImage(output.absolutePath)
         else compose.onNodeWithTag(captureTag).captureRoboImage(output.absolutePath)
         if (captureCards) {
-            listOf("Pengingat", "Pengisian darurat").forEachIndexed { index, title ->
+            listOf("Alarm absen", "Pengisian darurat").forEachIndexed { index, title ->
                 compose.onNodeWithTag("alarm-card-$title")
                     .captureRoboImage(File(root, "screenshots/forge-card-${index + 1}${if (masterEnabled) "" else "-disabled"}${if (fontScale > 1f) "-large-text" else ""}.png").absolutePath)
             }
@@ -161,6 +161,7 @@ class UiRenderTest {
             title = "Pengisian darurat", initialTime = LocalTime.of(22, 30), initialEnabled = true,
             initialDays = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
             initialSource = ScheduleSettings.ContentSource.TEMPLATE, templateReady = true,
+            onOpenTemplate = {},
             onDismiss = {}, onSave = { _, _, _, _ -> },
         )
     }

@@ -73,7 +73,7 @@ class ScreenshotCaptureTest {
 
     @Test
     fun beranda() {
-        capture("01-beranda", waitForText = "Pengingat") { HomeTab() }
+        capture("01-beranda", waitForText = "Alarm absen") { HomeTab() }
     }
 
     @Test

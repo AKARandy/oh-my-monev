@@ -32,7 +32,7 @@ private data class TabSpec(val label: String, val icon: ImageVector)
 
 private val tabs = listOf(
     TabSpec("Beranda", Icons.Filled.Home),
-    TabSpec("Jadwal", Icons.Filled.DateRange),
+    TabSpec("Otomatis", Icons.Filled.DateRange),
     TabSpec("Log", Icons.AutoMirrored.Filled.List),
     TabSpec("Sesi", Icons.Filled.Person),
 )
