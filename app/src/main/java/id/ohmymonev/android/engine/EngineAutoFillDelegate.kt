@@ -95,7 +95,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             fun complete(message: String, record: RunRecord) {
                 appendRecordSafely(store, record)
                 id.ohmymonev.android.data.ActionLog.record(appContext, "manual.complete", message)
-                AutoFillService.manualFinished(request, message)
+                AutoFillService.manualFinished(request, message, record.outcome)
                 AutoFillService.finished(appContext)
             }
             fun draftStillCurrent() = store.todayDraft(draft.date) == draft &&
@@ -476,7 +476,7 @@ internal fun manualPreflightIssue(
 
 private fun manualSendFailure(record: RunRecord): String = when (record.outcome) {
     EngineOutcome.LOGIN_REQUIRED -> "Sesi Monev tidak siap. Periksa sesi, lalu cek ulang status laporan."
-    EngineOutcome.LOCATION_CHECK_FAILS -> (record.detail ?: "Monev belum dapat memeriksa lokasi.") + " Cek ulang status laporan."
+    EngineOutcome.LOCATION_CHECK_FAILS -> record.detail ?: "Monev belum dapat memeriksa lokasi."
     EngineOutcome.DAY_NOT_FILLABLE -> "Formulir Monev tidak dapat diisi. Cek ulang status laporan."
     EngineOutcome.READBACK_MISMATCH -> "Isian formulir berbeda dari draf. Cek ulang status laporan."
     EngineOutcome.LOADING_TIMEOUT -> (record.detail ?: "Monev tidak merespons.") + " Cek ulang status laporan."

@@ -82,8 +82,8 @@ android {
 androidComponents {
     onVariants(selector().withBuildType("debug")) { variant ->
         variant.outputs.forEach {
-            it.versionCode.set(21)
-            it.versionName.set("0.1.21")
+            it.versionCode.set(22)
+            it.versionName.set("0.1.22")
         }
     }
 }

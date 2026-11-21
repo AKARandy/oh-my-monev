@@ -37,7 +37,7 @@ class AlarmSchedulerTest {
     @Test fun backgroundLocationDoesNotBlockEmergencyWithIpFallback() {
         shadowOf(context.applicationContext as Application).denyPermissions(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         val report = AlarmScheduler.armAll(context, ScheduleSettings(escalationEnabled = true))
-        assertEquals(listOf("reminder", "escalation"), report.armedKeys)
+        assertEquals(listOf("escalation", "reminder"), report.armedKeys.sorted())
         assertTrue(FeatureReadiness.read(context).ready)
         assertTrue(!FeatureReadiness.backgroundLocation(context))
     }

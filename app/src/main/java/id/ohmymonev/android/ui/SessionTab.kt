@@ -54,6 +54,7 @@ fun SessionTab(modifier: Modifier = Modifier) {
     var browser by remember { mutableStateOf<WebView?>(null) }
     val locationBridges = remember { mutableMapOf<WebView, LocationBridge>() }
     var browserVersion by remember { mutableStateOf(0L) }
+    var afterLogin by remember { mutableStateOf(false) }
     var checking by remember { mutableStateOf(false) }
     var checkNumber by remember { mutableStateOf(0) }
     var checkJob by remember { mutableStateOf<Job?>(null) }
@@ -66,9 +67,10 @@ fun SessionTab(modifier: Modifier = Modifier) {
             checking = true
             try {
                 browser?.let { view ->
-                    val version = if (repository.state.value.hasToken) browserVersion else repository.state.value.version
+                    val snapshot = repository.state.value
+                    val version = if (snapshot.hasToken || snapshot.signedOut) browserVersion else snapshot.version
                     SessionWebView.inspect(view)?.token?.let {
-                        if (repository.capture(it, version)) browserVersion = repository.state.value.version
+                        if (repository.capture(it, version, afterLogin = afterLogin)) browserVersion = repository.state.value.version
                     }
                 }
                 SessionProbe(context).check()
@@ -86,10 +88,11 @@ fun SessionTab(modifier: Modifier = Modifier) {
         checkSession()
         while (isActive) {
             delay(1_000)
-            val version = if (repository.state.value.hasToken) browserVersion else repository.state.value.version
+            val snapshot = repository.state.value
+            val version = if (snapshot.hasToken || snapshot.signedOut) browserVersion else snapshot.version
             val page = SessionWebView.inspect(view) ?: continue
             if (page.token != null) {
-                if (repository.capture(page.token, version)) {
+                if (repository.capture(page.token, version, afterLogin = afterLogin)) {
                     browserVersion = repository.state.value.version
                     checkSession()
                 }
@@ -143,9 +146,19 @@ fun SessionTab(modifier: Modifier = Modifier) {
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                                 if (request.isForMainFrame && request.url.host == "account.kemnaker.go.id" && request.url.path == "/auth/logout") {
-                                    scope.launch { repository.credentials()?.let { repository.reject(it) } }
+                                    afterLogin = false
+                                    scope.launch { repository.signOut() }
                                 }
                                 return false
+                            }
+                            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                                val uri = url?.let(android.net.Uri::parse)
+                                if (uri?.scheme == "https" && uri.host == "monev-api.maganghub.kemnaker.go.id" &&
+                                    uri.port in listOf(-1, 443) && uri.path == "/api/v1/auth/login/callback"
+                                ) {
+                                    browserVersion = repository.state.value.version
+                                    afterLogin = true
+                                }
                             }
                             override fun onPageFinished(view: WebView, url: String?) {
                                 ActionLog.record(ctx, "session.page.loaded",
@@ -158,7 +171,7 @@ fun SessionTab(modifier: Modifier = Modifier) {
                 },
                 onRelease = { view ->
                     locationBridges.remove(view)?.close()
-                    SessionWebView.release(view, repository, browserVersion)
+                    SessionWebView.release(view, repository, browserVersion, afterLogin)
                 },
                 modifier = Modifier.fillMaxSize(),
             )

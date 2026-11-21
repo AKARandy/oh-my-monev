@@ -1,6 +1,6 @@
 # Uji lokasi perangkat dan fallback IP
 
-APK diagnostik v0.1.21 memakai lokasi perangkat jika tersedia dan perkiraan IP jika lokasi gagal atau mati
+APK diagnostik memakai lokasi perangkat jika tersedia dan perkiraan IP jika lokasi gagal atau mati
 
 ## Uji tanpa mengirim laporan
 
@@ -28,8 +28,8 @@ Pada hari kerja yang laporannya belum diisi, simpan laporan yang memang akan dik
 
 ## Bukti dan batas
 
-IP diperkirakan oleh ipwhois.io melalui HTTPS dari koneksi HP dan dapat mengikuti jaringan operator atau VPN
+FreeIPAPI memperkirakan lokasi lewat HTTPS dari koneksi HP. Hasil dapat mengikuti jaringan operator atau VPN.
 Penyedia menerima IP koneksi tanpa token Monev atau isi laporan
-Jika lokasi perangkat dan lookup IP gagal, aplikasi mempertahankan draf
-Tes lokal tidak membuktikan Monev menerima koordinat IP pada akun nyata atau bahwa ANR perangkat telah hilang
-Publikasi GitHub tetap ditunda
+Jika pencarian lokasi gagal, draf tetap tersimpan
+Tombol Kirim ke Monev aktif kembali setelah status Belum terkirim dikonfirmasi
+Penerimaan lokasi IP pada akun nyata dan kondisi layar terkunci perlu diuji pada HP

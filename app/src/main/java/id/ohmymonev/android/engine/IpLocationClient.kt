@@ -4,6 +4,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
+import org.json.JSONException
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -51,9 +52,6 @@ internal class IpLocationClient(
                         }
                         val body = connection.inputStream.use(::readBounded)
                         val json = JSONObject(String(body, Charsets.UTF_8))
-                        if (json.opt("success") != true) {
-                            throw LocationFailure("ip_unsuccessful", 2, "Lokasi jaringan tidak tersedia.")
-                        }
                         val latitude = (json.opt("latitude") as? Number)?.toDouble()
                         val longitude = (json.opt("longitude") as? Number)?.toDouble()
                         if (latitude == null || longitude == null || !valid(latitude, longitude)) {
@@ -64,6 +62,10 @@ internal class IpLocationClient(
                         if (continuation.isActive) continuation.resumeWithException(cancelled)
                     } catch (failure: LocationFailure) {
                         if (continuation.isActive) continuation.resumeWithException(failure)
+                    } catch (_: JSONException) {
+                        if (continuation.isActive) continuation.resumeWithException(
+                            LocationFailure("ip_invalid_response", 2, "Lokasi jaringan tidak tersedia."),
+                        )
                     } catch (_: Exception) {
                         if (continuation.isActive) continuation.resumeWithException(
                             LocationFailure("ip_network", 2, "Lokasi jaringan tidak tersedia."),
@@ -97,7 +99,7 @@ internal class IpLocationClient(
     }
 
     companion object {
-        const val ENDPOINT = "https://ipwho.is/?fields=success,message,latitude,longitude"
+        const val ENDPOINT = "https://free.freeipapi.com/api/v1/json"
         const val MAX_TIMEOUT_MS = 8_000L
         const val MAX_RESPONSE_BYTES = 16 * 1024
 

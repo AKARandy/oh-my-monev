@@ -13,9 +13,14 @@ import id.ohmymonev.android.data.StoredDraft
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-data class ManualReportRequest(val draft: StoredDraft, val account: String, val sessionVersion: Long)
+class ManualReportRequest(val draft: StoredDraft, val account: String, val sessionVersion: Long)
 
-data class ManualReportState(val request: ManualReportRequest, val message: String? = null) {
+data class ManualReportState(
+    val request: ManualReportRequest,
+    val message: String? = null,
+    val outcome: id.ohmymonev.core.enginecore.EngineOutcome? = null,
+    val recheckRequired: Boolean = false,
+) {
     val sending: Boolean get() = message == null
 }
 
@@ -161,10 +166,21 @@ class AutoFillService : Service() {
             }
         }
 
-        fun manualFinished(request: ManualReportRequest, message: String) {
+        fun manualFinished(
+            request: ManualReportRequest,
+            message: String,
+            outcome: id.ohmymonev.core.enginecore.EngineOutcome? = null,
+        ) {
             val current = mutableManual.value
             if (current?.request === request && current.sending) {
-                mutableManual.compareAndSet(current, ManualReportState(request, message))
+                mutableManual.compareAndSet(current, ManualReportState(request, message, outcome))
+            }
+        }
+
+        fun requireManualRecheck(request: ManualReportRequest, required: Boolean) {
+            val current = mutableManual.value ?: return
+            if (current.request === request && !current.sending && current.recheckRequired != required) {
+                mutableManual.compareAndSet(current, current.copy(recheckRequired = required))
             }
         }
 

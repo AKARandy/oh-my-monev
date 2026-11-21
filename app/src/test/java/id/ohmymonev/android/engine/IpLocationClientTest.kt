@@ -24,7 +24,7 @@ class IpLocationClientTest {
     @Test fun readsOnlySuccessfulNumericCoordinates() = runBlocking {
         val connection = FixtureConnection(
             200,
-            """{"success":true,"message":"OK","latitude":-6.2,"longitude":106.8}""",
+            """{"ipVersion":4,"ipAddress":"192.0.2.1","latitude":-6.2,"longitude":106.8}""",
         )
 
         val result = IpLocationClient { connection }.locate(9_000)
@@ -33,6 +33,7 @@ class IpLocationClientTest {
         assertEquals(-6.2, result.latitude, 0.0)
         assertEquals(106.8, result.longitude, 0.0)
         assertEquals("GET", connection.requestMethod)
+        assertEquals("https://free.freeipapi.com/api/v1/json", IpLocationClient.ENDPOINT)
         assertFalse(connection.instanceFollowRedirects)
         assertNull(connection.getRequestProperty("Cookie"))
         assertTrue(connection.readTimeout in 1..8_000)
@@ -65,17 +66,20 @@ class IpLocationClientTest {
         assertEquals("ip_invalid_coordinates", failure { IpLocationClient { outOfRange }.locate(1_000) }.reason)
     }
 
-    @Test fun rejectsUnsuccessfulAndOversizedResponses() = runBlocking {
-        val unsuccessful = FixtureConnection(200, """{"success":false,"message":"Private response text"}""")
+    @Test fun rejectsDeniedMalformedAndOversizedResponses() = runBlocking {
+        val denied = FixtureConnection(403, """{"message":"Private response text"}""")
+        val malformed = FixtureConnection(200, "<html>Not JSON</html>")
         val oversized = FixtureConnection(
             200,
             " ".repeat(IpLocationClient.MAX_RESPONSE_BYTES + 1),
         )
 
-        val unsuccessfulFailure = failure { IpLocationClient { unsuccessful }.locate(1_000) }
+        val deniedFailure = failure { IpLocationClient { denied }.locate(1_000) }
+        val malformedFailure = failure { IpLocationClient { malformed }.locate(1_000) }
         val oversizedFailure = failure { IpLocationClient { oversized }.locate(1_000) }
-        assertEquals("ip_unsuccessful", unsuccessfulFailure.reason)
-        assertFalse(unsuccessfulFailure.message.orEmpty().contains("Private response text"))
+        assertEquals("ip_http_403", deniedFailure.reason)
+        assertFalse(denied.inputOpened)
+        assertEquals("ip_invalid_response", malformedFailure.reason)
         assertEquals("ip_response_too_large", oversizedFailure.reason)
     }
 

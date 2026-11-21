@@ -15,6 +15,8 @@ import org.json.JSONObject
 internal class SessionTokenStore(context: Context, private val key: () -> SecretKey = ::sessionKey) {
     private val preferences = context.getSharedPreferences("monev_session", Context.MODE_PRIVATE)
 
+    fun signedOut(): Boolean = preferences.getBoolean("signed_out", false)
+
     fun read(): String? = runCatching {
         val encoded = preferences.getString("credential", null) ?: return null
         val data = JSONObject(encoded)
@@ -28,11 +30,15 @@ internal class SessionTokenStore(context: Context, private val key: () -> Secret
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val json = JSONObject().put("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
             .put("data", Base64.encodeToString(cipher.doFinal(token.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP))
-        if (!preferences.edit().putString("credential", json.toString()).commit()) throw IOException("Credential storage failed")
+        if (!preferences.edit().putString("credential", json.toString()).remove("signed_out").commit()) {
+            throw IOException("Credential storage failed")
+        }
     }
 
-    fun clear() {
-        if (!preferences.edit().remove("credential").commit()) throw IOException("Credential removal failed")
+    fun clear(signedOut: Boolean = false) {
+        if (!preferences.edit().remove("credential").putBoolean("signed_out", signedOut).commit()) {
+            throw IOException("Credential removal failed")
+        }
     }
 }
 

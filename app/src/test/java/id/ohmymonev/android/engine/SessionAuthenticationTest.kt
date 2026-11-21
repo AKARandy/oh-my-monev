@@ -14,6 +14,10 @@ import java.net.SocketTimeoutException
 import java.util.UUID
 import javax.crypto.spec.SecretKeySpec
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -120,7 +124,7 @@ class SessionAuthenticationTest {
         val old = requireNotNull(repository.credentials())
         assertTrue(repository.capture("synthetic-token-b", old.version))
         repository.confirm(requireNotNull(repository.credentials()))
-        assertFalse(repository.reject(old))
+        assertFalse(repository.reject(old.version))
         repository.uncertain(old, "old timeout")
         assertFalse(repository.capture("synthetic-token-a", old.version))
         assertTrue(repository.state.value.usable)
@@ -148,11 +152,88 @@ class SessionAuthenticationTest {
     @Test fun missingCredentialDoesNotTurnAnOldConfirmationIntoLogout() = runBlocking {
         AppStore(context).saveSessionStatus(SessionRecord(true, "2020-01-01T00:00:00Z"))
         val repository = SessionRepository(context, vault)
-        val api = MonevApiClient(context, repository) { _, _, _ -> error("No request without a token") }
+        val api = MonevApiClient(context, repository) { method, path, token ->
+            assertEquals("POST", method)
+            assertEquals("/auth/refresh", path)
+            assertNull(token)
+            ApiResponse(403, "{}")
+        }
         assertNull(api.objectData("/users/me"))
         assertEquals(true, repository.state.value.record?.active)
         assertFalse(repository.state.value.usable)
         assertEquals(true, AppStore(context).sessionStatus()?.active)
+    }
+
+    @Test fun aMissingTokenCanBeRecoveredAndVerifiedFromTheRefreshCookie() = runBlocking {
+        val repository = SessionRepository(context, vault)
+        val calls = mutableListOf<Triple<String, String, String?>>()
+        val api = MonevApiClient(context, repository) { method, path, token ->
+            calls += Triple(method, path, token)
+            if (path == "/auth/refresh") ApiResponse(200, """{"data":{"access_token":"renewed"}}""")
+            else ApiResponse(200, """{"data":{"id":"participant"}}""")
+        }
+        assertEquals("participant", api.objectData("/users/me")?.optString("id"))
+        assertFalse(repository.state.value.usable)
+        api.confirmActive()
+        assertTrue(repository.state.value.usable)
+        assertEquals(listOf(Triple("POST", "/auth/refresh", null), Triple("GET", "/users/me", "renewed")), calls)
+    }
+
+    @Test fun repeatedDenialsWithoutACredentialDoNotChangeTheGeneration() = runBlocking {
+        val repository = SessionRepository(context, vault)
+        fun client() = MonevApiClient(context, repository) { _, _, _ -> ApiResponse(401, "{}") }
+        assertNull(client().objectData("/users/me"))
+        val version = repository.state.value.version
+        val next = client()
+        assertNull(next.objectData("/users/me"))
+        assertEquals(SessionState.EXPIRED, next.failureState)
+        assertEquals(version, repository.state.value.version)
+    }
+
+    @Test fun losingOneCallerDoesNotRestartARefreshForAnotherRead() = runBlocking {
+        withTimeout(5_000) {
+            val repository = active()
+            val refreshing = CompletableDeferred<Unit>()
+            val finishRefresh = CompletableDeferred<Unit>()
+            val secondRead = CompletableDeferred<Unit>()
+            val refreshCount = java.util.concurrent.atomic.AtomicInteger()
+            fun client(second: Boolean) = MonevApiClient(context, repository) { _, path, token ->
+                when {
+                    path == "/auth/refresh" -> {
+                        refreshCount.incrementAndGet()
+                        refreshing.complete(Unit)
+                        finishRefresh.await()
+                        ApiResponse(200, """{"access_token":"renewed"}""")
+                    }
+                    token == "synthetic-token-a" -> {
+                        if (second) secondRead.complete(Unit)
+                        ApiResponse(401, "{}")
+                    }
+                    else -> ApiResponse(200, """{"data":{"id":"participant"}}""")
+                }
+            }
+            val first = async { client(false).objectData("/users/me") }
+            refreshing.await()
+            val second = async { client(true).objectData("/users/me") }
+            secondRead.await()
+            first.cancelAndJoin()
+            finishRefresh.complete(Unit)
+            assertEquals("participant", second.await()?.optString("id"))
+            assertEquals(1, refreshCount.get())
+        }
+    }
+
+    @Test fun signedOutSessionBlocksCookieRecoveryUntilANewInteractiveLogin() = runBlocking {
+        active().signOut()
+        val restarted = SessionRepository(context, vault)
+        val api = MonevApiClient(context, restarted) { _, _, _ -> error("Signed-out session made a request") }
+        assertNull(api.objectData("/users/me"))
+        assertEquals(SessionState.EXPIRED, api.failureState)
+        assertTrue(restarted.state.value.signedOut)
+        assertFalse(restarted.capture("page-token", restarted.state.value.version))
+        assertTrue(restarted.capture("new-login", restarted.state.value.version, afterLogin = true))
+        assertFalse(restarted.state.value.signedOut)
+        assertFalse(vault.signedOut())
     }
 
     @Test fun locationRequiresPrecisePermissionAndTrustedMonevOrigin() {

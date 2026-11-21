@@ -76,12 +76,13 @@ internal object SessionWebView {
         } }
     }
 
-    fun release(view: WebView, session: SessionRepository, expectedVersion: Long) {
+    fun release(view: WebView, session: SessionRepository, expectedVersion: Long, afterLogin: Boolean = false) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 inspect(view)?.token?.let {
-                    val version = if (session.state.value.hasToken) expectedVersion else session.state.value.version
-                    session.capture(it, version)
+                    val snapshot = session.state.value
+                    val version = if (snapshot.hasToken || snapshot.signedOut) expectedVersion else snapshot.version
+                    session.capture(it, version, afterLogin = afterLogin)
                 }
             } finally {
                 view.stopLoading()

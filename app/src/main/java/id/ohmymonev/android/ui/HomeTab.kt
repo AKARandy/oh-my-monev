@@ -93,9 +93,13 @@ private val DATE_FORMAT = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", ID_LO
 private val TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm")
 
 @Composable
-fun HomeTab(
+internal fun HomeTab(
     onOpenSession: () -> Unit = {},
     modifier: Modifier = Modifier,
+    sessionRepository: SessionRepository = SessionRepository.get(LocalContext.current),
+    checkStatus: suspend (Context, LocalDate) -> SiteStatus = { context, date ->
+        SiteStatusProbe(context).checkReminder(date, null)
+    },
 ) {
     val context = LocalContext.current
     val store = remember { TimeSettingsStore(context) }
@@ -121,15 +125,19 @@ fun HomeTab(
             } finally { exportingLog = false }
         }
     }
-    val sessionRepository = remember { SessionRepository.get(context) }
     val session by sessionRepository.state.collectAsState()
-    val sessionActive = session.record?.active
-    val sessionChecked = session.record != null
     val confirmingSession = session.initializing || (session.hasToken && session.record == null && session.issue == null)
     var previewJob by remember { mutableStateOf<Job?>(null) }
     var statusJob by remember { mutableStateOf<Job?>(null) }
     var previewRequest by remember { mutableStateOf(0) }
     var statusRequest by remember { mutableStateOf(0) }
+    var checkingDate by remember { mutableStateOf<String?>(null) }
+    var checkingAfter by remember { mutableStateOf<ManualReportRequest?>(null) }
+    var checkedDate by remember { mutableStateOf<String?>(null) }
+    var checkedVersion by remember { mutableStateOf<Long?>(null) }
+    var checkedAfter by remember { mutableStateOf<ManualReportRequest?>(null) }
+    var resumeCount by remember { mutableStateOf(0) }
+    var checkedOnResume by remember { mutableStateOf(0) }
     val settings by store.settings.collectAsState(initial = null)
 
     var todayIso by remember { mutableStateOf(LocalDate.now(ScheduleCalculator.asiaJakarta).toString()) }
@@ -167,7 +175,6 @@ fun HomeTab(
     val manualSending = manual?.sending == true
     var confirmSend by remember { mutableStateOf<ManualReportRequest?>(null) }
     var confirmWithIp by remember { mutableStateOf(false) }
-    var refreshStatusOnResume by remember { mutableStateOf(false) }
     var recheckedManual by remember { mutableStateOf<ManualReportRequest?>(null) }
     var infoExpanded by remember { mutableStateOf(false) }
     var diagnosticsExpanded by remember { mutableStateOf(false) }
@@ -258,16 +265,44 @@ fun HomeTab(
 
     /** Baca keadaan sesungguhnya dari situs: status hari ini (isi/kosong/libur) + riwayat. */
     fun refreshSiteStatus() {
+        val date = LocalDate.now(ScheduleCalculator.asiaJakarta)
+        val dateIso = date.toString()
+        val completed = AutoFillService.manual.value?.takeIf { !it.sending && it.request.draft.date == dateIso }
+        val attempt = completed?.request
+        if (checkingStatus && checkingDate == dateIso && checkingAfter === attempt) return
+        checkingDate = dateIso
+        checkingAfter = attempt
         id.ohmymonev.android.data.ActionLog.record(context, "status.check.start")
         val request = ++statusRequest
         statusJob?.cancel()
         checkingStatus = true
         statusJob = scope.launch {
             try {
-                val result = kotlinx.coroutines.withTimeoutOrNull(45_000) { SiteStatusProbe(context).check() }
+                val result = kotlinx.coroutines.withTimeoutOrNull(45_000) {
+                    val before = sessionRepository.state.value.version
+                    val first = checkStatus(context, date)
+                    val current = sessionRepository.state.value
+                    if (current.hasToken && current.version != before && first.credentialVersion != current.version) {
+                        checkStatus(context, date)
+                    } else first
+                }
                     ?: SiteStatus(null, TodayState.UNKNOWN, null, emptyList(), "Pemeriksaan terlalu lama. Coba lagi.")
-                if (request != statusRequest) return@launch
+                if (request != statusRequest || date != LocalDate.now(ScheduleCalculator.asiaJakarta)) return@launch
                 siteStatus = result
+                checkedDate = dateIso
+                checkedVersion = result.credentialVersion ?: sessionRepository.state.value.version
+                checkedAfter = attempt
+                checkedOnResume = resumeCount
+                if (completed?.outcome == EngineOutcome.LOCATION_CHECK_FAILS && attempt != null) {
+                    val current = sessionRepository.state.value
+                    if (result.sessionActive != true || result.account != attempt.account ||
+                        result.credentialVersion != current.version || result.today == TodayState.UNKNOWN
+                    ) {
+                        AutoFillService.requireManualRecheck(attempt, true)
+                    } else if (recheckedManual === attempt) {
+                        AutoFillService.requireManualRecheck(attempt, false)
+                    }
+                }
                 id.ohmymonev.android.data.ActionLog.record(context, "status.check.result",
                     "session=${result.sessionActive} state=${result.today}")
                 val current = withContext(Dispatchers.IO) { store.settingsOnce() }
@@ -282,10 +317,8 @@ fun HomeTab(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 refreshPermissions()
-                if (refreshStatusOnResume) {
-                    refreshStatusOnResume = false
-                    refreshSiteStatus()
-                }
+                todayIso = LocalDate.now(ScheduleCalculator.asiaJakarta).toString()
+                resumeCount++
             }
         }
         lifecycle.addObserver(observer)
@@ -295,11 +328,13 @@ fun HomeTab(
     DisposableEffect(Unit) {
         onDispose { previewJob?.cancel(); statusJob?.cancel() }
     }
-    LaunchedEffect(session.version, session.initializing, todayIso) {
+    val completedAttempt = manual?.takeIf { !it.sending && it.request.draft.date == todayIso }?.request
+    LaunchedEffect(session.version, session.initializing, todayIso, completedAttempt, resumeCount) {
         if (!session.initializing) {
-            siteStatus = null
+            if (checkedDate != todayIso || checkedVersion != session.version ||
+                checkedAfter !== completedAttempt || checkedOnResume != resumeCount
+            ) refreshSiteStatus()
             refresh()
-            refreshSiteStatus()
         }
     }
     LaunchedEffect(settings) {
@@ -333,27 +368,26 @@ fun HomeTab(
 
     val readiness = id.ohmymonev.android.schedule.FeatureReadiness(session.usable, locationGranted, notificationsOn)
     val ready = readiness.ready
-    val status = siteStatus
+    val status = siteStatus?.takeIf {
+        checkedDate == todayIso && checkedVersion == session.version
+    }
     val account = status?.account
     val visibleDraft = todayDraft?.takeIf { it.date == todayIso &&
         (it.participantId == null || it.participantId == account) }
     val manualResult = manual?.takeIf {
         !it.sending && it.request.draft.date == todayIso &&
             (it.request.account == account ||
-                (account == null && it.message != "Laporan sudah terkirim." && it.request.sessionVersion == session.version))
+                (account == null && it.outcome != EngineOutcome.SUBMITTED && it.request.sessionVersion == session.version))
     }
+    val locationRetryReady = manualResult?.outcome == EngineOutcome.LOCATION_CHECK_FAILS &&
+        !manualResult.recheckRequired && checkedAfter === manualResult.request
+    val attemptedByOtherAccount = completedAttempt != null &&
+        completedAttempt.draft == visibleDraft && completedAttempt.account != account
     val maySend = ready && status?.sessionActive == true && status.today == TodayState.UNFILLED &&
-        account != null && status.credentialVersion == session.version && !checkingStatus &&
-        !manualSending && (manualResult == null || manualResult.request === recheckedManual) &&
-        manualResult?.message != "Laporan sudah terkirim."
-
-    LaunchedEffect(manual) {
-        val result = manual
-        if (result != null && !result.sending) {
-            refresh()
-            refreshSiteStatus()
-        }
-    }
+        account != null && status.credentialVersion == session.version && !checkingStatus && !attemptedByOtherAccount &&
+        !manualSending && (manualResult == null || locationRetryReady ||
+            (manualResult.request === recheckedManual && checkedAfter === manualResult.request)) &&
+        manualResult?.outcome != EngineOutcome.SUBMITTED
 
     val scrollState = rememberScrollState()
     Box(modifier = modifier.fillMaxSize()) {
@@ -377,17 +411,21 @@ fun HomeTab(
                     status?.today == TodayState.FILLED -> ReportStatusLabel.SUBMITTED
                     status?.today == TodayState.UNFILLED && status.sessionActive == true -> ReportStatusLabel.MISSING
                     status?.today == TodayState.LIBUR || status?.today == TodayState.LEAVE -> ReportStatusLabel.NOT_REQUIRED
-                    !session.hasToken -> ReportStatusLabel.LOGIN_REQUIRED
+                    status?.sessionActive == false || session.signedOut -> ReportStatusLabel.LOGIN_REQUIRED
                     else -> ReportStatusLabel.UNAVAILABLE
                 },
-                canRecheck = !checkingStatus && !manualSending && session.hasToken,
+                canRecheck = !checkingStatus && !manualSending && !session.initializing,
                 onRecheck = {
                     recheckedManual = manualResult?.request
                     refreshSiteStatus()
                 },
             )
-            if (!ready) Text(readiness.missing(), style = MaterialTheme.typography.bodyMedium)
-            if (!session.usable) {
+            if (!ready && (session.usable || status?.sessionActive == false || session.signedOut)) {
+                Text(readiness.missing(), style = MaterialTheme.typography.bodyMedium)
+            } else if (!notificationsOn) {
+                Text("Aktifkan notifikasi", style = MaterialTheme.typography.bodyMedium)
+            }
+            if (status?.sessionActive == false || session.signedOut) {
                 TextButton(onClick = loggedClick("HomeTab:346", onOpenSession)) { Text("Login ke Monev") }
             }
         }
@@ -428,7 +466,6 @@ fun HomeTab(
                 },
                 onEnableLocation = {
                     confirmSend = null
-                    refreshStatusOnResume = true
                     val settingsIntent = if (!locationEnabled) {
                         Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
                     } else {
@@ -455,7 +492,7 @@ fun HomeTab(
             loading = pratinjauLoading,
             onRefresh = { refreshPratinjau(true) },
             refreshEnabled = ready,
-            holiday = siteStatus?.today == TodayState.LIBUR,
+            holiday = status?.today == TodayState.LIBUR,
             loadingText = if (settings?.escalationSource == ScheduleSettings.ContentSource.AUTOMATIC) {
                 "Membuat draf otomatis…"
             } else {
@@ -615,7 +652,7 @@ fun HomeTab(
             }
         }
 
-        if (sessionChecked && sessionActive == false) {
+        if (status?.sessionActive == false || session.signedOut) {
             Text(
                 "Sesi belum aktif. Buka tab Sesi, login, lalu periksa lagi.",
                 style = MaterialTheme.typography.bodySmall,

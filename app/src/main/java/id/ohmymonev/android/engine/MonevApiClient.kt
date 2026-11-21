@@ -1,7 +1,9 @@
 package id.ohmymonev.android.engine
 
 import android.content.Context
+import id.ohmymonev.android.data.ActionLog
 import id.ohmymonev.android.data.SessionCredentials
+import id.ohmymonev.android.data.SessionRefresh
 import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.core.enginecore.SessionState
 import java.io.IOException
@@ -104,32 +106,22 @@ internal class MonevApiClient(
     }
 
     private suspend fun get(path: String): String? {
-        id.ohmymonev.android.data.ActionLog.record(context, "api.read.start",
-            path.substringBefore('?'))
-        if (access == null) access = session.credentials()
-        val credential = access ?: run { failed("Login melalui halaman situs pada tab Sesi."); return null }
+        ActionLog.record(context, "api.read.start", path.substringBefore('?'))
+        failureState = SessionState.UNKNOWN
+        val version = session.state.value.version
+        val saved = access ?: session.credentials()
+        if (saved != null && !session.matches(saved)) return null
         try {
+            var credential = saved ?: refresh(version, "missing") ?: return null
+            access = credential
             var response = request("GET", path, credential.token)
-            if (!session.matches(credential)) return null
-            if (response.status == 401) {
-                val refresh = request("POST", "/auth/refresh", null)
-                if (refresh.status == 401 || refresh.status == 403) return expired(credential)
-                if (refresh.status !in 200..299) { failed("Layanan login belum tersedia. Coba lagi."); return null }
-                val root = JSONObject(refresh.body)
-                val token = root.optString("access_token").ifBlank { root.optJSONObject("data")?.optString("access_token").orEmpty() }
-                if (token.isBlank()) { failed("Situs belum dapat memperbarui login."); return null }
-                if (!session.matches(credential)) return null
-                session.capture(token, credential.version, preserveConfirmation = true)
-                val refreshed = session.credentials()
-                if (refreshed?.token != token) { failed("Login belum dapat diperbarui. Coba Cek sesi kembali."); return null }
-                access = refreshed
-                val updated = access ?: return null
-                response = request("GET", path, updated.token)
-                if (response.status == 401) return expired(updated)
+            if (response.status == 401 && saved != null) {
+                credential = refresh(credential.version, "unauthorized") ?: return null
+                access = credential
+                response = request("GET", path, credential.token)
             }
-            if (!session.matches(access ?: return null)) return null
-            id.ohmymonev.android.data.ActionLog.record(context, "api.read.response",
-                "status=${response.status}")
+            if (!session.matches(credential)) return null
+            ActionLog.record(context, "api.read.response", "status=${response.status}")
             if (response.status !in 200..299) { failed("Situs belum dapat memproses permintaan. Coba lagi."); return null }
             return if (response.status == 204) "[]" else response.body
         } catch (_: IOException) {
@@ -141,10 +133,38 @@ internal class MonevApiClient(
         return null
     }
 
-    private suspend fun expired(credential: SessionCredentials): String? {
-        if (session.reject(credential)) {
-            failureState = SessionState.EXPIRED
-            message = "Sesi berakhir. Login kembali."
+    private suspend fun refresh(version: Long, trigger: String): SessionCredentials? {
+        val result = session.refresh(version) {
+            ActionLog.record(context, "auth.refresh.start", "trigger=$trigger")
+            val response = request("POST", "/auth/refresh", null)
+            ActionLog.record(context, "auth.refresh.response", "status=${response.status}")
+            when (response.status) {
+                401 -> null
+                in 200..299 -> {
+                    val root = try { JSONObject(response.body) } catch (_: JSONException) {
+                        throw IOException("Invalid refresh response")
+                    }
+                    root.optString("access_token").ifBlank {
+                        root.optJSONObject("data")?.optString("access_token").orEmpty()
+                    }.takeIf { it.isNotBlank() && it != "null" } ?: throw IOException("Missing access token")
+                }
+                else -> throw IOException("Refresh unavailable")
+            }
+        }
+        when (result) {
+            is SessionRefresh.Renewed -> {
+                ActionLog.record(context, "auth.refresh.result", "renewed")
+                return result.credentials
+            }
+            SessionRefresh.Expired -> {
+                ActionLog.record(context, "auth.refresh.result", "expired")
+                failureState = SessionState.EXPIRED
+                message = "Sesi berakhir. Login kembali."
+            }
+            SessionRefresh.Unavailable -> {
+                ActionLog.record(context, "auth.refresh.result", "unverified")
+                failed("Login belum dapat diperiksa. Coba lagi.")
+            }
         }
         return null
     }

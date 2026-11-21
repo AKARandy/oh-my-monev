@@ -127,7 +127,12 @@ class UiRenderTest {
         }
     }
 
-    @Test fun home() = capture("forge-home", "Login untuk") { AppRoot() }
+    private fun signedOutHome(name: String, fontScale: Float = 1f) {
+        id.ohmymonev.android.data.SessionTokenStore(ApplicationProvider.getApplicationContext()).clear(signedOut = true)
+        capture(name, "Login untuk", fontScale) { AppRoot() }
+    }
+
+    @Test fun home() = signedOutHome("forge-home")
     @Test @Config(qualifiers = "w411dp-h2400dp-xhdpi")
     fun schedule() = capture("forge-schedule", "Aktifkan semua fitur") { ScheduleTab() }
     @Test @Config(qualifiers = "w411dp-h2400dp-xhdpi")
@@ -150,7 +155,7 @@ class UiRenderTest {
         )
     }
     @Test @Config(qualifiers = "w360dp-h800dp-xhdpi")
-    fun homeLargeText() = capture("forge-home-large-text", "Login untuk", 1.3f) { AppRoot() }
+    fun homeLargeText() = signedOutHome("forge-home-large-text", 1.3f)
     @Test fun emergencyEditorTemplate() = capture("forge-emergency-editor", "Jam (WIB") {
         AlarmEditor(
             title = "Pengisian darurat", initialTime = LocalTime.of(22, 30), initialEnabled = true,
