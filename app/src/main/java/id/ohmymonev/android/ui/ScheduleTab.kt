@@ -184,10 +184,6 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
         }
     }
 
-    fun refreshTemplate() {
-        scope.launch { template = withContext(Dispatchers.IO) { appStore.template() } }
-    }
-
     val scrollState = rememberScrollState()
     Column(
         modifier = modifier
@@ -216,7 +212,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        if (modelProgress == 100) "Memeriksa model…" else "Mengunduh model IndoT5… $modelProgress%",
+                        if (modelProgress == 100) "Memeriksa file otomatis…" else "Mengunduh file otomatis… $modelProgress%",
                         style = MaterialTheme.typography.titleSmall,
                     )
                     LinearProgressIndicator(
@@ -289,6 +285,11 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                     ScheduleSettings.ContentSource.AUTOMATIC ->
                         "Terpicu pada jam terjadwal bila belum terkirim. Isian melanjutkan laporan hari kerja sebelumnya (eksperimental)."
                 },
+                actionLabel = if (modelReady) "Hapus file otomatis" else null,
+                actionEnabled = ready && !modelBusy,
+                showActionWhenInactive = true,
+                onAction = { confirmModelDelete = true },
+                errorText = modelDeleteError,
                 onToggle = { on ->
                     if (!on) save { it.copy(escalationEnabled = false) }
                     else if (current.escalationSource == ScheduleSettings.ContentSource.AUTOMATIC && !modelReady ||
@@ -308,6 +309,11 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 controlsEnabled = false,
                 effective = false,
                 detail = "Pengisian darurat belum tersedia.",
+                actionLabel = if (modelReady) "Hapus file otomatis" else null,
+                actionEnabled = ready && !modelBusy,
+                showActionWhenInactive = true,
+                onAction = { confirmModelDelete = true },
+                errorText = modelDeleteError,
                 onToggle = {},
                 onOpen = {},
             )
@@ -318,12 +324,6 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             enabled = ready && !modelBusy,
             onOpen = { editingTemplate = true },
         )
-        if (modelReady) {
-            TextButton(enabled = ready && !modelBusy, onClick = loggedClick("ScheduleTab:283") { confirmModelDelete = true }) {
-                Text("Hapus model")
-            }
-        }
-        modelDeleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 
     if (ready) editing?.let { which ->
@@ -383,20 +383,14 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
     if (ready && confirmDownload) {
         ModelActionDialog(delete = false, onDismiss = { confirmDownload = false }, onConfirm = {
             confirmDownload = false
-            ModelTransferController.startDownload(context) { succeeded ->
-                if (succeeded) {
-                    Toast.makeText(context, "Model terunduh", Toast.LENGTH_SHORT).show()
-                }
-            }
+            ModelTransferController.startDownload(context)
         })
     }
 
     if (ready && confirmModelDelete) {
         ModelActionDialog(delete = true, onDismiss = { confirmModelDelete = false }, onConfirm = {
             confirmModelDelete = false
-            ModelTransferController.startDelete(context, saveMutex) { present, _ ->
-                modelReady = present
-            }
+            ModelTransferController.startDelete(context, saveMutex)
         })
     }
 
@@ -598,7 +592,8 @@ internal fun AlarmEditor(
                     Text(
                         when (source) {
                             ScheduleSettings.ContentSource.TEMPLATE -> "Memakai templat Anda."
-                            ScheduleSettings.ContentSource.AUTOMATIC -> "Melanjutkan laporan sebelumnya. Berisiko."
+                            ScheduleSettings.ContentSource.AUTOMATIC ->
+                                "Menulis ulang laporan hari kerja sebelumnya dengan kalimat berbeda. Berisiko."
                         },
                         fontSize = 18.sp,
                         lineHeight = 26.sp,
@@ -615,15 +610,21 @@ internal fun AlarmEditor(
                     if (source == ScheduleSettings.ContentSource.AUTOMATIC && !autoReady) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Text(
-                            "Ukuran unduhan model: ${ModelStore.DOWNLOAD_SIZE_MB} MB.",
+                            "Cara kerja: aplikasi membaca laporan terakhir Anda, lalu menyusun ulang kalimatnya di ponsel (offline) agar tidak persis sama.",
                             fontSize = 18.sp,
                             lineHeight = 26.sp,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
+                        Text(
+                            "Perlu unduh file bahasa (${ModelStore.DOWNLOAD_SIZE_MB} MB) satu kali. Dapat dihapus kapan saja.",
+                            fontSize = 18.sp,
+                            lineHeight = 26.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         when {
                             modelProgress != null -> {
                                 Text(
-                                    if (modelProgress == 100) "Memeriksa model…" else "Mengunduh… $modelProgress%",
+                                    if (modelProgress == 100) "Memeriksa file otomatis…" else "Mengunduh… $modelProgress%",
                                     fontSize = 18.sp,
                                     lineHeight = 26.sp,
                                     color = MaterialTheme.colorScheme.primary,
@@ -637,7 +638,7 @@ internal fun AlarmEditor(
                             onDownloadModel != null -> Button(
                                 onClick = loggedClick("ScheduleTab:578", onDownloadModel),
                                 modifier = Modifier.fillMaxWidth().testTag("download-model"),
-                            ) { Text(if (modelError == null) "Unduh model" else "Coba lagi", fontSize = 18.sp) }
+                            ) { Text(if (modelError == null) "Unduh file otomatis" else "Coba lagi", fontSize = 18.sp) }
                         }
                         modelError?.let {
                             Text(it, fontSize = 18.sp, lineHeight = 26.sp, color = MaterialTheme.colorScheme.error)
@@ -815,7 +816,10 @@ private fun AlarmCard(
     paused: Boolean = false,
     detail: String,
     actionLabel: String? = null,
+    actionEnabled: Boolean = true,
+    showActionWhenInactive: Boolean = false,
     onAction: (() -> Unit)? = null,
+    errorText: String? = null,
     onToggle: (Boolean) -> Unit,
     onOpen: () -> Unit,
 ) {
@@ -884,13 +888,17 @@ private fun AlarmCard(
                     color = textColor,
                 )
             }
-            if (actionLabel != null && onAction != null && effective) {
+            if (actionLabel != null && onAction != null && (effective || showActionWhenInactive)) {
                 TextButton(
                     onClick = loggedClick("ScheduleTab:784", onAction),
+                    enabled = actionEnabled,
                     modifier = Modifier.testTag("alarm-action-$title"),
                 ) {
                     Text(actionLabel, style = MaterialTheme.typography.labelLarge)
                 }
+            }
+            errorText?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
         }
     }
@@ -969,10 +977,17 @@ private fun SourceOption(label: String, selected: Boolean, enabled: Boolean = tr
 internal fun ModelActionDialog(delete: Boolean, onDismiss: () -> Unit, onConfirm: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (delete) "Hapus model IndoT5?" else "Unduh model IndoT5?") },
+        title = { Text(if (delete) "Hapus file mode otomatis?" else "Unduh file mode otomatis?") },
         text = {
-            Text(if (delete) "Aplikasi menghapus model dan sisa unduhan. Jika sumbernya Otomatis, Pengisian darurat dimatikan."
-                else "Unduh IndoT5 FP16 (${ModelStore.DOWNLOAD_SIZE_MB} MB) dari GitHub. Model menulis ulang kalimat aktivitas di ponsel. Makna dapat berubah. Periksa draf sebelum mengirim.")
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (delete) {
+                    Text("File bahasa (${ModelStore.DOWNLOAD_SIZE_MB} MB) akan dihapus dari ponsel untuk mengosongkan penyimpanan.")
+                    Text("Mode Otomatis tidak dapat dipakai sampai file diunduh lagi. Jika Pengisian darurat memakai mode Otomatis, fitur itu akan dimatikan.")
+                } else {
+                    Text("File bahasa ini (${ModelStore.DOWNLOAD_SIZE_MB} MB) dipakai untuk menulis ulang laporan hari kerja sebelumnya dengan kalimat baru.")
+                    Text("• Berjalan langsung di ponsel Anda (offline).\n• Makna kalimat dapat berubah. Periksa draf sebelum mengirim.\n• Dapat dihapus kapan saja dari kartu Pengisian darurat.")
+                }
+            }
         },
         confirmButton = { TextButton(onClick = loggedClick("ScheduleTab:869", onConfirm)) { Text(if (delete) "Hapus" else "Unduh") } },
         dismissButton = { TextButton(onClick = loggedClick("ScheduleTab:870", onDismiss)) { Text("Batal") } },

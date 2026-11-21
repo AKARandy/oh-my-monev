@@ -29,7 +29,6 @@ data class SkipMark(val date: String)
  * "no material" which never fabricates, never crashes the nightly run.
  */
 class AppStore(private val context: Context) {
-    private val json = Json { ignoreUnknownKeys = true }
 
     fun drafts(): List<StoredDraft> = synchronized(fileLock) {
         runCatching {
@@ -126,17 +125,60 @@ class AppStore(private val context: Context) {
     }
 
     fun appendRecord(record: RunRecord) = synchronized(fileLock) {
-        recordFile().appendText(json.encodeToString(record) + "\n")
+        val file = recordFile()
+        file.appendText(json.encodeToString(record) + "\n")
+        if (file.length() > MAX_RECORDS_BYTES) {
+            val keep = ArrayDeque<String>(MAX_STORED_RECORDS + 1)
+            file.bufferedReader().useLines { lines ->
+                lines.forEach { raw ->
+                    val trimmed = raw.trimStart('\uFEFF')
+                    if (trimmed.isNotBlank()) {
+                        if (keep.size == MAX_STORED_RECORDS) keep.removeFirst()
+                        keep.addLast(trimmed)
+                    }
+                }
+            }
+            writeAtomically(file, if (keep.isEmpty()) "" else keep.joinToString("\n", postfix = "\n"))
+        }
+    }
+
+    fun lastRecord(): RunRecord? = recentRecords(1).lastOrNull()
+
+    fun recentRecords(limit: Int): List<RunRecord> = synchronized(fileLock) {
+        if (limit <= 0) return@synchronized emptyList()
+        runCatching {
+            val file = recordFile().takeIf { it.exists() } ?: return@runCatching emptyList()
+            val deque = ArrayDeque<RunRecord>(limit + 1)
+            file.bufferedReader().useLines { lines ->
+                lines.forEach { raw ->
+                    val trimmed = raw.trimStart('\uFEFF')
+                    if (trimmed.isNotBlank()) {
+                        runCatching { json.decodeFromString(RunRecord.serializer(), trimmed) }
+                            .getOrNull()?.let { record ->
+                                if (deque.size == limit) deque.removeFirst()
+                                deque.addLast(record)
+                            }
+                    }
+                }
+            }
+            deque.toList()
+        }.getOrElse { emptyList() }
     }
 
     fun records(): List<RunRecord> = synchronized(fileLock) {
         runCatching {
-            recordFile().takeIf { it.exists() }
-                ?.readUtf8()
-                ?.lines()
-                ?.filter { it.isNotBlank() }
-                ?.mapNotNull { line -> runCatching { json.decodeFromString(RunRecord.serializer(), line.trimStart('\uFEFF')) }.getOrNull() }
-                .orEmpty()
+            val file = recordFile().takeIf { it.exists() } ?: return@runCatching emptyList()
+            val list = mutableListOf<RunRecord>()
+            file.bufferedReader().useLines { lines ->
+                lines.forEach { raw ->
+                    val trimmed = raw.trimStart('\uFEFF')
+                    if (trimmed.isNotBlank()) {
+                        runCatching { json.decodeFromString(RunRecord.serializer(), trimmed) }
+                            .getOrNull()?.let { list.add(it) }
+                    }
+                }
+            }
+            list
         }.getOrElse { emptyList() }
     }
 
@@ -162,6 +204,9 @@ class AppStore(private val context: Context) {
 
     private companion object {
         val fileLock = Any()
+        val json = Json { ignoreUnknownKeys = true }
+        const val MAX_STORED_RECORDS = 500
+        const val MAX_RECORDS_BYTES = 512_000L
         const val HISTORY_FILE = "history.jsonl"
         const val RECORDS_FILE = "records.jsonl"
         const val DRAFT_FILE = "today-draft.json"

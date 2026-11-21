@@ -104,6 +104,7 @@ internal class IpLocationClient(
         const val MAX_RESPONSE_BYTES = 16 * 1024
 
         fun valid(latitude: Double, longitude: Double) = latitude.isFinite() && longitude.isFinite() &&
-            latitude in -90.0..90.0 && longitude in -180.0..180.0
+            latitude in -90.0..90.0 && longitude in -180.0..180.0 &&
+            !(latitude == 0.0 && longitude == 0.0)
     }
 }

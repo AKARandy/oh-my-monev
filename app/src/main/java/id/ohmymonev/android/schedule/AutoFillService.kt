@@ -15,13 +15,21 @@ import kotlinx.coroutines.flow.asStateFlow
 
 class ManualReportRequest(val draft: StoredDraft, val account: String, val sessionVersion: Long)
 
-data class ManualReportState(
-    val request: ManualReportRequest,
-    val message: String? = null,
-    val outcome: id.ohmymonev.core.enginecore.EngineOutcome? = null,
-    val recheckRequired: Boolean = false,
-) {
-    val sending: Boolean get() = message == null
+sealed interface ManualReportState {
+    val request: ManualReportRequest
+    val sending: Boolean get() = this is Sending
+    val message: String? get() = (this as? Completed)?.message
+    val outcome: id.ohmymonev.core.enginecore.EngineOutcome? get() = (this as? Completed)?.outcome
+    val recheckRequired: Boolean get() = (this as? Completed)?.recheckRequired == true
+
+    data class Sending(override val request: ManualReportRequest) : ManualReportState
+
+    data class Completed(
+        override val request: ManualReportRequest,
+        override val message: String,
+        override val outcome: id.ohmymonev.core.enginecore.EngineOutcome? = null,
+        override val recheckRequired: Boolean = false,
+    ) : ManualReportState
 }
 
 /**
@@ -192,8 +200,8 @@ class AutoFillService : Service() {
         val manual = mutableManual.asStateFlow()
 
         fun startManual(context: Context, request: ManualReportRequest) {
-            if (manual.value?.sending == true) return
-            mutableManual.value = ManualReportState(request)
+            if (manual.value is ManualReportState.Sending) return
+            mutableManual.value = ManualReportState.Sending(request)
             try {
                 context.startForegroundService(Intent(context, AutoFillService::class.java).setAction(ACTION_MANUAL))
             } catch (_: IllegalStateException) {
@@ -209,14 +217,14 @@ class AutoFillService : Service() {
             outcome: id.ohmymonev.core.enginecore.EngineOutcome? = null,
         ) {
             val current = mutableManual.value
-            if (current?.request === request && current.sending) {
-                mutableManual.compareAndSet(current, ManualReportState(request, message, outcome))
+            if (current is ManualReportState.Sending && current.request === request) {
+                mutableManual.compareAndSet(current, ManualReportState.Completed(request, message, outcome))
             }
         }
 
         fun requireManualRecheck(request: ManualReportRequest, required: Boolean) {
-            val current = mutableManual.value ?: return
-            if (current.request === request && !current.sending && current.recheckRequired != required) {
+            val current = mutableManual.value
+            if (current is ManualReportState.Completed && current.request === request && current.recheckRequired != required) {
                 mutableManual.compareAndSet(current, current.copy(recheckRequired = required))
             }
         }

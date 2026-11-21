@@ -247,6 +247,7 @@ fun SessionTab(modifier: Modifier = Modifier) {
                         }
                     },
                     onRelease = { view ->
+                        if (browser === view) browser = null
                         locationBridges.remove(view)?.close()
                         SessionWebView.release(view, repository, browserVersion, afterLogin)
                     },

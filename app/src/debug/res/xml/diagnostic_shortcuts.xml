@@ -1,5 +1,5 @@
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
     <shortcut android:shortcutId="diagnostics" android:enabled="true" android:shortcutShortLabel="@string/diagnostics_label">
-        <intent android:action="android.intent.action.VIEW" android:targetPackage="id.ohmymonev.android" android:targetClass="id.ohmymonev.android.diagnostics.DiagnosticsActivity" />
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="id.ohmymonev.android.dev" android:targetClass="id.ohmymonev.android.diagnostics.DiagnosticsActivity" />
     </shortcut>
 </shortcuts>

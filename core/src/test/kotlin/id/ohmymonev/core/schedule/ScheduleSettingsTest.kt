@@ -12,7 +12,6 @@ class ScheduleSettingsTest {
         val s = ScheduleSettings()
         assertEquals(LocalTime.of(20, 0), s.reminderTime)
         assertEquals(LocalTime.of(22, 30), s.escalationTime)
-        assertEquals(30L, s.cancelWindowMinutes)
     }
 
     @Test

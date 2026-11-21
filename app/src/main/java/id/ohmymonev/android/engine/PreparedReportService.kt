@@ -73,7 +73,6 @@ internal class PreparedReportService(
 ) {
     private val store = AppStore(context)
     private val preferences = context.getSharedPreferences("prepared_report", Context.MODE_PRIVATE)
-    private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun prepare(force: Boolean = false, allowModelRun: Boolean = true): PreparedReport = mutex.withLock {
         try { prepareLocked(force, allowModelRun) }
@@ -225,19 +224,30 @@ internal class PreparedReportService(
         material: SourceReport,
         paraphraser: NeuralParaphraser,
     ): GenerationOutcome {
-        val sentences = splitSentences(material.aktivitas)
+        val parsed = parseActivityLines(material.aktivitas)
+        val sentences = parsed.flatMap { it.sentences }
+        if (sentences.isEmpty()) {
+            return GenerationOutcome.Failed(FailureReason.INVALID_REPORT, "Aktivitas sumber kosong.")
+        }
         val ruled = sentences.map { VerbMapper.continuation(it) }
         val unknownIndexes = ruled.indices.filter { ruled[it] == null }
         if (unknownIndexes.isEmpty()) {
+            val formatted = formatActivities(parsed, ruled.map { requireNotNull(it) })
             return GenerationOutcome.Generated(
-                ReportDraft(ruled.map { "- $it" }.joinToString("\n"), material.pelajaran, material.kendala),
+                ReportDraft(formatted, material.pelajaran, material.kendala),
                 GenerationTier.CONTINUATION_RULES, listOf("dari laporan ${material.date}"))
         }
         return try {
             val neural = paraphraser.paraphrase(unknownIndexes.map { sentences[it] })
-            val bullets = sentences.mapIndexed { i, _ -> "- ${ruled[i] ?: neural[unknownIndexes.indexOf(i)]}" }
+            val rewritten = sentences.indices.map { i ->
+                (ruled[i] ?: neural[unknownIndexes.indexOf(i)])
+                    .trim()
+                    .replace(LEADING_MARKER, "")
+                    .trim()
+            }
+            val formatted = formatActivities(parsed, rewritten)
             GenerationOutcome.Generated(
-                ReportDraft(bullets.joinToString("\n"), material.pelajaran, material.kendala),
+                ReportDraft(formatted, material.pelajaran, material.kendala),
                 GenerationTier.NEURAL, listOf("dari laporan ${material.date}"))
         } catch (e: kotlinx.coroutines.CancellationException) { throw e
         } catch (e: Exception) {
@@ -255,16 +265,42 @@ internal class PreparedReportService(
     }
 
     companion object {
+        private val json = Json { ignoreUnknownKeys = true }
         private val mutex = Mutex()
         private val SENTENCE_SPLIT = Regex("(?<=[.!?])\\s+")
+        private val LEADING_MARKER = Regex("^(?:[-•]\\s*|\\d+[.)]\\s*)")
         private const val NEURAL_DONE_KEY = "neural_done"
 
-        internal fun splitSentences(text: String): List<String> =
-            text.split('\n').flatMap { line ->
-                line.split(SENTENCE_SPLIT)
-                    .map { it.trim().replace(Regex("^(?:[-•]\\s*|\\d+[.)]\\s*)"), "").trim() }
+        internal data class ActivityLine(val prefix: String, val sentences: List<String>)
+
+        internal fun parseActivityLines(text: String): List<ActivityLine> =
+            text.split('\n').mapNotNull { raw ->
+                val trimmed = raw.trim()
+                if (trimmed.isEmpty()) return@mapNotNull null
+                val match = LEADING_MARKER.find(trimmed)
+                val prefix = match?.value?.trim()?.let { "$it " } ?: ""
+                val body = trimmed.removePrefix(match?.value.orEmpty()).trim()
+                if (body.isEmpty()) return@mapNotNull null
+                val sentences = body.split(SENTENCE_SPLIT)
+                    .map { it.trim().replace(LEADING_MARKER, "").trim() }
                     .filter { it.isNotBlank() }
+                if (sentences.isEmpty()) null else ActivityLine(prefix, sentences)
             }
+
+        internal fun formatActivities(lines: List<ActivityLine>, rewritten: List<String>): String {
+            var cursor = 0
+            return lines.mapNotNull { line ->
+                val count = line.sentences.size
+                val joined = rewritten.subList(cursor, (cursor + count).coerceAtMost(rewritten.size))
+                    .filter { it.isNotBlank() }
+                    .joinToString(" ")
+                cursor += count
+                if (joined.isBlank()) null else "${line.prefix}$joined"
+            }.joinToString("\n")
+        }
+
+        internal fun splitSentences(text: String): List<String> =
+            parseActivityLines(text).flatMap { it.sentences }
 
         internal fun validationIssues(draft: ReportDraft): List<String> = DeliveryGate().validate(draft).violations.map { violation ->
             val part = violation.message.substringBefore(':').replace("aktivitas", "Aktivitas").replace("pelajaran", "Pelajaran").replace("kendala", "Kendala")

@@ -218,7 +218,8 @@ class PreparedReportServiceTest {
         val outcome = result.outcome()
         assertTrue(outcome is GenerationOutcome.Generated)
         assertEquals(GenerationTier.NEURAL, (outcome as GenerationOutcome.Generated).tier)
-        assertTrue(result.draft!!.aktivitas.startsWith("- Melanjutkan Mengikuti"))
+        assertTrue(result.draft!!.aktivitas.startsWith("Melanjutkan Mengikuti"))
+        assertFalse(result.draft!!.aktivitas.contains("- "))
         assertEquals(3, paraphraseCalls)
         // Perbarui lagi di hari yang sama tidak menjalankan model kedua kali.
         val second = service(session).prepare(force = true)
@@ -287,7 +288,7 @@ class PreparedReportServiceTest {
 
     @Test fun authoredDraftOverridesEarlierNeuralRunOnSameDay() = runBlocking {
         val session = session()
-        activity = "Mengikuti apel pagi bersama mentor.\nMenjadwalkan pengujian layanan backend."
+        activity = "Mengikuti apel pagi bersama mentor di ruang rapat.\nMenjadwalkan pengujian layanan backend."
         val neural = service(session).prepare()
         assertEquals(GenerationTier.NEURAL, (neural.outcome() as GenerationOutcome.Generated).tier)
         val authoredText = "Melakukan penulisan laporan harian lengkap dengan catatan pengujian sistem yang sangat rinci hari ini."
@@ -311,5 +312,21 @@ class PreparedReportServiceTest {
             listOf("Memeriksa data.", "Menguji hasil."),
             PreparedReportService.splitSentences("- \n1. \n• Memeriksa data.\n2) Menguji hasil."),
         )
+    }
+
+    @Test fun automaticModePreservesParagraphAndBulletStyles() = runBlocking {
+        val session = session()
+        activity = "Mengikuti apel pagi bersama mentor di kantor. Menjadwalkan pengujian layanan backend untuk rilis mingguan. Memperbarui catatan teknis tim."
+        val paragraph = service(session).prepare(force = true)
+        val paragraphText = requireNotNull(paragraph.draft?.aktivitas)
+        assertFalse("Paragraph source should not gain dash bullets: $paragraphText", paragraphText.contains("- "))
+        assertFalse("Single paragraph should remain one line: $paragraphText", paragraphText.contains('\n'))
+
+        date = date.plusDays(1)
+        activity = "• Memeriksa data penerbangan harian dengan teliti untuk laporan.\n• Menyusun catatan hasil pemeriksaan untuk tim operasional."
+        val bullets = service(session).prepare(force = true)
+        val bulletsText = requireNotNull(bullets.draft?.aktivitas)
+        assertTrue("Unicode bullet style should be preserved: $bulletsText", bulletsText.lines().all { it.startsWith("• ") })
+        assertFalse("Unicode bullet source should not use dashes: $bulletsText", bulletsText.contains("- "))
     }
 }

@@ -1,6 +1,7 @@
 package id.ohmymonev.android.data
 
 import android.content.Context
+import android.widget.Toast
 import id.ohmymonev.android.engine.PreparedReportService
 import id.ohmymonev.android.schedule.AlarmScheduler
 import id.ohmymonev.android.schedule.FeatureReadiness
@@ -20,26 +21,31 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-data class ModelTransferState(
-    val busy: Boolean = false,
-    val progress: Int? = null,
-    val error: String? = null,
-    val deleteError: String? = null,
-)
+sealed interface ModelTransferPhase {
+    data object Idle : ModelTransferPhase
+    data class Downloading(val percent: Int) : ModelTransferPhase
+    data object Deleting : ModelTransferPhase
+    data class Failed(val message: String, val isDelete: Boolean) : ModelTransferPhase
+
+    val busy: Boolean get() = this is Downloading || this is Deleting
+    val progress: Int? get() = (this as? Downloading)?.percent
+    val error: String? get() = (this as? Failed)?.takeUnless { it.isDelete }?.message
+    val deleteError: String? get() = (this as? Failed)?.takeIf { it.isDelete }?.message
+}
 
 /** Process-scoped model download/delete coordinator surviving tab switches and rotations. */
 object ModelTransferController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val _state = MutableStateFlow(ModelTransferState())
-    val state: StateFlow<ModelTransferState> = _state.asStateFlow()
+    private val _state = MutableStateFlow<ModelTransferPhase>(ModelTransferPhase.Idle)
+    val state: StateFlow<ModelTransferPhase> = _state.asStateFlow()
 
     @Volatile
     private var activeJob: Job? = null
 
-    fun startDownload(context: Context, onDone: (Boolean) -> Unit = {}) {
+    fun startDownload(context: Context) {
         if (_state.value.busy) return
         val appContext = context.applicationContext
-        _state.update { it.copy(busy = true, progress = 0, error = null, deleteError = null) }
+        _state.value = ModelTransferPhase.Downloading(0)
         lateinit var job: Job
         job = scope.launch {
             var succeeded = false
@@ -47,20 +53,28 @@ object ModelTransferController {
                 if (!FeatureReadiness.read(appContext).ready) return@launch
                 ModelStore(appContext).download { percent ->
                     _state.update { current ->
-                        if (current.busy) current.copy(progress = percent) else current
+                        if (current is ModelTransferPhase.Downloading) ModelTransferPhase.Downloading(percent) else current
                     }
                 }
                 succeeded = true
             } catch (_: CancellationException) {
                 // Dibatalkan oleh pengguna.
             } catch (e: Exception) {
-                _state.update { it.copy(error = e.message ?: "Unduhan gagal. Coba lagi.") }
+                _state.value = ModelTransferPhase.Failed(e.message ?: "Unduhan gagal. Coba lagi.", isDelete = false)
             } finally {
                 if (activeJob === job) activeJob = null
-                _state.update { it.copy(busy = false, progress = null) }
+                if (succeeded) {
+                    _state.value = ModelTransferPhase.Idle
+                } else {
+                    _state.update { current ->
+                        if (current is ModelTransferPhase.Downloading) ModelTransferPhase.Idle else current
+                    }
+                }
             }
             if (succeeded) {
-                withContext(Dispatchers.Main) { onDone(true) }
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(appContext, "File mode otomatis terunduh", Toast.LENGTH_SHORT).show()
+                }
             }
         }
         activeJob = job
@@ -70,20 +84,19 @@ object ModelTransferController {
         val job = activeJob ?: return
         activeJob = null
         job.cancel()
-        _state.update { it.copy(busy = false, progress = null, error = null) }
+        _state.value = ModelTransferPhase.Idle
     }
 
     fun startDelete(
         context: Context,
         saveMutex: Mutex,
-        onDone: (present: Boolean, updatedSettings: ScheduleSettings?) -> Unit = { _, _ -> },
     ) {
         if (_state.value.busy) return
         val appContext = context.applicationContext
-        _state.update { it.copy(busy = true, deleteError = null) }
+        _state.value = ModelTransferPhase.Deleting
         lateinit var job: Job
         job = scope.launch {
-            var updatedSettings: ScheduleSettings? = null
+            var failed = false
             try {
                 if (!FeatureReadiness.read(appContext).ready) return@launch
                 val store = TimeSettingsStore(appContext)
@@ -94,19 +107,21 @@ object ModelTransferController {
                             val disabled = latest.copy(escalationEnabled = false)
                             store.save(disabled)
                             AlarmScheduler.armAll(appContext, disabled)
-                            updatedSettings = disabled
                         }
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _state.update { it.copy(deleteError = e.message ?: "Model tidak dapat dihapus.") }
+                failed = true
+                _state.value = ModelTransferPhase.Failed(e.message ?: "Model tidak dapat dihapus.", isDelete = true)
             } finally {
                 if (activeJob === job) activeJob = null
-                val present = ModelStore(appContext).present()
-                _state.update { it.copy(busy = false) }
-                withContext(Dispatchers.Main) { onDone(present, updatedSettings) }
+                if (!failed) {
+                    _state.update { current ->
+                        if (current is ModelTransferPhase.Deleting) ModelTransferPhase.Idle else current
+                    }
+                }
             }
         }
         activeJob = job

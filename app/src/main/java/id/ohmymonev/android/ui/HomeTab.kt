@@ -81,7 +81,6 @@ import id.ohmymonev.core.schedule.ScheduleCalculator
 import id.ohmymonev.core.siteprofile.DEFAULT_SITE_PROFILE
 import java.time.LocalDate
 import java.time.OffsetDateTime
-import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.Job
@@ -90,7 +89,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val ID_LOCALE = Locale("id", "ID")
+private val ID_LOCALE = Locale.forLanguageTag("id-ID")
 private val DATE_FORMAT = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", ID_LOCALE)
 private val TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm")
 
@@ -273,7 +272,7 @@ internal fun HomeTab(
         draftValid = draft != null && DeliveryGate().validate(
             ReportDraft(draft.aktivitas, draft.pelajaran, draft.kendala),
         ).passed
-        lastRecord = withContext(Dispatchers.IO) { appStore.records().lastOrNull() }
+        lastRecord = withContext(Dispatchers.IO) { appStore.lastRecord() }
         tonightSkipped = withContext(Dispatchers.IO) { appStore.isSkipped(todayIso) }
     }
 
@@ -319,8 +318,6 @@ internal fun HomeTab(
                 }
                 id.ohmymonev.android.data.ActionLog.record(context, "status.check.result",
                     "session=${result.sessionActive} state=${result.today}")
-                val current = withContext(Dispatchers.IO) { store.settingsOnce() }
-                armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, current) }
             }
             finally { if (request == statusRequest) checkingStatus = false }
         }
@@ -399,16 +396,18 @@ internal fun HomeTab(
             (it.request.account == account ||
                 (account == null && it.outcome != EngineOutcome.SUBMITTED && it.request.sessionVersion == session.version))
     }
-    val locationRetryReady = manualResult?.outcome == EngineOutcome.LOCATION_CHECK_FAILS &&
-        !manualResult.recheckRequired && checkedAfter === manualResult.request
-    val attemptedByOtherAccount = completedAttempt != null &&
-        completedAttempt.draft == visibleDraft && completedAttempt.account != account
-    val maySend = ready && status?.sessionActive == true && status.today == TodayState.UNFILLED &&
-        account != null && status.credentialVersion == session.version && !checkingStatus && !attemptedByOtherAccount &&
-        !manualSending && (manualResult == null || locationRetryReady ||
-            (manualResult.request.draft != visibleDraft && !manualResult.recheckRequired) ||
-            (manualResult.request === recheckedManual && checkedAfter === manualResult.request)) &&
-        manualResult?.outcome != EngineOutcome.SUBMITTED
+    val maySend = canSendManualReport(
+        ready = ready,
+        status = status,
+        sessionVersion = session.version,
+        checkingStatus = checkingStatus,
+        manualSending = manualSending,
+        visibleDraft = visibleDraft,
+        completedAttempt = completedAttempt,
+        manualResult = manualResult,
+        recheckedManual = recheckedManual,
+        checkedAfter = checkedAfter,
+    )
 
     val scrollState = rememberScrollState()
     Box(modifier = modifier.fillMaxSize()) {
@@ -422,8 +421,11 @@ internal fun HomeTab(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            val formattedHeaderDate = remember(todayIso) {
+                LocalDate.parse(todayIso).format(DATE_FORMAT).uppercase(ID_LOCALE)
+            }
             Text(
-                text = ZonedDateTime.now(ScheduleCalculator.asiaJakarta).format(DATE_FORMAT).uppercase(ID_LOCALE),
+                text = formattedHeaderDate,
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -777,7 +779,7 @@ internal fun ConfirmManualReport(
         },
         text = {
             Text(if (locationFallback) {
-                "Aktifkan untuk hasil lebih akurat\n\nTetap kirim dengan perkiraan IP?"
+                "Aktifkan lokasi untuk hasil lebih akurat. Pengiriman dengan perkiraan IP belum tentu berhasil.\n\nTetap kirim dengan perkiraan IP?"
             } else {
                 "Pastikan draf yang tersimpan sudah benar"
             })
@@ -799,102 +801,6 @@ internal fun ConfirmManualReport(
             }
         },
     )
-}
-
-@Composable
-private fun SiteStatusCard(
-    status: SiteStatus?,
-    checking: Boolean,
-    onCheck: () -> Unit,
-    onCheckBench: () -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Kondisi di situs", style = MaterialTheme.typography.titleMedium)
-            when {
-                status == null -> Text(
-                    "Belum dibaca.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                status.sessionActive == null -> Text(
-                    status.error ?: "Situs belum dapat diperiksa. Status login terakhir tetap disimpan.",
-                    fontSize = 18.sp,
-                )
-                status.sessionActive == false -> Text(
-                    "Sesi habis. Login di tab Sesi, lalu cek lagi.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                else -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text("Hari ini", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            text = when (status.today) {
-                                TodayState.FILLED -> "Sudah diisi"
-                                TodayState.UNFILLED -> "Belum diisi"
-                                TodayState.LIBUR -> "Hari libur, tidak perlu isi"
-                                TodayState.LEAVE -> "Tidak hadir, tidak perlu laporan"
-                                TodayState.UNKNOWN -> "Tidak jelas"
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = when (status.today) {
-                                TodayState.UNFILLED -> MaterialTheme.colorScheme.error
-                                TodayState.LIBUR, TodayState.LEAVE -> MaterialTheme.colorScheme.onSurfaceVariant
-                                else -> MaterialTheme.colorScheme.primary
-                            },
-                        )
-                    }
-                    status.deadline?.let {
-                        Text(
-                            "Batas $it WIB",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (status.days.isNotEmpty()) {
-                        Text(
-                            "Hari sebelumnya",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        for (day in status.days.takeLast(3).asReversed()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Text(day.label, style = MaterialTheme.typography.bodySmall)
-                                Text(
-                                    day.state,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = loggedClick("HomeTab:672", onCheck), enabled = !checking) {
-                    Text(if (checking) "Membaca…" else "Cek situs")
-                }
-                if (BuildConfig.DEBUG) {
-                    TextButton(onClick = loggedClick("HomeTab:676", onCheckBench), enabled = !checking) {
-                        Text("Contoh")
-                    }
-                }
-            }
-        }
-    }
 }
 
 @Composable
@@ -994,6 +900,33 @@ private fun formatFire(nextFireISO: String?): String {
     } catch (_: Exception) {
         nextFireISO
     }
+}
+
+internal fun canSendManualReport(
+    ready: Boolean,
+    status: SiteStatus?,
+    sessionVersion: Long,
+    checkingStatus: Boolean,
+    manualSending: Boolean,
+    visibleDraft: StoredDraft?,
+    completedAttempt: ManualReportRequest?,
+    manualResult: id.ohmymonev.android.schedule.ManualReportState?,
+    recheckedManual: ManualReportRequest?,
+    checkedAfter: ManualReportRequest?,
+): Boolean {
+    val account = status?.account ?: return false
+    if (!ready || status.sessionActive != true || status.today != TodayState.UNFILLED) return false
+    if (status.credentialVersion != sessionVersion || checkingStatus || manualSending) return false
+    val attemptedByOtherAccount = completedAttempt != null &&
+        completedAttempt.draft == visibleDraft && completedAttempt.account != account
+    if (attemptedByOtherAccount) return false
+    if (manualResult == null) return true
+    if (manualResult.outcome == EngineOutcome.SUBMITTED) return false
+    val locationRetryReady = manualResult.outcome == EngineOutcome.LOCATION_CHECK_FAILS &&
+        !manualResult.recheckRequired && checkedAfter === manualResult.request
+    val modifiedDraftRetryReady = manualResult.request.draft != visibleDraft && !manualResult.recheckRequired
+    val manualRecheckReady = manualResult.request === recheckedManual && checkedAfter === manualResult.request
+    return locationRetryReady || modifiedDraftRetryReady || manualRecheckReady
 }
 
 private fun hasPermission(context: Context, permission: String): Boolean =

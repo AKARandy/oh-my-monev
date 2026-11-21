@@ -31,3 +31,9 @@ Thumbs.db
 # agent/harness instructions and local scratch docs
 AGENTS.md
 docs/backend-proof-raw.txt
+.codex-attachments/
+.zcode/
+docs/handoffs/
+docs/chrome-clone-monev.md
+docs/monev-exploration-2026-11-07.md
+scripts/pack-shared-model.py

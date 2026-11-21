@@ -25,13 +25,13 @@ android {
         applicationId = "id.ohmymonev.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "1.0.0"
+        versionCode = 24
+        versionName = "1.1.0"
         // Ponsel nyata semuanya ARM64; ABI lain dibuang sesuai keputusan pemilik.
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
-    packagingOptions {
+    packaging {
         jniLibs {
             // Penjamin ganda: pustaka ORT untuk ABI non-arm64 tidak boleh ikut terpaket.
             excludes += listOf("**/armeabi-v7a/**", "**/x86/**", "**/x86_64/**")
@@ -51,6 +51,8 @@ android {
 
     buildTypes {
         debug {
+            applicationIdSuffix = ".dev"
+            resValue("string", "app_name", "Oh My Monev Dev")
         }
         release {
             isMinifyEnabled = false
@@ -82,8 +84,8 @@ android {
 androidComponents {
     onVariants(selector().withBuildType("debug")) { variant ->
         variant.outputs.forEach {
-            it.versionCode.set(23)
-            it.versionName.set("0.1.23")
+            it.versionCode.set(24)
+            it.versionName.set("1.1.0-dev")
         }
     }
 }

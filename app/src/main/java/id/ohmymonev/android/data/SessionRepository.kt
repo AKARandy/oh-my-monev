@@ -3,11 +3,11 @@ package id.ohmymonev.android.data
 import android.content.Context
 import java.io.IOException
 import java.time.OffsetDateTime
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,26 +36,123 @@ internal sealed interface SessionRefresh {
     data object Unavailable : SessionRefresh
 }
 
-internal class SessionRepository(private val context: Context, private val vault: SessionTokenStore = SessionTokenStore(context)) {
+internal class SessionRepository(
+    private val context: Context,
+    private val vault: SessionTokenStore = SessionTokenStore(context),
+) {
+    private sealed interface SessionPhase {
+        fun toSnapshot(): SessionSnapshot
+        val phaseVersion: Long
+        val activeToken: String? get() = null
+        val rejected: String? get() = null
+        val statusRecord: SessionRecord? get() = null
+
+        data object Initializing : SessionPhase {
+            override val phaseVersion = 0L
+            override fun toSnapshot() = SessionSnapshot(initializing = true)
+        }
+
+        data class SignedOut(
+            override val phaseVersion: Long,
+            override val statusRecord: SessionRecord?,
+            override val rejected: String? = null,
+            val issue: String? = null,
+        ) : SessionPhase {
+            override fun toSnapshot() = SessionSnapshot(
+                record = statusRecord,
+                hasToken = false,
+                issue = issue,
+                version = phaseVersion,
+                signedOut = true,
+            )
+        }
+
+        data class Expired(
+            override val phaseVersion: Long,
+            override val rejected: String?,
+            override val statusRecord: SessionRecord?,
+            val issue: String? = null,
+        ) : SessionPhase {
+            override fun toSnapshot() = SessionSnapshot(
+                record = statusRecord,
+                hasToken = false,
+                issue = issue,
+                version = phaseVersion,
+                signedOut = false,
+            )
+        }
+
+        data class Unverified(
+            override val phaseVersion: Long,
+            override val activeToken: String,
+            override val statusRecord: SessionRecord? = null,
+            val issue: String? = null,
+        ) : SessionPhase {
+            override fun toSnapshot() = SessionSnapshot(
+                record = statusRecord,
+                hasToken = true,
+                issue = issue,
+                version = phaseVersion,
+                signedOut = false,
+            )
+        }
+
+        data class Active(
+            override val phaseVersion: Long,
+            override val activeToken: String,
+            override val statusRecord: SessionRecord,
+            val issue: String? = null,
+        ) : SessionPhase {
+            override fun toSnapshot() = SessionSnapshot(
+                record = statusRecord,
+                hasToken = true,
+                issue = issue,
+                version = phaseVersion,
+                signedOut = false,
+            )
+        }
+
+        fun withIssue(issue: String?): SessionPhase = when (this) {
+            Initializing -> Initializing
+            is SignedOut -> copy(issue = issue)
+            is Expired -> copy(issue = issue)
+            is Unverified -> copy(issue = issue)
+            is Active -> copy(issue = issue)
+        }
+    }
+
     private val store = AppStore(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
     private val refreshMutex = Mutex()
     private var refreshFlight: Pair<Long, Deferred<SessionRefresh>>? = null
     private val loaded = CompletableDeferred<Unit>()
-    @Volatile private var token: String? = null
-    private var rejectedToken: String? = null
-    private val mutable = MutableStateFlow(SessionSnapshot(initializing = true))
+    @Volatile private var phase: SessionPhase = SessionPhase.Initializing
+    private val mutable = MutableStateFlow(SessionPhase.Initializing.toSnapshot())
     val state = mutable.asStateFlow()
 
     init {
         scope.launch {
             mutex.withLock {
-                token = vault.read()
-                mutable.value = SessionSnapshot(store.sessionStatus(), token != null, signedOut = vault.signedOut())
+                val stored = vault.read()
+                val status = store.sessionStatus()
+                val signedOut = vault.signedOut()
+                setPhase(
+                    when {
+                        signedOut -> SessionPhase.SignedOut(0, status)
+                        stored != null && status?.active == true -> SessionPhase.Active(0, stored, status)
+                        stored != null -> SessionPhase.Unverified(0, stored, status)
+                        else -> SessionPhase.Expired(0, null, status)
+                    },
+                )
             }
             loaded.complete(Unit)
         }
+    }
+
+    private fun setPhase(next: SessionPhase) {
+        phase = next
+        mutable.value = next.toSnapshot()
     }
 
     suspend fun awaitLoaded() {
@@ -64,7 +161,9 @@ internal class SessionRepository(private val context: Context, private val vault
 
     suspend fun credentials(): SessionCredentials? {
         loaded.await()
-        return mutex.withLock { token?.let { SessionCredentials(it, mutable.value.version) } }
+        return mutex.withLock {
+            phase.activeToken?.let { SessionCredentials(it, phase.phaseVersion) }
+        }
     }
 
     suspend fun capture(
@@ -75,13 +174,16 @@ internal class SessionRepository(private val context: Context, private val vault
     ): Boolean = withContext(Dispatchers.IO) {
         loaded.await()
         mutex.withLock {
-            val snapshot = mutable.value
-            if (value.isBlank() || value == token || (!afterLogin && value == rejectedToken) ||
-                snapshot.version != expectedVersion || (snapshot.signedOut && !afterLogin)
+            val current = phase
+            if (current is SessionPhase.Initializing || value.isBlank() ||
+                value == current.activeToken || (!afterLogin && value == current.rejected) ||
+                current.phaseVersion != expectedVersion || (current is SessionPhase.SignedOut && !afterLogin)
             ) return@withLock false
-            val previousToken = token
-            try { vault.save(value) } catch (_: Exception) {
-                mutable.value = mutable.value.copy(issue = "Login belum dapat disimpan. Coba Cek sesi kembali.")
+            val previousToken = current.activeToken
+            try {
+                vault.save(value)
+            } catch (_: Exception) {
+                setPhase(current.withIssue("Login belum dapat disimpan. Coba Cek sesi kembali."))
                 return@withLock false
             }
             if (!preserveConfirmation) {
@@ -89,15 +191,18 @@ internal class SessionRepository(private val context: Context, private val vault
                     store.clearSessionStatus()
                 } catch (_: IOException) {
                     if (previousToken != null) runCatching { vault.save(previousToken) }
-                    else runCatching { vault.clear(snapshot.signedOut) }
-                    mutable.value = mutable.value.copy(issue = "Login belum dapat disimpan. Coba Cek sesi kembali.")
+                    else runCatching { vault.clear(current is SessionPhase.SignedOut) }
+                    setPhase(current.withIssue("Login belum dapat disimpan. Coba Cek sesi kembali."))
                     return@withLock false
                 }
                 id.ohmymonev.android.schedule.WorkDaysStore(context).clear()
             }
-            rejectedToken = null
-            token = value
-            mutable.value = SessionSnapshot(if (preserveConfirmation) mutable.value.record else null, hasToken = true, version = expectedVersion + 1)
+            val nextVersion = expectedVersion + 1
+            val preservedRecord = if (preserveConfirmation) current.statusRecord else null
+            setPhase(
+                if (preservedRecord?.active == true) SessionPhase.Active(nextVersion, value, preservedRecord)
+                else SessionPhase.Unverified(nextVersion, value, preservedRecord),
+            )
             true
         }
     }
@@ -106,26 +211,27 @@ internal class SessionRepository(private val context: Context, private val vault
     suspend fun refresh(expectedVersion: Long, fetchToken: suspend () -> String?): SessionRefresh {
         loaded.await()
         val flight = refreshMutex.withLock {
-            val snapshot = mutable.value
-            if (snapshot.signedOut) return SessionRefresh.Expired
+            val current = phase
+            if (current is SessionPhase.SignedOut) return SessionRefresh.Expired
             refreshFlight?.let { (version, task) ->
-                if (version == expectedVersion && (!task.isCompleted || snapshot.version != version)) {
+                if (version == expectedVersion && (!task.isCompleted || current.phaseVersion != version)) {
                     return@withLock task
                 }
             }
-            if (snapshot.version != expectedVersion) return SessionRefresh.Unavailable
-            scope.async { renew(expectedVersion, snapshot.hasToken, fetchToken) }.also {
+            if (current.phaseVersion != expectedVersion) return SessionRefresh.Unavailable
+            scope.async { renew(expectedVersion, current.activeToken != null, fetchToken) }.also {
                 refreshFlight = expectedVersion to it
             }
         }
         val result = flight.await()
-        val current = mutable.value
+        val current = phase
         return when (result) {
             is SessionRefresh.Renewed -> result.takeIf { matches(it.credentials) } ?: SessionRefresh.Unavailable
             SessionRefresh.Expired -> result.takeIf {
-                current.version in expectedVersion..(expectedVersion + 1) && !current.hasToken && current.record?.active == false
-            }
-                ?: SessionRefresh.Unavailable
+                current is SessionPhase.Expired &&
+                    current.phaseVersion in expectedVersion..(expectedVersion + 1) &&
+                    current.statusRecord?.active == false
+            } ?: SessionRefresh.Unavailable
             SessionRefresh.Unavailable -> result
         }
     }
@@ -155,15 +261,19 @@ internal class SessionRepository(private val context: Context, private val vault
         mutex.withLock {
             if (!matches(access)) return@withLock
             val record = SessionRecord(true, OffsetDateTime.now().toString())
-            try { store.saveSessionStatus(record) } catch (_: IOException) { return@withLock }
-            mutable.value = mutable.value.copy(record = record, issue = null)
+            try {
+                store.saveSessionStatus(record)
+            } catch (_: IOException) {
+                return@withLock
+            }
+            setPhase(SessionPhase.Active(access.version, access.token, record))
         }
     }
 
     suspend fun reject(expectedVersion: Long): Boolean = withContext(Dispatchers.IO) {
         loaded.await()
         mutex.withLock {
-            if (mutable.value.version != expectedVersion) return@withLock false
+            if (phase.phaseVersion != expectedVersion) return@withLock false
             invalidate(signedOut = false)
             true
         }
@@ -175,14 +285,19 @@ internal class SessionRepository(private val context: Context, private val vault
     }
 
     private fun invalidate(signedOut: Boolean) {
-        val snapshot = mutable.value
+        val current = phase
         val message = "Sesi berakhir. Login kembali."
-        if (!snapshot.hasToken && snapshot.record?.active == false && snapshot.signedOut == signedOut) {
-            mutable.value = snapshot.copy(issue = message)
+        val alreadySameInvalidState = when (current) {
+            is SessionPhase.SignedOut -> signedOut && current.statusRecord?.active == false
+            is SessionPhase.Expired -> !signedOut && current.statusRecord?.active == false
+            else -> false
+        }
+        if (alreadySameInvalidState) {
+            setPhase(current.withIssue(message))
             return
         }
-        val previousToken = token
-        val previousRecord = snapshot.record
+        val previousToken = current.activeToken
+        val previousRecord = current.statusRecord
         val record = SessionRecord(false, OffsetDateTime.now().toString())
         try {
             vault.clear(signedOut)
@@ -190,22 +305,30 @@ internal class SessionRepository(private val context: Context, private val vault
         } catch (_: IOException) {
             if (previousToken != null) runCatching { vault.save(previousToken) }
             if (previousRecord != null) runCatching { store.saveSessionStatus(previousRecord) }
-            mutable.value = snapshot.copy(issue = message)
+            setPhase(current.withIssue(message))
             return
         }
-        rejectedToken = previousToken
-        token = null
-        mutable.value = SessionSnapshot(record, issue = message, version = snapshot.version + 1, signedOut = signedOut)
+        val nextVersion = current.phaseVersion + 1
+        setPhase(
+            if (signedOut) SessionPhase.SignedOut(nextVersion, record, previousToken, message)
+            else SessionPhase.Expired(nextVersion, previousToken, record, message),
+        )
     }
 
     suspend fun uncertain(access: SessionCredentials?, message: String) {
         loaded.await()
         mutex.withLock {
-            if ((access == null && token == null) || (access != null && matches(access))) mutable.value = mutable.value.copy(issue = message)
+            val current = phase
+            if ((access == null && current.activeToken == null) || (access != null && matches(access))) {
+                setPhase(current.withIssue(message))
+            }
         }
     }
 
-    fun matches(access: SessionCredentials): Boolean = mutable.value.version == access.version && token == access.token
+    fun matches(access: SessionCredentials): Boolean {
+        val current = phase
+        return current.phaseVersion == access.version && current.activeToken == access.token
+    }
 
     companion object {
         @Volatile private var instance: SessionRepository? = null

@@ -99,7 +99,7 @@ internal fun PratinjauCard(
         }
     }
     if (open && prepared != null) Dialog(onDismissRequest = { open = false },
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = true)) {
         PreviewPage(prepared, onBack = { open = false })
     }
 
@@ -121,7 +121,8 @@ internal fun PreviewPage(prepared: PreparedReport, onBack: () -> Unit) {
                 Text("Pratinjau laporan", fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.secondary)
             }
-            Column(Modifier.weight(1f).scrollIndicator(scroll).verticalScroll(scroll).padding(20.dp),
+            Column(Modifier.weight(1f).scrollIndicator(scroll).verticalScroll(scroll)
+                .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 56.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 Text(
                     when {

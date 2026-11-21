@@ -26,6 +26,17 @@ import kotlinx.coroutines.flow.map
 
 /** One foreground owner for durable checks and the currently sounding alarm. */
 internal class ReminderController(private val context: Context) {
+    private sealed interface AlarmState {
+        data object Idle : AlarmState
+        data class Ringing(
+            val key: String,
+            var job: Job? = null,
+            var ringtone: Ringtone? = null,
+            var wakeLock: PowerManager.WakeLock? = null,
+        ) : AlarmState
+        data object Closed : AlarmState
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val notifications = ReminderNotifications(context)
     private val preferences = store(context)
@@ -39,10 +50,7 @@ internal class ReminderController(private val context: Context) {
     private var check: Job? = null
     private var rerun = false
     private var timer: Job? = null
-    private var playing: String? = null
-    private var ringtone: Ringtone? = null
-    private var ringJob: Job? = null
-    private var wakeLock: PowerManager.WakeLock? = null
+    private var alarmState: AlarmState = AlarmState.Idle
     private val failures = mutableMapOf<String, Int>()
     private val warned = mutableSetOf<String>()
 
@@ -92,7 +100,8 @@ internal class ReminderController(private val context: Context) {
 
     fun handle(intent: Intent?) {
         val key = intent?.data?.schemeSpecificPart
-        if (key != null && playing == key) {
+        val current = alarmState
+        if (key != null && current is AlarmState.Ringing && current.key == key) {
             when (intent.action) {
                 "stop" -> stopAlarm()
                 "snooze" -> {
@@ -255,6 +264,7 @@ internal class ReminderController(private val context: Context) {
 
     @Suppress("DEPRECATION")
     private fun startAlarm(key: String, now: ZonedDateTime) {
+        if (alarmState is AlarmState.Closed) return
         stopAlarm()
         val channel = notifications.alarmChannel()
         if (!notifications.post(key, "Laporan hari ini belum terkirim.",
@@ -262,19 +272,20 @@ internal class ReminderController(private val context: Context) {
             if (BuildConfig.DEBUG) Log.i(TAG, "Alarm suppressed date=${now.toLocalDate()} reason=notification_blocked")
             return
         }
-        playing = key
         val duration = java.time.Duration.between(now, now.withHour(23).withMinute(59).withSecond(0).withNano(0))
             .toMillis().coerceIn(1, 300_000)
-        wakeLock = context.getSystemService(PowerManager::class.java)
+        val acquiredWakeLock = context.getSystemService(PowerManager::class.java)
             ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "oh-my-monev:reminder")
             ?.apply { acquire(duration) }
-        ringJob = scope.launch {
+        val active = AlarmState.Ringing(key = key, wakeLock = acquiredWakeLock)
+        alarmState = active
+        active.job = scope.launch {
             var stoppedByReadiness = false
             try {
                 val audio = context.getSystemService(android.media.AudioManager::class.java)
                 val end = android.os.SystemClock.elapsedRealtime() + duration
                 var firstCycle = true
-                while (android.os.SystemClock.elapsedRealtime() < end) {
+                while (alarmState === active && android.os.SystemClock.elapsedRealtime() < end) {
                     if (!firstCycle && !FeatureReadiness.read(context).ready) {
                         stoppedByReadiness = true
                         break
@@ -290,7 +301,7 @@ internal class ReminderController(private val context: Context) {
                     val vibrate = allowed && channel.shouldVibrate() && vibrator?.hasVibrator() == true
                     if (sound) {
                         try {
-                            ringtone = RingtoneManager.getRingtone(context, channel.sound)?.also {
+                            active.ringtone = RingtoneManager.getRingtone(context, channel.sound)?.also {
                                 it.audioAttributes = channel.audioAttributes
                                 it.play()
                             }
@@ -311,21 +322,21 @@ internal class ReminderController(private val context: Context) {
                     if (firstCycle) {
                         val date = now.toLocalDate()
                         if (BuildConfig.DEBUG) when {
-                            ringtone != null || vibrationRequested ->
-                                Log.i(TAG, "Alarm started date=$date sound=${ringtone != null} vibration=$vibrationRequested")
+                            active.ringtone != null || vibrationRequested ->
+                                Log.i(TAG, "Alarm started date=$date sound=${active.ringtone != null} vibration=$vibrationRequested")
                             !allowed -> Log.i(TAG, "Alarm suppressed date=$date reason=interruption_filter")
                             else -> Log.i(TAG, "Alarm suppressed date=$date reason=no_enabled_output")
                         }
                         firstCycle = false
                     }
                     delay((end - android.os.SystemClock.elapsedRealtime()).coerceIn(1, 4_000))
-                    ringtone?.stop()
-                    ringtone = null
+                    active.ringtone?.stop()
+                    active.ringtone = null
                     vibrator?.cancel()
                 }
             } finally {
-                if (playing == key) {
-                    ringJob = null
+                if (alarmState === active) {
+                    active.job = null
                     val timedOut = !stoppedByReadiness
                     stopAlarm(cancelNotification = !timedOut)
                     if (timedOut) {
@@ -341,17 +352,21 @@ internal class ReminderController(private val context: Context) {
         }
     }
 
-    private fun stopAlarm(cancelNotification: Boolean = true) {
-        val key = playing ?: return
-        playing = null
-        ringJob?.cancel()
-        ringJob = null
-        ringtone?.stop()
-        ringtone = null
+    private fun stopAlarm(cancelNotification: Boolean = true, closing: Boolean = false) {
+        val active = alarmState as? AlarmState.Ringing
+        alarmState = when {
+            closing || alarmState is AlarmState.Closed -> AlarmState.Closed
+            else -> AlarmState.Idle
+        }
+        if (active == null) return
+        active.job?.cancel()
+        active.job = null
+        active.ringtone?.stop()
+        active.ringtone = null
         vibrator?.cancel()
-        wakeLock?.let { if (it.isHeld) it.release() }
-        wakeLock = null
-        if (cancelNotification) notifications.cancel(key)
+        active.wakeLock?.let { if (it.isHeld) it.release() }
+        active.wakeLock = null
+        if (cancelNotification) notifications.cancel(active.key)
     }
 
     private fun stopListening() {
@@ -362,7 +377,7 @@ internal class ReminderController(private val context: Context) {
 
     fun close() {
         stopListening()
-        stopAlarm()
+        stopAlarm(cancelNotification = true, closing = true)
         scope.cancel()
     }
 

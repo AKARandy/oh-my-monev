@@ -32,7 +32,6 @@ class TimeSettingsStore internal constructor(private val dataStore: DataStore<Pr
     private object Keys {
         val REMINDER_MINUTES = intPreferencesKey("reminder_minutes_of_day")
         val ESCALATION_MINUTES = intPreferencesKey("escalation_minutes_of_day")
-        val CANCEL_WINDOW_MINUTES = intPreferencesKey("cancel_window_minutes")
         val ACTIVE_DAYS = stringPreferencesKey("active_days") // Kunci lama untuk migrasi hari bersama.
         val REMINDER_DAYS = stringPreferencesKey("reminder_days")
         val ESCALATION_DAYS = stringPreferencesKey("escalation_days")
@@ -51,7 +50,6 @@ class TimeSettingsStore internal constructor(private val dataStore: DataStore<Pr
         dataStore.edit { prefs ->
             prefs[Keys.REMINDER_MINUTES] = settings.reminderTime.toSecondOfDay() / 60
             prefs[Keys.ESCALATION_MINUTES] = settings.escalationTime.toSecondOfDay() / 60
-            prefs[Keys.CANCEL_WINDOW_MINUTES] = settings.cancelWindowMinutes.toInt()
             prefs[Keys.REMINDER_DAYS] = settings.reminderDays.sortedBy { it.value }.joinToString(",") { it.value.toString() }
             prefs[Keys.ESCALATION_DAYS] = settings.escalationDays.sortedBy { it.value }.joinToString(",") { it.value.toString() }
             prefs[Keys.ESCALATION_SOURCE] = settings.escalationSource.name
@@ -69,7 +67,6 @@ class TimeSettingsStore internal constructor(private val dataStore: DataStore<Pr
             return ScheduleSettings(
                 reminderTime = minutesOfDay(prefs, Keys.REMINDER_MINUTES, DEFAULT.reminderTime),
                 escalationTime = minutesOfDay(prefs, Keys.ESCALATION_MINUTES, DEFAULT.escalationTime),
-                cancelWindowMinutes = (prefs[Keys.CANCEL_WINDOW_MINUTES] ?: DEFAULT.cancelWindowMinutes.toInt()).toLong(),
                 reminderDays = readDays(prefs[Keys.REMINDER_DAYS], legacyDays),
                 escalationDays = readDays(prefs[Keys.ESCALATION_DAYS], legacyDays),
                 escalationSource = prefs[Keys.ESCALATION_SOURCE]?.toSourceOrNull() ?: DEFAULT.escalationSource,

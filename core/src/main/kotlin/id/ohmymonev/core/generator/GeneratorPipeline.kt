@@ -69,7 +69,7 @@ class GeneratorPipeline(
     }
 
     companion object {
-        private val DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMMM yyyy", Locale("id"))
+        private val DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.forLanguageTag("id-ID"))
 
         /** Replaces {tanggal} (e.g. "6 November 2026") in every part of a template. */
         fun substitute(template: ReportDraft, date: LocalDate): ReportDraft = ReportDraft(

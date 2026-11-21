@@ -43,7 +43,7 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private val ID_LOCALE = java.util.Locale("id", "ID")
+private val ID_LOCALE = java.util.Locale.forLanguageTag("id-ID")
 private val DATE_FMT = DateTimeFormatter.ofPattern("d MMM", ID_LOCALE)
 private val TIME_FMT = DateTimeFormatter.ofPattern("HH:mm")
 private const val MAX_ROWS = 100
@@ -95,7 +95,7 @@ fun LogTab(modifier: Modifier = Modifier) {
     LaunchedEffect(refreshKey) {
         loading = true
         records = withContext(Dispatchers.IO) {
-            appStore.records().takeLast(MAX_ROWS).asReversed()
+            appStore.recentRecords(MAX_ROWS).asReversed()
         }
         loading = false
     }

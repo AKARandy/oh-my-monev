@@ -173,7 +173,7 @@ class UiRenderTest {
         )
     }
     @Test @Config(qualifiers = "w411dp-h2400dp-xhdpi")
-    fun emergencyEditorDownloadModel() = capture("forge-emergency-editor-download", "Unduh model") {
+    fun emergencyEditorDownloadModel() = capture("forge-emergency-editor-download", "Unduh file otomatis") {
         AlarmEditor(
             title = "Pengisian darurat", initialTime = LocalTime.of(22, 30), initialEnabled = true,
             initialDays = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
@@ -341,7 +341,7 @@ class UiRenderTest {
             onSend = {}, onEnableLocation = {}, onDismiss = {},
         )
     }.also {
-        compose.onNodeWithText("Aktifkan untuk hasil lebih akurat\n\nTetap kirim dengan perkiraan IP?").assertExists()
+        compose.onNodeWithText("Aktifkan lokasi untuk hasil lebih akurat. Pengiriman dengan perkiraan IP belum tentu berhasil.\n\nTetap kirim dengan perkiraan IP?").assertExists()
         compose.onNodeWithText("Aktifkan lokasi").assertExists()
         compose.onNodeWithText("Kirim dengan IP").assertExists()
         compose.onNodeWithText("Batal").assertExists()
@@ -432,11 +432,11 @@ class UiRenderTest {
     }
 
 
-    @Test fun indoT5DownloadProof() = capture("indot5-download-confirmation", "Unduh model IndoT5?") {
+    @Test fun indoT5DownloadProof() = capture("indot5-download-confirmation", "Unduh file mode otomatis?") {
         id.ohmymonev.android.ui.ModelActionDialog(false, {}, {})
     }
 
-    @Test fun indoT5DeleteProof() = capture("indot5-delete-confirmation", "Hapus model IndoT5?") {
+    @Test fun indoT5DeleteProof() = capture("indot5-delete-confirmation", "Hapus file mode otomatis?") {
         id.ohmymonev.android.ui.ModelActionDialog(true, {}, {})
     }
 
@@ -485,6 +485,23 @@ class UiRenderTest {
             PratinjauCard(prepared, false, {})
         }
         compose.onNodeWithText("Buka pratinjau").assertExists()
+    }
+
+    @Test @Config(qualifiers = "w411dp-h1400dp-xhdpi")
+    fun emergencyCardDeleteFileProof() {
+        val app = ApplicationProvider.getApplicationContext<Context>()
+        id.ohmymonev.android.schedule.readySession(app)
+        val modelDir = File(app.filesDir, "model").apply { mkdirs() }
+        try {
+            for (name in id.ohmymonev.android.data.ModelStore.REQUIRED_FILES) {
+                val content = if (name == "META.json") """{"version":"${id.ohmymonev.android.data.ModelStore.VERSION}"}""" else "ok"
+                File(modelDir, name).writeText(content)
+            }
+            capture("schedule-delete-in-card", "Hapus file otomatis") { ScheduleTab() }
+            compose.onNodeWithTag("alarm-action-Pengisian darurat").assertIsEnabled()
+        } finally {
+            modelDir.deleteRecursively()
+        }
     }
 
 }

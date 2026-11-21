@@ -18,9 +18,6 @@ data class ScheduleSettings(
     /** Alarm pengisian darurat. Default 22:30. */
     val escalationTime: LocalTime = LocalTime.of(22, 30),
 
-    /** Jendela batal sebelum auto-submit (D9). Default 30 menit. */
-    val cancelWindowMinutes: Long = 30,
-
     val reminderDays: Set<DayOfWeek> = DayOfWeek.entries.toSet(),
     val escalationDays: Set<DayOfWeek> = DayOfWeek.entries.toSet(),
 

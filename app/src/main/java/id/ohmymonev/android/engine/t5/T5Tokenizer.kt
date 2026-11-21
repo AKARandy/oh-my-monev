@@ -13,64 +13,86 @@ class T5Tokenizer private constructor(
     private val eosId: Int,
     private val padId: Int,
 ) {
+    private val maxPieceChars: Int = pieceScores.keys.maxOfOrNull { it.length }?.coerceAtLeast(1) ?: 1
     private val idToPiece: Map<Int, String> = HashMap<Int, String>(pieceScores.size * 2).apply {
         for ((piece, entry) in pieceScores) put(entry.first, piece)
     }
 
     fun encode(text: String): List<Int> {
         val normalized = PIECE_SPACE + text.replace(" ", PIECE_SPACE)
-        val best = DoubleArray(normalized.length + 1) { Double.NEGATIVE_INFINITY }
-        val back = arrayOfNulls<Int>(normalized.length + 1)
-        val backIds = arrayOfNulls<List<Int>>(normalized.length + 1)
+        val n = normalized.length
+        val best = DoubleArray(n + 1) { Double.NEGATIVE_INFINITY }
+        val back = IntArray(n + 1) { -1 }
+        val backToken = IntArray(n + 1) { -1 }
+        var backMulti: HashMap<Int, IntArray>? = null
         best[0] = 0.0
-        for (i in normalized.indices) {
-            if (best[i] == Double.NEGATIVE_INFINITY) continue
-            var end = i
-            while (end < normalized.length && end - i <= MAX_PIECE_CHARS) {
-                val candidate = normalized.substring(i, end + 1)
-                val entry = pieceScores[candidate]
-                if (entry != null && best[end + 1] < best[i] + entry.second) {
-                    best[end + 1] = best[i] + entry.second
-                    back[end + 1] = i
-                    backIds[end + 1] = listOf(entry.first)
+        for (i in 0 until n) {
+            val baseScore = best[i]
+            if (baseScore == Double.NEGATIVE_INFINITY) continue
+            val limit = minOf(n, i + maxPieceChars)
+            for (endExclusive in (i + 1)..limit) {
+                val entry = pieceScores[normalized.substring(i, endExclusive)] ?: continue
+                val score = baseScore + entry.second
+                if (best[endExclusive] < score) {
+                    best[endExclusive] = score
+                    back[endExclusive] = i
+                    backToken[endExclusive] = entry.first
+                    backMulti?.remove(endExclusive)
                 }
-                end++
             }
             // byte-fallback UTF-8: karakter (atau surrogate pair) tanpa potongan tetap maju lewat token <0xNN>
             val stepLen = if (Character.isHighSurrogate(normalized[i]) &&
-                i + 1 < normalized.length && Character.isLowSurrogate(normalized[i + 1])
+                i + 1 < n && Character.isLowSurrogate(normalized[i + 1])
             ) 2 else 1
-            if (back[i + stepLen] == null) {
-                val utf8Bytes = normalized.substring(i, i + stepLen).toByteArray(Charsets.UTF_8)
-                val byteEntries = mutableListOf<Pair<Int, Double>>()
-                for (b in utf8Bytes) {
-                    val entry = pieceScores[bytePieceOf(b.toInt() and 0xFF)] ?: break
-                    byteEntries.add(entry)
+            val nextIdx = i + stepLen
+            if (back[nextIdx] == -1) {
+                val utf8Bytes = normalized.substring(i, nextIdx).toByteArray(Charsets.UTF_8)
+                var totalScore = 0.0
+                var mappedCount = 0
+                val mappedIds = IntArray(utf8Bytes.size)
+                for (k in utf8Bytes.indices) {
+                    val entry = pieceScores[bytePieceOf(utf8Bytes[k].toInt() and 0xFF)] ?: break
+                    mappedIds[k] = entry.first
+                    totalScore += entry.second
+                    mappedCount++
                 }
-                if (byteEntries.size == utf8Bytes.size) {
-                    val totalScore = byteEntries.sumOf { it.second }
-                    if (best[i + stepLen] < best[i] + totalScore) {
-                        best[i + stepLen] = best[i] + totalScore
-                        back[i + stepLen] = i
-                        backIds[i + stepLen] = byteEntries.map { it.first }
+                if (mappedCount == utf8Bytes.size) {
+                    val score = baseScore + totalScore
+                    if (best[nextIdx] < score) {
+                        best[nextIdx] = score
+                        back[nextIdx] = i
+                        if (mappedIds.size == 1) {
+                            backToken[nextIdx] = mappedIds[0]
+                            backMulti?.remove(nextIdx)
+                        } else {
+                            backToken[nextIdx] = -1
+                            (backMulti ?: HashMap<Int, IntArray>().also { backMulti = it })[nextIdx] = mappedIds
+                        }
                     }
                 } else {
-                    best[i + stepLen] = best[i] - 100.0
-                    back[i + stepLen] = i
-                    backIds[i + stepLen] = listOf(padId)
+                    best[nextIdx] = baseScore - 100.0
+                    back[nextIdx] = i
+                    backToken[nextIdx] = padId
+                    backMulti?.remove(nextIdx)
                 }
             }
         }
-        val chunks = mutableListOf<List<Int>>()
-        var cursor = normalized.length
+        val ids = ArrayList<Int>(n + 1)
+        var cursor = n
         while (cursor > 0) {
-            val start = back[cursor] ?: break
-            chunks.add(backIds[cursor] ?: listOf(padId))
+            val start = back[cursor]
+            if (start < 0) break
+            val multi = backMulti?.get(cursor)
+            if (multi != null) {
+                for (k in multi.indices.reversed()) ids.add(multi[k])
+            } else {
+                ids.add(backToken[cursor].let { if (it >= 0) it else padId })
+            }
             cursor = start
         }
-        chunks.reverse()
-        val ids = chunks.flatten()
-        return ids + eosId
+        ids.reverse()
+        ids.add(eosId)
+        return ids
     }
 
     fun decode(ids: List<Int>, skipSpecialTokens: Boolean = true): String {
@@ -104,7 +126,6 @@ class T5Tokenizer private constructor(
 
     companion object {
         private const val PIECE_SPACE = "▁"
-        private const val MAX_PIECE_CHARS = 48
 
         /** Memuat tokenizer.json; hanya butuh model.vocab + id khusus. */
         fun fromJson(json: String): T5Tokenizer {
@@ -116,19 +137,18 @@ class T5Tokenizer private constructor(
                 val entry = vocab.getJSONArray(i)
                 scores[entry.getString(0)] = i to entry.getDouble(1)
             }
-            return T5Tokenizer(scores, eosId(root), padId(root))
+            var eosId = 1
+            var padId = 0
+            root.optJSONArray("added_tokens")?.let { added ->
+                for (i in 0 until added.length()) {
+                    val token = added.getJSONObject(i)
+                    when (token.optString("content")) {
+                        "</s>" -> eosId = token.optInt("id", 1)
+                        "<pad>" -> padId = token.optInt("id", 0)
+                    }
+                }
+            }
+            return T5Tokenizer(scores, eosId, padId)
         }
-
-        private fun eosId(root: JSONObject): Int =
-            root.optJSONArray("added_tokens")?.let { added ->
-                (0 until added.length()).map { added.getJSONObject(it) }
-                    .firstOrNull { it.optString("content") == "</s>" }?.optInt("id")
-            } ?: 1
-
-        private fun padId(root: JSONObject): Int =
-            root.optJSONArray("added_tokens")?.let { added ->
-                (0 until added.length()).map { added.getJSONObject(it) }
-                    .firstOrNull { it.optString("content") == "<pad>" }?.optInt("id")
-            } ?: 0
     }
 }
