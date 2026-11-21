@@ -55,7 +55,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import id.ohmymonev.android.data.AppStore
-import id.ohmymonev.android.BuildConfig
 import id.ohmymonev.android.data.ModelStore
 import id.ohmymonev.android.data.ModelTransferController
 import id.ohmymonev.android.data.SessionRepository
@@ -270,53 +269,34 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             editing = AlarmId.REMINDER
         }
 
-        if (BuildConfig.DEBUG) {
-            AlarmCard(
-                title = "Pengisian darurat",
-                time = current.escalationTime,
-                days = workingDays?.let { current.escalationDays intersect it } ?: current.escalationDays,
-                enabled = current.escalationEnabled,
-                controlsEnabled = ready && current.masterEnabled && !modelBusy,
-                effective = ready && current.escalationEnabled && current.masterEnabled,
-                paused = !ready && current.masterEnabled && current.escalationEnabled,
-                detail = when (current.escalationSource) {
-                    ScheduleSettings.ContentSource.TEMPLATE ->
-                        "Terpicu pada jam terjadwal bila laporan belum terkirim. Isian memakai templat Anda."
-                    ScheduleSettings.ContentSource.AUTOMATIC ->
-                        "Terpicu pada jam terjadwal bila belum terkirim. Isian melanjutkan laporan hari kerja sebelumnya (eksperimental)."
-                },
-                actionLabel = if (modelReady) "Hapus file otomatis" else null,
-                actionEnabled = ready && !modelBusy,
-                showActionWhenInactive = true,
-                onAction = { confirmModelDelete = true },
-                errorText = modelDeleteError,
-                onToggle = { on ->
-                    if (!on) save { it.copy(escalationEnabled = false) }
-                    else if (current.escalationSource == ScheduleSettings.ContentSource.AUTOMATIC && !modelReady ||
-                        current.escalationSource == ScheduleSettings.ContentSource.TEMPLATE && template == null
-                    ) editing = AlarmId.ESCALATION
-                    else pendingSubmit = { save { it.copy(escalationEnabled = true) } }
-                },
-            ) {
-                editing = AlarmId.ESCALATION
-            }
-        } else {
-            AlarmCard(
-                title = "Pengisian darurat",
-                time = current.escalationTime,
-                days = workingDays?.let { current.escalationDays intersect it } ?: current.escalationDays,
-                enabled = false,
-                controlsEnabled = false,
-                effective = false,
-                detail = "Pengisian darurat belum tersedia.",
-                actionLabel = if (modelReady) "Hapus file otomatis" else null,
-                actionEnabled = ready && !modelBusy,
-                showActionWhenInactive = true,
-                onAction = { confirmModelDelete = true },
-                errorText = modelDeleteError,
-                onToggle = {},
-                onOpen = {},
-            )
+        AlarmCard(
+            title = "Pengisian darurat",
+            time = current.escalationTime,
+            days = workingDays?.let { current.escalationDays intersect it } ?: current.escalationDays,
+            enabled = current.escalationEnabled,
+            controlsEnabled = ready && current.masterEnabled && !modelBusy,
+            effective = ready && current.escalationEnabled && current.masterEnabled,
+            paused = !ready && current.masterEnabled && current.escalationEnabled,
+            detail = when (current.escalationSource) {
+                ScheduleSettings.ContentSource.TEMPLATE ->
+                    "Terpicu pada jam terjadwal bila laporan belum terkirim. Isian memakai templat Anda."
+                ScheduleSettings.ContentSource.AUTOMATIC ->
+                    "Terpicu pada jam terjadwal bila belum terkirim. Isian melanjutkan laporan hari kerja sebelumnya (eksperimental)."
+            },
+            actionLabel = if (modelReady) "Hapus file otomatis" else null,
+            actionEnabled = ready && !modelBusy,
+            showActionWhenInactive = true,
+            onAction = { confirmModelDelete = true },
+            errorText = modelDeleteError,
+            onToggle = { on ->
+                if (!on) save { it.copy(escalationEnabled = false) }
+                else if (current.escalationSource == ScheduleSettings.ContentSource.AUTOMATIC && !modelReady ||
+                    current.escalationSource == ScheduleSettings.ContentSource.TEMPLATE && template == null
+                ) editing = AlarmId.ESCALATION
+                else pendingSubmit = { save { it.copy(escalationEnabled = true) } }
+            },
+        ) {
+            editing = AlarmId.ESCALATION
         }
 
         TemplateCard(
@@ -482,8 +462,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
     if (ready && editingTemplate) {
         TemplateEditor(
             current = template,
-            clearBlocked = BuildConfig.DEBUG &&
-                current.escalationEnabled &&
+            clearBlocked = current.escalationEnabled &&
                 current.escalationSource == ScheduleSettings.ContentSource.TEMPLATE,
             onDismiss = { editingTemplate = false },
             onSave = { saved ->
@@ -724,7 +703,7 @@ internal fun TemplateEditor(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    "Teks ini menjadi isi laporan. Tanda {tanggal} diganti tanggal hari ini.",
+                    "Teks ini menjadi isi laporan saat memakai mode Templat.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )

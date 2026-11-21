@@ -1,7 +1,6 @@
 package id.ohmymonev.android.schedule
 
 import android.content.Context
-import id.ohmymonev.android.BuildConfig
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -55,7 +54,7 @@ class TimeSettingsStore internal constructor(private val dataStore: DataStore<Pr
             prefs[Keys.ESCALATION_SOURCE] = settings.escalationSource.name
             prefs[Keys.MASTER_ENABLED] = settings.masterEnabled
             prefs[Keys.REMINDER_ENABLED] = settings.reminderEnabled
-            prefs[Keys.ESCALATION_ENABLED] = BuildConfig.DEBUG && settings.escalationEnabled
+            prefs[Keys.ESCALATION_ENABLED] = settings.escalationEnabled
         }
     }
 
@@ -72,8 +71,7 @@ class TimeSettingsStore internal constructor(private val dataStore: DataStore<Pr
                 escalationSource = prefs[Keys.ESCALATION_SOURCE]?.toSourceOrNull() ?: DEFAULT.escalationSource,
                 masterEnabled = prefs[Keys.MASTER_ENABLED] ?: DEFAULT.masterEnabled,
                 reminderEnabled = prefs[Keys.REMINDER_ENABLED] ?: DEFAULT.reminderEnabled,
-                // Disable saved emergency settings in the stable release.
-                escalationEnabled = BuildConfig.DEBUG && (prefs[Keys.ESCALATION_ENABLED] ?: DEFAULT.escalationEnabled),
+                escalationEnabled = prefs[Keys.ESCALATION_ENABLED] ?: DEFAULT.escalationEnabled,
             )
         }
 

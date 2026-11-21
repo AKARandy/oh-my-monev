@@ -129,12 +129,12 @@ class TimeSettingsStoreTest {
         assertEquals(original, store.settingsOnce())
     }
 
-    @Test fun savedEmergencyIsEnabledOnlyInDiagnostics() = runBlocking {
+    @Test fun savedEmergencyIsPreservedAcrossBuilds() = runBlocking {
         preferences.edit {
             it[androidx.datastore.preferences.core.booleanPreferencesKey("escalation_enabled")] = true
         }
         val settings = store.settingsOnce()
-        assertEquals(id.ohmymonev.android.BuildConfig.DEBUG, settings.escalationEnabled)
+        assertTrue(settings.escalationEnabled)
         assertTrue(settings.reminderEnabled)
     }
 

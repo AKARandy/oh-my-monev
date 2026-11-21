@@ -57,8 +57,7 @@ class AlarmSchedulerTest {
         assertEquals(1, shadowOf(alarms).scheduledAlarms.size)
     }
 
-    @Test fun stableUpgradeCancelsEmergencyAndRejectsStaleTriggers() = kotlinx.coroutines.runBlocking {
-        org.junit.Assume.assumeFalse(id.ohmymonev.android.BuildConfig.DEBUG)
+    @Test fun disablingEmergencyCancelsScheduledAndRetryAlarms() = kotlinx.coroutines.runBlocking {
         AlarmScheduler.armAll(context, ScheduleSettings(escalationEnabled = true))
         for (code in listOf(21, 99)) {
             val intent = android.content.Intent(context, AutoFillReceiver::class.java)
@@ -67,8 +66,9 @@ class AlarmSchedulerTest {
             alarms.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 120_000, pending)
         }
         assertEquals(4, shadowOf(alarms).scheduledAlarms.size)
-        val stable = TimeSettingsStore(context).settingsOnce()
-        assertEquals(listOf("reminder"), AlarmScheduler.armAll(context, stable).armedKeys)
+        val disabled = ScheduleSettings(escalationEnabled = false)
+        TimeSettingsStore(context).save(disabled)
+        assertEquals(listOf("reminder"), AlarmScheduler.armAll(context, disabled).armedKeys)
         assertEquals(1, shadowOf(alarms).scheduledAlarms.size)
         AutoFillReceiver().onReceive(context, android.content.Intent(AutoFillReceiver.ACTION_AUTOFILL))
         kotlinx.coroutines.runBlocking { ReceiverWork.awaitIdle() }
@@ -119,8 +119,7 @@ class AlarmSchedulerTest {
     }
 
 
-    @Test fun diagnosticsCanScheduleAndTriggerEmergency() = kotlinx.coroutines.runBlocking {
-        org.junit.Assume.assumeTrue(id.ohmymonev.android.BuildConfig.DEBUG)
+    @Test fun canScheduleAndTriggerEmergency() = kotlinx.coroutines.runBlocking {
         val store = TimeSettingsStore(context)
         store.save(ScheduleSettings(escalationEnabled = true))
         val settings = store.settingsOnce()
@@ -133,7 +132,6 @@ class AlarmSchedulerTest {
     }
 
     @Test fun scheduleRetryFallsBackCleanlyWhenExactAlarmPermissionMissing() = kotlinx.coroutines.runBlocking {
-        org.junit.Assume.assumeTrue(id.ohmymonev.android.BuildConfig.DEBUG)
         org.robolectric.shadows.ShadowAlarmManager.setCanScheduleExactAlarms(false)
         TimeSettingsStore(context).save(ScheduleSettings(escalationEnabled = true))
         val target = java.time.ZonedDateTime.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta).plusMinutes(5)
@@ -143,7 +141,6 @@ class AlarmSchedulerTest {
     }
 
     @Test fun escalationReceiverRearmsAlarmsAndAvoidsPrematureNotification() = kotlinx.coroutines.runBlocking {
-        org.junit.Assume.assumeTrue(id.ohmymonev.android.BuildConfig.DEBUG)
         val app = context.applicationContext as Application
         shadowOf(app).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
         TimeSettingsStore(context).save(ScheduleSettings(reminderEnabled = false, escalationEnabled = true))
