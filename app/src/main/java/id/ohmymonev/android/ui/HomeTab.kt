@@ -937,27 +937,68 @@ private fun hasPermission(context: Context, permission: String): Boolean =
 internal fun ScheduleStatus(state: AlarmScheduler.ArmedState?, onCheck: () -> Unit, checking: Boolean = false) {
     Column(
         modifier = Modifier.fillMaxWidth().testTag("schedule-status"),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("Jadwal fitur berikutnya", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-        Text(
-            when {
-                state == null -> "Memuat jadwal…"
-                state.nextFireISO == null -> state.source
-                else -> "${state.source} · ${formatFire(state.nextFireISO)} WIB"
-            },
-            fontSize = 20.sp,
-            lineHeight = 28.sp,
-        )
-        if (state?.nextFireISO != null) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                if (state.armed) "Alarm dijadwalkan" else "Alarm belum terkonfirmasi",
-                fontSize = 18.sp, lineHeight = 26.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                "Jadwal berikutnya",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.primary,
             )
+            TextButton(enabled = !checking, onClick = loggedClick("HomeTab:816", onCheck)) {
+                Text(if (checking) "Memeriksa…" else "Periksa")
+            }
         }
-        state?.lastError?.let { Text(it, fontSize = 18.sp, lineHeight = 26.sp, color = MaterialTheme.colorScheme.error) }
-        TextButton(enabled = !checking, onClick = loggedClick("HomeTab:816", onCheck)) {
-            Text(if (checking) "Memeriksa…" else "Periksa jadwal", fontSize = 18.sp)
+        when {
+            state == null -> Text(
+                "Memuat jadwal…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            state.nextFireISO == null -> Text(
+                state.source,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            else -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        state.source,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (state.armed) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Text(
+                            if (state.armed) "Aktif" else "Belum aktif",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (state.armed) MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Text(
+                    "${formatFire(state.nextFireISO)} WIB",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        state?.lastError?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
         }
     }
 }

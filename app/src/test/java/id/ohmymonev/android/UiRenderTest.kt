@@ -253,7 +253,7 @@ class UiRenderTest {
     @Test @Config(qualifiers = "w360dp-h3200dp-xhdpi")
     fun scheduleDisabledLargeText() = capture("forge-schedule-disabled-large-text", "Aktifkan semua fitur", 1.3f, captureCards = true, masterEnabled = false) { ScheduleTab() }
 
-    @Test fun configuredSchedule() = capture("forge-schedule-status", "Jadwal fitur berikutnya", captureTag = "schedule-status") {
+    @Test fun configuredSchedule() = capture("forge-schedule-status", "Jadwal berikutnya", captureTag = "schedule-status") {
         id.ohmymonev.android.ui.ScheduleStatus(
             id.ohmymonev.android.schedule.AlarmScheduler.ArmedState(true, "2026-11-07T15:30:00Z", "Pengisian darurat"), {})
     }

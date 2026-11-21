@@ -259,7 +259,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             controlsEnabled = ready && current.masterEnabled && !modelBusy,
             effective = ready && current.reminderEnabled && current.masterEnabled,
             paused = !ready && current.masterEnabled && current.reminderEnabled,
-            detail = "Memeriksa status laporan.",
+            detail = "Memeriksa apakah laporan hari ini sudah terkirim. Bila belum, alarm berbunyi sampai Anda mematikan atau menundanya.",
             actionLabel = "Suara dan getar",
             onAction = {
                 id.ohmymonev.android.schedule.ReminderNotifications(context).openSettings()
@@ -279,7 +279,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             paused = !ready && current.masterEnabled && current.escalationEnabled,
             detail = when (current.escalationSource) {
                 ScheduleSettings.ContentSource.TEMPLATE ->
-                    "Terpicu pada jam terjadwal bila laporan belum terkirim. Isian memakai templat Anda."
+                    "Terpicu pada jam terjadwal bila laporan belum terkirim. Mengirim isi tetap dari Templat laporan Anda."
                 ScheduleSettings.ContentSource.AUTOMATIC ->
                     "Terpicu pada jam terjadwal bila belum terkirim. Isian melanjutkan laporan hari kerja sebelumnya (eksperimental)."
             },
@@ -587,7 +587,8 @@ internal fun AlarmEditor(
                     ) { source = ScheduleSettings.ContentSource.AUTOMATIC }
                     Text(
                         when (source) {
-                            ScheduleSettings.ContentSource.TEMPLATE -> "Memakai templat Anda."
+                            ScheduleSettings.ContentSource.TEMPLATE ->
+                                "Mengisi dan mengirim teks tetap yang sudah Anda tulis sendiri di Templat laporan. Paling aman karena isi tidak berubah."
                             ScheduleSettings.ContentSource.AUTOMATIC ->
                                 "Menulis ulang laporan hari kerja sebelumnya dengan kalimat berbeda. Berisiko."
                         },
