@@ -1,5 +1,11 @@
 # oh my monev
 
+[![Build](https://github.com/AKARandy/oh-my-monev/actions/workflows/build.yml/badge.svg)](https://github.com/AKARandy/oh-my-monev/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/AKARandy/oh-my-monev?label=release)](https://github.com/AKARandy/oh-my-monev/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/AKARandy/oh-my-monev/total)](https://github.com/AKARandy/oh-my-monev/releases)
+[![Android](https://img.shields.io/badge/Android-8.0%2B%20(ARM64)-3DDC84?logo=android&logoColor=white)](https://github.com/AKARandy/oh-my-monev/releases/latest)
+[![License](https://img.shields.io/github/license/AKARandy/oh-my-monev)](LICENSE)
+
 oh my monev is an Android app. It helps MagangHub participants (Kemnaker, Indonesia) to record
 their daily attendance on https://monev.maganghub.kemnaker.go.id.
 
