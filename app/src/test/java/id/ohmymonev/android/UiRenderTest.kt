@@ -494,4 +494,61 @@ class UiRenderTest {
         }
     }
 
+    @Test fun updateBannerAvailableProof() {
+        val release = id.ohmymonev.core.update.UpdateRelease(
+            tag = "v1.2.0",
+            versionName = "1.2.0",
+            notes = "Pembaruan langsung di dalam aplikasi tanpa membuka GitHub.",
+            apkUrl = "https://github.com/AKARandy/oh-my-monev/releases/download/v1.2.0/oh-my-monev-v1.2.0.apk",
+            apkName = "oh-my-monev-v1.2.0.apk",
+            apkSizeBytes = 26_500_000L,
+            expectedSha256 = "a".repeat(64),
+            sha256Url = null,
+        )
+        capture("update-banner-available", "Pembaruan tersedia", captureTag = "update-banner") {
+            id.ohmymonev.android.ui.UpdateBannerCard(
+                phase = id.ohmymonev.android.data.AppUpdatePhase.Available(release),
+                onDownload = {}, onCancel = {}, onInstall = {}, onDismiss = {}, onClearError = {},
+            )
+        }
+    }
+
+    @Test fun updateBannerDownloadingProof() {
+        val release = id.ohmymonev.core.update.UpdateRelease(
+            tag = "v1.2.0",
+            versionName = "1.2.0",
+            notes = "",
+            apkUrl = "https://github.com/AKARandy/oh-my-monev/releases/download/v1.2.0/oh-my-monev-v1.2.0.apk",
+            apkName = "oh-my-monev-v1.2.0.apk",
+            apkSizeBytes = 26_500_000L,
+            expectedSha256 = "a".repeat(64),
+            sha256Url = null,
+        )
+        capture("update-banner-downloading", "Mengunduh pembaruan", captureTag = "update-banner") {
+            id.ohmymonev.android.ui.UpdateBannerCard(
+                phase = id.ohmymonev.android.data.AppUpdatePhase.Downloading(release, 62),
+                onDownload = {}, onCancel = {}, onInstall = {}, onDismiss = {}, onClearError = {},
+            )
+        }
+    }
+
+    @Test fun updateBannerReadyProof() {
+        val release = id.ohmymonev.core.update.UpdateRelease(
+            tag = "v1.2.0",
+            versionName = "1.2.0",
+            notes = "",
+            apkUrl = "https://github.com/AKARandy/oh-my-monev/releases/download/v1.2.0/oh-my-monev-v1.2.0.apk",
+            apkName = "oh-my-monev-v1.2.0.apk",
+            apkSizeBytes = 26_500_000L,
+            expectedSha256 = "a".repeat(64),
+            sha256Url = null,
+        )
+        capture("update-banner-ready", "Pasang sekarang", captureTag = "update-banner") {
+            id.ohmymonev.android.ui.UpdateBannerCard(
+                phase = id.ohmymonev.android.data.AppUpdatePhase.ReadyToInstall(release, File("update.apk"), needsPermissionHint = true),
+                onDownload = {}, onCancel = {}, onInstall = {}, onDismiss = {}, onClearError = {},
+            )
+        }
+    }
+
 }

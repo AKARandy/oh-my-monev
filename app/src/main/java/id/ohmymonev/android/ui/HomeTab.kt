@@ -140,9 +140,11 @@ internal fun HomeTab(
     var resumeCount by remember { mutableStateOf(0) }
     var checkedOnResume by remember { mutableStateOf(0) }
     val settings by store.settings.collectAsState(initial = null)
+    val updatePhase by id.ohmymonev.android.data.AppUpdateController.state.collectAsState()
 
     var todayIso by remember { mutableStateOf(LocalDate.now(ScheduleCalculator.asiaJakarta).toString()) }
     LaunchedEffect(Unit) {
+        id.ohmymonev.android.data.AppUpdateController.checkIfDue(context)
         while (true) {
             delay(60_000)
             todayIso = LocalDate.now(ScheduleCalculator.asiaJakarta).toString()
@@ -531,6 +533,15 @@ internal fun HomeTab(
             )
         }
 
+        UpdateBannerCard(
+            phase = updatePhase,
+            onDownload = { release -> id.ohmymonev.android.data.AppUpdateController.startDownload(context, release) },
+            onCancel = { id.ohmymonev.android.data.AppUpdateController.cancelDownload() },
+            onInstall = { file -> id.ohmymonev.android.data.AppUpdateController.installApk(context, file) },
+            onDismiss = { tag -> id.ohmymonev.android.data.AppUpdateController.dismiss(context, tag) },
+            onClearError = { id.ohmymonev.android.data.AppUpdateController.clearFailure() },
+        )
+
         PratinjauCard(
             prepared = pratinjau,
             loading = pratinjauLoading,
@@ -653,7 +664,12 @@ internal fun HomeTab(
             }
         }
         TextButton(onClick = loggedClick("HomeTab:499") { infoExpanded = !infoExpanded }) { Text("Tentang aplikasi", style = MaterialTheme.typography.bodyMedium) }
-        if (infoExpanded) DisclaimerCard()
+        if (infoExpanded) {
+            DisclaimerCard(
+                updatePhase = updatePhase,
+                onCheckUpdate = { id.ohmymonev.android.data.AppUpdateController.checkNow(context) },
+            )
+        }
         if (BuildConfig.DEBUG) {
             TextButton(onClick = loggedClick("HomeTab:502") { diagnosticsExpanded = !diagnosticsExpanded }) {
                 Text(if (diagnosticsExpanded) "Tutup alat pengujian" else "Alat pengujian")
@@ -722,14 +738,188 @@ internal fun HomeTab(
 }
 
 @Composable
-private fun DisclaimerCard() {
+internal fun UpdateBannerCard(
+    phase: id.ohmymonev.android.data.AppUpdatePhase,
+    onDownload: (id.ohmymonev.core.update.UpdateRelease) -> Unit,
+    onCancel: () -> Unit,
+    onInstall: (java.io.File) -> Unit,
+    onDismiss: (String) -> Unit,
+    onClearError: () -> Unit,
+) {
+    when (phase) {
+        id.ohmymonev.android.data.AppUpdatePhase.Idle,
+        id.ohmymonev.android.data.AppUpdatePhase.Checking,
+        id.ohmymonev.android.data.AppUpdatePhase.UpToDate -> return
+        is id.ohmymonev.android.data.AppUpdatePhase.Failed -> if (phase.release == null) return
+        else -> Unit
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth().testTag("update-banner"),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+    ) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            when (phase) {
+                is id.ohmymonev.android.data.AppUpdatePhase.Available -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "Pembaruan tersedia",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                        ) {
+                            Text(
+                                "v${phase.release.versionName}",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
+                    val summary = phase.release.summary()
+                    if (summary.isNotBlank()) {
+                        Text(
+                            summary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Button(
+                            onClick = loggedClick("HomeTab:updateDownload") { onDownload(phase.release) },
+                            modifier = Modifier.testTag("update-download"),
+                        ) { Text("Perbarui") }
+                        TextButton(
+                            onClick = loggedClick("HomeTab:updateDismiss") { onDismiss(phase.release.tag) },
+                        ) { Text("Nanti") }
+                    }
+                }
+                is id.ohmymonev.android.data.AppUpdatePhase.Downloading -> {
+                    Text(
+                        if (phase.percent >= 100) "Memeriksa berkas pembaruan…"
+                        else "Mengunduh pembaruan v${phase.release.versionName}… ${phase.percent}%",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { phase.percent.coerceIn(0, 100) / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TextButton(onClick = loggedClick("HomeTab:updateCancel", onCancel)) {
+                        Text("Batalkan")
+                    }
+                }
+                is id.ohmymonev.android.data.AppUpdatePhase.ReadyToInstall -> {
+                    Text(
+                        "Pembaruan v${phase.release.versionName} siap dipasang",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    if (phase.needsPermissionHint) {
+                        Text(
+                            "Izinkan pemasangan dari sumber ini di Pengaturan, lalu ketuk Pasang sekarang.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Button(
+                        onClick = loggedClick("HomeTab:updateInstall") { onInstall(phase.apkFile) },
+                        modifier = Modifier.testTag("update-install"),
+                    ) { Text("Pasang sekarang") }
+                }
+                is id.ohmymonev.android.data.AppUpdatePhase.Failed -> {
+                    Text(
+                        "Pembaruan gagal",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Text(
+                        phase.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        phase.release?.let { rel ->
+                            Button(onClick = loggedClick("HomeTab:updateRetry") { onDownload(rel) }) {
+                                Text("Coba lagi")
+                            }
+                        }
+                        TextButton(onClick = loggedClick("HomeTab:updateCloseError", onClearError)) {
+                            Text("Tutup")
+                        }
+                    }
+                }
+                else -> Unit
+            }
+        }
+    }
+}
+
+@Composable
+private fun DisclaimerCard(
+    updatePhase: id.ohmymonev.android.data.AppUpdatePhase,
+    onCheckUpdate: () -> Unit,
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Aplikasi eksperimen", style = MaterialTheme.typography.titleSmall)
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Oh My Monev", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Versi ${BuildConfig.VERSION_NAME}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(
+                    enabled = updatePhase !is id.ohmymonev.android.data.AppUpdatePhase.Checking &&
+                        updatePhase !is id.ohmymonev.android.data.AppUpdatePhase.Downloading,
+                    onClick = loggedClick("HomeTab:checkUpdate", onCheckUpdate),
+                    modifier = Modifier.testTag("check-update"),
+                ) {
+                    Text(
+                        if (updatePhase is id.ohmymonev.android.data.AppUpdatePhase.Checking) "Memeriksa…"
+                        else "Cek pembaruan",
+                    )
+                }
+            }
+            when (updatePhase) {
+                id.ohmymonev.android.data.AppUpdatePhase.UpToDate -> Text(
+                    "Sudah versi terbaru.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                is id.ohmymonev.android.data.AppUpdatePhase.Failed -> if (updatePhase.release == null) {
+                    Text(
+                        updatePhase.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                else -> Unit
+            }
             Text(
                 "Bukan layanan resmi Kemnaker atau MagangHub. Aplikasi ini hanya mengotomatiskan " +
                     "tindakan di akunmu sendiri. Kamu tetap bertanggung jawab atas isi laporan yang " +
@@ -737,8 +927,6 @@ private fun DisclaimerCard() {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-
-
         }
     }
 }
