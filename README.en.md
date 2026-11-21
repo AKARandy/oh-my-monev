@@ -11,7 +11,7 @@ their daily attendance on https://monev.maganghub.kemnaker.go.id.
 
 Read this file in Indonesian: [README.md](README.md).
 
-[Download here](https://github.com/AKARandy/oh-my-monev/releases/latest).
+[Download here](https://github.com/AKARandy/oh-my-monev/releases/latest) (stable) | [Dev build](https://github.com/AKARandy/oh-my-monev/releases/tag/dev) (installs side-by-side).
 
 MagangHub gives money to interns. But the participant must record attendance every day.
 If the participant does not send the record before 23:59 WIB, the participant loses the money
@@ -23,17 +23,24 @@ The app does this:
 - The app can fill the report form, then send it at the time you choose. You must pick one content
   source: your own template, or an automatic continuation of the previous day's report.
 - The automatic continuation is experimental and risky. The app asks for confirmation before you
-  can turn it on. Example: "Melakukan aktivitas X" becomes "Melanjutkan aktivitas X". It does not
-  invent words. The preview shows the exact text that will be sent.
+  can turn it on. It rewrites the previous workday's report offline on the device (requires a one-time
+  language file download). Meaning can change. The preview shows the exact text that will be sent.
 - The app checks all text before it fills the form. Each part must have 100 to 5000 characters.
 - The phone can be idle. The alarms stay exact. A service keeps the phone awake during the fill.
 
-Status: still in development. See `docs/plan.md`.
+Status: stable v1.1.0 released (separate rolling dev build on tag `dev`).
+
+## Screenshots
+
+| Home | Automation |
+| :---: | :---: |
+| <img src="screenshots/forge-home.png" alt="Home" width="240" /> | <img src="screenshots/schedule-delete-in-card.png" alt="Automation" width="240" /> |
 
 ## Structure
 
 - `:core`: Kotlin code with no Android parts. Checks the text, makes reports, calculates times.
 - `:app`: the Android app. Screen code, web page control, alarms.
+- `specs/`: TLA+ formal specifications verifying core state machines.
 - `docs/`: the plan. The rules of the Monev website (`monev-logic.md`). Other notes.
 - `.tools/`: the build tools for this computer. Not in the repository.
 
