@@ -10,13 +10,16 @@ import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONObject
 
 /**
- * Penyimpanan model neural mode Otomatis: satu zip fp16 (~845 MB) yang diunduh
+ * Penyimpanan model neural mode Otomatis: satu zip fp16 (~499 MB) yang diunduh
  * pengguna lewat aplikasi ke filesDir/model/. Privat penuh — hapus aplikasi =
  * model ikut hilang (allowBackup=false). Unduhan bisa dilanjutkan dari posisi
  * terakhir (Range) dan diverifikasi SHA256 sebelum dibuka.
@@ -32,9 +35,8 @@ class ModelStore internal constructor(
     private val modelDir: File get() = File(context.filesDir, MODEL_DIR)
     private val zipPart: File get() = File(modelDir, "$ZIP_NAME.part")
 
-    /** Zip sudah terunduh dan sudah dibuka lengkap (4 berkas siap pakai). */
-    fun present(): Boolean = META_FILE in (modelDir.list()?.toSet() ?: emptySet()) &&
-        REQUIRED_FILES.all { File(modelDir, it).isFile }
+    /** Model versi saat ini sudah dibuka lengkap, termasuk bobot bersama. */
+    fun present(): Boolean = isReady(modelDir)
 
     suspend fun delete() = withContext(Dispatchers.IO) {
         check(downloadLock.tryLock()) { "Tunggu unduhan model selesai." }
@@ -69,12 +71,24 @@ class ModelStore internal constructor(
                 }
                 var offset = zipPart.length()
                 if (offset < size) {
-                    val connection = (artifact.openConnection() as HttpURLConnection).apply {
-                        connectTimeout = 30_000
-                        readTimeout = 60_000
-                        instanceFollowRedirects = true
-                        setRequestProperty("Accept-Encoding", "identity")
-                        if (offset > 0) setRequestProperty("Range", "bytes=$offset-")
+                    val needed = (size - offset) + size
+                    val avail = modelDir.usableSpace
+                    check(avail <= 0L || avail >= needed) {
+                        "Ruang penyimpanan tidak cukup. Sisakan minimal ${(needed + 999_999) / 1_000_000} MB."
+                    }
+                    val connection = network {
+                        (artifact.openConnection() as HttpURLConnection).apply {
+                            connectTimeout = 30_000
+                            readTimeout = 60_000
+                            instanceFollowRedirects = true
+                            setRequestProperty("Accept-Encoding", "identity")
+                            if (offset > 0) setRequestProperty("Range", "bytes=$offset-")
+                        }
+                    }
+                    val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+                        if (cause != null) {
+                            kotlin.concurrent.thread(isDaemon = true) { runCatching { connection.disconnect() } }
+                        }
                     }
                     try {
                         val code = network { connection.responseCode }
@@ -85,6 +99,10 @@ class ModelStore internal constructor(
                                 check(connection.getHeaderField("Content-Range") == range) {
                                     "Bagian unduhan dari server tidak sesuai. Coba lagi."
                                 }
+                            }
+                            416 -> {
+                                zipPart.delete()
+                                error("Bagian unduhan tidak valid. Coba lagi untuk mengunduh ulang.")
                             }
                             else -> error("Server unduhan merespons $code. Coba lagi.")
                         }
@@ -109,6 +127,7 @@ class ModelStore internal constructor(
                             }
                         }
                     } finally {
+                        cancelHandle?.dispose()
                         connection.disconnect()
                     }
                 }
@@ -132,6 +151,7 @@ class ModelStore internal constructor(
                 ensureActive()
                 unpack()
                 zipPart.delete()
+                File(modelDir, "indot5-paraphrase-fp16.zip.part").delete()
             } catch (_: ZipException) {
                 error("Isi berkas model tidak dapat dibuka.")
             } catch (_: IOException) {
@@ -156,12 +176,14 @@ class ModelStore internal constructor(
             ZipInputStream(zipPart.inputStream().buffered()).use { zip ->
                 var entry = zip.nextEntry
                 while (entry != null) {
-                    val target = File(staging, File(entry.name).name)
-                    FileOutputStream(target).use { output -> zip.copyTo(output) }
+                    if (!entry.isDirectory) {
+                        val target = File(staging, File(entry.name).name)
+                        FileOutputStream(target).use { output -> zip.copyTo(output) }
+                    }
                     entry = zip.nextEntry
                 }
             }
-            check(staging.listFiles()?.map { it.name }?.containsAll(REQUIRED_FILES) == true) {
+            check(isReady(staging)) {
                 "Isi unduhan tidak lengkap."
             }
             val marker = File(modelDir, META_FILE)
@@ -178,16 +200,22 @@ class ModelStore internal constructor(
     companion object {
         private val downloadLock = Mutex()
         private const val MODEL_DIR = "model"
-        private const val ZIP_NAME = "indot5-paraphrase-fp16.zip"
+        private const val ZIP_NAME = "indot5-paraphrase-fp16-shared.zip"
         private const val META_FILE = "META.json"
         val REQUIRED_FILES = listOf(
             "encoder_model.onnx", "decoder_model.onnx", "decoder_with_past_model.onnx",
-            "tokenizer.json", META_FILE,
+            "tokenizer.json", "weights.bin", META_FILE,
         )
-        const val VERSION = "fp16-v1"
+        internal fun isReady(directory: File): Boolean =
+            REQUIRED_FILES.all { File(directory, it).isFile && File(directory, it).length() > 0 } &&
+                runCatching { JSONObject(File(directory, META_FILE).readText()).getString("version") == VERSION }
+                    .getOrDefault(false)
+
+        const val VERSION = "fp16-shared-v2"
         const val ARTIFACT_URL =
-            "https://github.com/AKARandy/oh-my-monev/releases/download/model-fp16-v1/indot5-paraphrase-fp16.zip"
-        const val SHA256 = "4ea77e803f5c9369d1efdde3f0a4e1bf5f9a54eb45e292e420a04a603a1b3170"
-        const val SIZE_BYTES = 845_150_712L
+            "https://github.com/AKARandy/oh-my-monev/releases/download/model-fp16-shared-v2/indot5-paraphrase-fp16-shared.zip"
+        const val SHA256 = "773dd8f5d1beaa4e34056663802720fa4fabd6bed00281779fed2a9909e55b66"
+        const val SIZE_BYTES = 498_892_460L
+        const val DOWNLOAD_SIZE_MB = (SIZE_BYTES + 999_999) / 1_000_000
     }
 }

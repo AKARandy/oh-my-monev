@@ -94,10 +94,12 @@ object JsSnippets {
             "for(var i=0;i<p.h.length;i++){var el=null;for(var j=0;j<t.length;j++){if(t[j].placeholder===p.h[i]){el=t[j];break;}}" +
             "v.push(el===null?null:el.value);}" +
             "var cb=false;var labels=document.querySelectorAll('label');for(var a=0;a<labels.length;a++){" +
-            "if((labels[a].textContent||'').indexOf(p.confirmCheckboxText)!==-1){var c=labels[a].querySelector('input[type=checkbox]');" +
-            "if(c!==null){cb=!!c.checked;break;}}}" +
+            "if((labels[a].textContent||'').indexOf(p.confirmCheckboxText)!==-1){" +
+            "var c=labels[a].control||(labels[a].htmlFor?document.getElementById(labels[a].htmlFor):null)||labels[a].querySelector('input[type=checkbox]');" +
+            "if(c&&c.type==='checkbox'){cb=!!c.checked;break;}}}" +
             "var sub=false;var bs=document.querySelectorAll('button');for(var b=0;b<bs.length;b++){" +
             "if((bs[b].textContent||'').trim()===p.submitButtonLabel){sub=true;break;}}" +
+            "if(!sub){for(var b2=0;b2<bs.length;b2++){if((bs[b2].textContent||'').indexOf(p.submitButtonLabel)!==-1){sub=true;break;}}}" +
             "return JSON.stringify({values:v,checkboxChecked:cb,submitPresent:sub});})()"
     }
 
@@ -110,11 +112,12 @@ object JsSnippets {
         val payload = payload(profile, null)
         return "(function(){var p=$payload;var done=false;var labels=document.querySelectorAll('label');" +
             "for(var i=0;i<labels.length;i++){" +
-            "if((labels[i].textContent||'').indexOf(p.confirmCheckboxText)!==-1){var c=labels[i].querySelector('input[type=checkbox]');if(c!==null){" +
-            "try{c.checked=true;c.dispatchEvent(new Event('input',{bubbles:true}));c.dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}" +
+            "if((labels[i].textContent||'').indexOf(p.confirmCheckboxText)!==-1){" +
+            "var c=labels[i].control||(labels[i].htmlFor?document.getElementById(labels[i].htmlFor):null)||labels[i].querySelector('input[type=checkbox]');" +
+            "if(c&&c.type==='checkbox'){if(!c.checked){try{c.checked=true;c.dispatchEvent(new Event('input',{bubbles:true}));c.dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}}" +
             "done=!!c.checked;break;}}}" +
-            "if(!done){var all=document.querySelectorAll('input[type=checkbox]');if(all.length===1&&all[0]&&!all[0].checked){" +
-            "try{all[0].checked=true;all[0].dispatchEvent(new Event('input',{bubbles:true}));all[0].dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}" +
+            "if(!done){var all=document.querySelectorAll('input[type=checkbox]');if(all.length===1&&all[0]){" +
+            "if(!all[0].checked){try{all[0].checked=true;all[0].dispatchEvent(new Event('input',{bubbles:true}));all[0].dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}}" +
             "done=!!all[0].checked;}}" +
             "window.__ohmymonev_done=JSON.stringify({checked:done});return window.__ohmymonev_done;})()"
     }

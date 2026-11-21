@@ -110,4 +110,9 @@ class DeviceLocationTest {
         assertEquals(0, successes)
         assertTrue(shadow.getLocationUpdateListeners().isEmpty())
     }
+
+    @Test fun locationBridgeSanitizesNullAndInvalidTimeouts() {
+        assertTrue(LocationBridge.SCRIPT.contains("isFinite(rawTimeout)"))
+        assertTrue(LocationBridge.SCRIPT.contains("options.timeout==null?30000"))
+    }
 }

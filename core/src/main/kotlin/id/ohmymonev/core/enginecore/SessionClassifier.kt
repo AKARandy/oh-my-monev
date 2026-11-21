@@ -17,8 +17,8 @@ sealed class SessionState {
  */
 object SessionClassifier {
 
-    private val LOGIN_HOST_PIECES = listOf("login", "auth", "sso")
-    private val LOGIN_PATH_PIECES = listOf("login", "sso")
+    private val LOGIN_HOST_REGEX = Regex("(^|[.-])(login|auth|sso)([.-]|$)")
+    private val LOGIN_PATH_REGEX = Regex("(^|[/._-])(login|auth|sso)")
 
     fun classify(statusCode: Int, landsOnLoginUrl: Boolean, hasDashboardTabs: Boolean): SessionState = when {
         landsOnLoginUrl -> SessionState.EXPIRED
@@ -26,24 +26,25 @@ object SessionClassifier {
         else -> SessionState.UNKNOWN
     }
 
-    /** True when the final URL lands on a login/auth host or a login/sso path. */
+    /** True when the final URL lands on a login/auth/sso host or a login/auth/sso path. */
     fun landsOnLoginUrl(finalUrl: String): Boolean {
+        val withoutQueryOrFragment = finalUrl.trim().substringBefore('?').substringBefore('#')
         val uri = try {
-            java.net.URI(finalUrl.trim())
+            java.net.URI(withoutQueryOrFragment)
         } catch (e: Exception) {
             return false
         }
         val host = uri.host?.lowercase().orEmpty()
-        if (LOGIN_HOST_PIECES.any { host.contains(it) }) return true
+        if (LOGIN_HOST_REGEX.containsMatchIn(host)) return true
         val path = uri.rawPath?.lowercase().orEmpty()
-        if (LOGIN_PATH_PIECES.any { path.contains(it) }) return true
+        if (LOGIN_PATH_REGEX.containsMatchIn(path)) return true
         return false
     }
 
-    /** True when pageText contains every tab label (pure; case- and whitespace-sensitive match). */
+    /** True when pageText contains every non-blank tab label (pure; case- and whitespace-sensitive match). */
     fun pageHasTabs(pageText: String?, loggedInTabs: List<String>): Boolean {
         if (pageText == null || loggedInTabs.isEmpty()) return false
-        return loggedInTabs.all { pageText.contains(it) }
+        return loggedInTabs.all { it.isNotBlank() && pageText.contains(it) }
     }
 
     /** Convenience composition over a real page load: final URL, page text and profile markers. */

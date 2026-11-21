@@ -87,4 +87,17 @@ class JsSnippetsTest {
         assertTrue(js.contains("Beranda"))
         assertTrue(js.contains("Lokasi berhasil diakses"))
     }
+
+    @Test
+    fun `checkbox lookup supports for-linked labels and already checked state`() {
+        val tick = JsSnippets.tickCheckbox(profile)
+        val read = JsSnippets.readBack(profile)
+        assertTrue(tick.contains("htmlFor"))
+        assertTrue(tick.contains(".control"))
+        assertTrue(tick.contains("if(!c.checked)"))
+        assertTrue(tick.contains("if(!all[0].checked)"))
+        assertTrue(read.contains("htmlFor"))
+        assertTrue(read.contains(".control"))
+        assertTrue(read.contains("indexOf(p.submitButtonLabel)"))
+    }
 }

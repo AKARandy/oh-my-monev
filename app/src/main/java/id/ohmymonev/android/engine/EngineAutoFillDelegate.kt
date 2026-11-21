@@ -46,7 +46,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var activeEngine: WebViewEngine? = null
+    @Volatile private var activeEngine: WebViewEngine? = null
     override fun cancel() {
         activeEngine?.cancel()
         activeEngine = null
@@ -101,6 +101,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             fun draftStillCurrent() = store.todayDraft(draft.date) == draft &&
                 draft.date == LocalDate.now(ScheduleCalculator.asiaJakarta).toString()
             try {
+                sessions.awaitLoaded()
                 if (!id.ohmymonev.android.schedule.FeatureReadiness.read(appContext).ready) {
                     val outcome = if (!sessions.state.value.usable) EngineOutcome.LOGIN_REQUIRED else EngineOutcome.RETRYABLE_ERROR
                     complete("Periksa sesi dan izin aplikasi.", manualRecord(outcome, "Periksa sesi dan izin aplikasi."))
@@ -138,6 +139,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                     override fun onEvent(message: String) { if (BuildConfig.DEBUG) Log.d("ohmymonev", message) }
 
                     override fun onRunFinished(record: RunRecord) {
+                        activeEngine = null
                         scope.launch {
                             val verified = try {
                                 withTimeoutOrNull(45_000) { probe.checkReminder(date, request.account) }
@@ -192,6 +194,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             return
         }
 
+        SessionRepository.get(appContext).awaitLoaded()
         if (!settings.masterEnabled || !settings.escalationEnabled ||
             !id.ohmymonev.android.schedule.FeatureReadiness.read(appContext).ready
         ) {
@@ -218,8 +221,10 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                 NotificationFactory.NOTIF_ID_REMINDER,
                 factory.info(
                     "oh-my-monev: tidak ada internet",
-                    listOf("Laporan belum bisa diisi sekarang. Akan dicoba lagi otomatis.", record.provenanceSummary())
-                        .filter { it.isNotBlank() }.joinToString("\n"),
+                    listOfNotNull(
+                        "Laporan belum bisa diisi sekarang. Akan dicoba lagi otomatis.",
+                        record.takeIf { it.contentSource != null }?.provenanceSummary(),
+                    ).filter { it.isNotBlank() }.joinToString("\n"),
                 ),
             )
             maybeScheduleRetry(record, store, settings)
@@ -227,7 +232,8 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             return
         }
 
-        val status = SiteStatusProbe(appContext).check()
+        val status = withTimeoutOrNull(45_000) { SiteStatusProbe(appContext).check() }
+            ?: SiteStatus(null, TodayState.UNKNOWN, null, emptyList(), "Pemeriksaan status terlalu lama.")
         if (status.sessionActive != true || status.today != id.ohmymonev.core.enginecore.TodayState.UNFILLED) {
             val outcome = when {
                 status.sessionActive == false -> EngineOutcome.LOGIN_REQUIRED
@@ -242,15 +248,18 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             appendRecordSafely(store, record)
             if (outcome == EngineOutcome.RETRYABLE_ERROR) maybeScheduleRetry(record, store, settings)
             if (outcome != EngineOutcome.DAY_NOT_FILLABLE) post(factory, NotificationFactory.NOTIF_ID_REMINDER,
-                factory.info("Laporan belum diisi", listOf(status.error ?: "Periksa sesi di aplikasi.", record.provenanceSummary())
-                    .filter { it.isNotBlank() }.joinToString("\n")))
+                factory.info("Laporan belum diisi", listOfNotNull(
+                    status.error ?: "Periksa sesi di aplikasi.",
+                    record.takeIf { it.contentSource != null }?.provenanceSummary(),
+                ).filter { it.isNotBlank() }.joinToString("\n")))
             AutoFillService.finished(appContext)
             return
         }
         id.ohmymonev.android.data.ActionLog.record(appContext, "emergency.prepare")
         val prepared = PreparedReportService(appContext).prepare()
-        if (prepared.participantId != status.account ||
-            prepared.sessionVersion != SessionRepository.get(appContext).state.value.version) {
+        val currentSessionVersion = SessionRepository.get(appContext).state.value.version
+        if ((prepared.participantId.isNotBlank() && prepared.participantId != status.account) ||
+            (prepared.sessionVersion != null && prepared.sessionVersion != currentSessionVersion)) {
             AutoFillService.finished(appContext)
             return
         }
@@ -293,8 +302,8 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                 val failureRecord = RunRecord(
                         date = todayIso,
                         attemptedAtISO = nowIso(),
-                        outcome = EngineOutcome.SUBMIT_FAILED,
-                        attempt = 1,
+                        outcome = if (prepared.sourceUnavailable) EngineOutcome.RETRYABLE_ERROR else EngineOutcome.SUBMIT_FAILED,
+                        attempt = attemptToday(store, todayIso),
                         detail = "generator: ${outcome.reason.name} (${outcome.detail})",
                         trigger = "EMERGENCY",
                         contentSource = failureSource,
@@ -304,9 +313,12 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
                         verification = "FAILED",
                     )
                 appendRecordSafely(store, failureRecord)
+                if (prepared.sourceUnavailable) maybeScheduleRetry(failureRecord, store, settings)
                 post(factory, NotificationFactory.NOTIF_ID_ESCALATION, factory.info("Perbaiki laporan hari ini",
-                    listOf(outcome.detail, failureRecord.provenanceSummary("\n"))
-                        .filter { it.isNotBlank() }.joinToString("\n")))
+                    listOfNotNull(
+                        outcome.detail,
+                        failureRecord.takeIf { it.contentSource != null }?.provenanceSummary("\n"),
+                    ).filter { it.isNotBlank() }.joinToString("\n")))
                 AutoFillService.finished(appContext)
             }
         }
@@ -325,6 +337,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
             BenchSite.profile,
             runCallbacks(todayIso, store, factory, settings, bench = true),
         )
+        activeEngine = engine
         engine.runAutomation(
             dateISO = todayIso,
             draft = BenchSite.draft,
@@ -344,6 +357,7 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
         reusedPreview: Boolean? = null,
     ) = object : WebViewEngine.Callbacks {
         override fun onRunFinished(record: RunRecord) {
+            activeEngine = null
             scope.launch {
                 if (bench) {
                     // Bukti uji mesin: catat hasil, jangan masukkan ke riwayat dan jangan beri notifikasi.
@@ -406,16 +420,17 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
     private suspend fun maybeScheduleRetry(record: RunRecord, store: AppStore, settings: ScheduleSettings) {
         if (!settings.masterEnabled) return
         if (record.outcome !in RETRYABLE_OUTCOMES) return
-        if (attemptToday(store, record.date) >= MAX_ATTEMPTS) {
-            Log.w("ohmymonev", "batas percobaan tercapai: ${record.date} tidak dijadwalkan coba lagi")
+        val records = store.records()
+        val next = nextEmergencyRetryTime(
+            records = records,
+            dateIso = record.date,
+            now = ZonedDateTime.now(ScheduleCalculator.asiaJakarta),
+        ) ?: run {
+            if (records.count { it.date == record.date && it.trigger != "MANUAL" } >= MAX_ATTEMPTS) {
+                Log.w("ohmymonev", "batas percobaan tercapai: ${record.date} tidak dijadwalkan coba lagi")
+            }
             return
         }
-        val date = runCatching { LocalDate.parse(record.date) }.getOrNull() ?: return
-        val deadline = date.atTime(settings.escalationTime).atZone(ScheduleCalculator.asiaJakarta)
-        val next = ScheduleCalculator.retryTimes(
-            ZonedDateTime.now(ScheduleCalculator.asiaJakarta),
-            deadline,
-        ).firstOrNull() ?: return
         AlarmScheduler.scheduleRetry(appContext, next)
     }
 
@@ -448,6 +463,21 @@ class EngineAutoFillDelegate(context: Context) : AutoFillDelegate {
 
     private fun nowIso(): String = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(OffsetDateTime.now())
 
+}
+
+internal fun nextEmergencyRetryTime(
+    records: List<RunRecord>,
+    dateIso: String,
+    now: ZonedDateTime,
+    maxAttempts: Int = 3,
+): ZonedDateTime? {
+    val failedCount = records.count { it.date == dateIso && it.trigger != "MANUAL" }
+    if (failedCount >= maxAttempts) return null
+    val date = runCatching { LocalDate.parse(dateIso) }.getOrNull() ?: return null
+    val deadline = date.atTime(23, 59).atZone(ScheduleCalculator.asiaJakarta)
+    val steps = ScheduleCalculator.retryTimes(now, deadline)
+    if (steps.isEmpty()) return null
+    return steps.getOrNull((failedCount - 1).coerceAtLeast(0)) ?: steps.lastOrNull()
 }
 
 internal fun submissionVerification(status: SiteStatus?, account: String?): String = when {

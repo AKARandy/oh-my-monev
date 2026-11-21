@@ -26,10 +26,16 @@ internal data class FeatureReadiness(val session: Boolean, val location: Boolean
                 NotificationManagerCompat.from(context).areNotificationsEnabled(),
             )
 
+        suspend fun readReady(context: Context): FeatureReadiness {
+            SessionRepository.get(context).awaitLoaded()
+            return read(context)
+        }
+
         suspend fun rearm(context: Context) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val settings = TimeSettingsStore(context).settingsOnce()
+            val readiness = readReady(context)
             AlarmScheduler.armAll(context, settings)
-            if (read(context).ready) {
+            if (readiness.ready) {
                 if (settings.masterEnabled) GuardService.tryEnsure(context)
             } else if (!SessionRepository.get(context).state.value.initializing) {
                 ReminderController.clear(context)

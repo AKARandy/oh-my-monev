@@ -18,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -30,6 +31,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import id.ohmymonev.android.data.AppStore
 import id.ohmymonev.android.data.provenanceDetails
 import id.ohmymonev.core.enginecore.EngineOutcome
@@ -58,10 +62,10 @@ private fun plain(outcome: EngineOutcome): String = when (outcome) {
 }
 
 private fun dotColor(outcome: EngineOutcome): Color = when (outcome) {
-    EngineOutcome.SUBMITTED, EngineOutcome.FILL_OK -> Color(0xFF0A6BFF)
+    EngineOutcome.SUBMITTED, EngineOutcome.FILL_OK -> Color(0xFF17613A)
+    EngineOutcome.DAY_NOT_FILLABLE -> Color(0xFF5F6570)
     EngineOutcome.LOGIN_REQUIRED,
     EngineOutcome.LOADING_TIMEOUT,
-    EngineOutcome.DAY_NOT_FILLABLE,
     EngineOutcome.LOCATION_CHECK_FAILS,
     EngineOutcome.READBACK_MISMATCH,
     EngineOutcome.SUBMIT_FAILED,
@@ -75,9 +79,18 @@ private fun dotColor(outcome: EngineOutcome): Color = when (outcome) {
 fun LogTab(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val appStore = remember { AppStore(context) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     var records by remember { mutableStateOf<List<RunRecord>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var refreshKey by remember { mutableIntStateOf(0) }
+
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshKey++
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(refreshKey) {
         loading = true
@@ -100,10 +113,13 @@ fun LogTab(modifier: Modifier = Modifier) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
                 Text("Catatan", style = MaterialTheme.typography.headlineMedium)
                 Text(
                     "Hasil tiap percobaan.",
@@ -115,7 +131,14 @@ fun LogTab(modifier: Modifier = Modifier) {
                 Text("Muat ulang")
             }
         }
-        if (records.isEmpty() && !loading) {
+        if (loading && records.isEmpty()) {
+            Text(
+                "Memuat catatan…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        } else if (records.isEmpty()) {
             Text(
                 "Belum ada catatan.",
                 style = MaterialTheme.typography.bodyMedium,
@@ -133,8 +156,9 @@ fun LogTab(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun RecordRow(record: RunRecord) {
+internal fun RecordRow(record: RunRecord) {
     var expanded by remember(record) { mutableStateOf(false) }
+    val details = record.provenanceDetails()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -151,15 +175,20 @@ private fun RecordRow(record: RunRecord) {
             modifier = Modifier
                 .padding(start = 12.dp)
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .let { if (details.isNotEmpty()) it.clickable { expanded = !expanded } else it }
                 .padding(vertical = 2.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(record.date, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    record.date,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
                 Text(
                     attemptTime(record.attemptedAtISO),
                     style = MaterialTheme.typography.labelSmall,
@@ -174,14 +203,18 @@ private fun RecordRow(record: RunRecord) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            val details = record.provenanceDetails()
-            if (expanded) {
+            if (expanded && details.isNotEmpty()) {
                 details.forEach { (label, value) ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            label,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         Text(value, style = MaterialTheme.typography.labelSmall)
                     }
                 }

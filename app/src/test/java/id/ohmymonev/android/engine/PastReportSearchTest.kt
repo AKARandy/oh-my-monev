@@ -195,4 +195,18 @@ class PastReportSearchTest {
         attendances = listOf(attendance("2026-11-06")); logs = listOf(log("2026-11-06"))
         assertTrue(read().unavailable)
     }
+
+    @Test fun nullProfileIdIsRejectedBySiteStatusProbe() = runBlocking {
+        val vault = SessionTokenStore(context) { SecretKeySpec(ByteArray(16) { 1 }, "AES") }
+        vault.save("synthetic-token")
+        val session = SessionRepository(context, vault)
+        session.credentials()
+        val api = MonevApiClient(context, session) { _, path, _ ->
+            if (path == "/users/me") ApiResponse(200, """{"data":{"id":null}}""")
+            else error("Unexpected path: $path")
+        }
+        val status = SiteStatusProbe(context).checkReminder(LocalDate.parse("2026-11-06"), null, api)
+        assertEquals(TodayState.UNKNOWN, status.today)
+        assertNull(status.account)
+    }
 }

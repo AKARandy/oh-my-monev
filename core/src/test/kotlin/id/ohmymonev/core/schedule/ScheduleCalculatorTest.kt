@@ -179,4 +179,13 @@ class ScheduleCalculatorTest {
             assertEquals(fire.offset, wib.rules.getOffset(fire.toInstant()))
         }
     }
+
+    @Test
+    fun `nextFires normalizes non-WIB caller timezone before extracting local date`() {
+        // 2026-11-03T00:15+09:00 (WIT) == 2026-11-02T22:15+07:00 (WIB), before 22:30 WIB escalation!
+        val wit = ZoneId.of("Asia/Jayapura")
+        val nowWit = ZonedDateTime.of(2026, 11, 3, 0, 15, 0, 0, wit)
+        val fires = ScheduleCalculator.nextFires(nowWit, settings(), horizonDays = 0)
+        assertEquals(at(normalDay, 22, 30), fires.getValue(ScheduleCalculator.KEY_ESCALATION))
+    }
 }

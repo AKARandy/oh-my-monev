@@ -47,6 +47,7 @@ class GeneratorPipeline(
         }
 
         val previous = history.latestBefore(date)
+            ?.takeIf { engine.activities(it.draft.aktivitas).isNotEmpty() && it.draft.pelajaran.isNotBlank() && it.draft.kendala.isNotBlank() }
             ?: return GenerationOutcome.Failed(
                 FailureReason.NO_SOURCE_MATERIAL,
                 "no template and no previous report before $date; nothing may be submitted",

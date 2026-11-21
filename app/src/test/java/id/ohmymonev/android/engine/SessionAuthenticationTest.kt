@@ -259,4 +259,68 @@ class SessionAuthenticationTest {
         assertFalse(allowed("$origin:444"))
     }
 
+    @Test fun awaitLoadedAndReadReadyWaitForAsyncVaultLoad() = runBlocking {
+        vault.save("synthetic-token-a")
+        AppStore(context).saveSessionStatus(SessionRecord(true, "2026-11-07T10:00:00+07:00"))
+        org.robolectric.Shadows.shadowOf(base as Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        val delayedKeyReady = CompletableDeferred<Unit>()
+        val slowVault = SessionTokenStore(context) {
+            runBlocking { delayedKeyReady.await() }
+            key
+        }
+        val repo = SessionRepository(context, slowVault)
+        assertTrue(repo.state.value.initializing)
+        assertFalse(repo.state.value.usable)
+        val waiter = async {
+            repo.awaitLoaded()
+            repo.state.value.usable
+        }
+        kotlinx.coroutines.delay(50)
+        assertFalse(waiter.isCompleted)
+        delayedKeyReady.complete(Unit)
+        assertTrue(waiter.await())
+    }
+
+    @Test fun interactiveLoginCanReCapturePreviouslyRejectedToken() = runBlocking {
+        val repository = active()
+        val version = repository.state.value.version
+        assertTrue(repository.reject(version))
+        assertFalse(repository.capture("synthetic-token-a", repository.state.value.version))
+        assertTrue(repository.capture("synthetic-token-a", repository.state.value.version, afterLogin = true))
+        assertTrue(repository.state.value.hasToken)
+    }
+
+    @Test fun corruptedKeystoreKeyTriggersResetAndRetryOnSave() {
+        var broken = true
+        var resets = 0
+        val recoveringVault = SessionTokenStore(
+            context,
+            key = {
+                if (broken) throw java.security.InvalidKeyException("key invalidated")
+                key
+            },
+            resetKey = {
+                resets++
+                broken = false
+            },
+        )
+        recoveringVault.save("recovered-token")
+        assertEquals(1, resets)
+        assertEquals("recovered-token", recoveringVault.read())
+    }
+
+    @Test fun appStoreAtomicSavesKeepValidJsonWithoutLeavingTempFiles() {
+        val store = AppStore(context)
+        val draft = id.ohmymonev.android.data.StoredDraft("2026-11-09", "A".repeat(100), "B".repeat(100), "C".repeat(100), "p1")
+        store.saveTodayDraft(draft)
+        store.saveTemplate(id.ohmymonev.android.data.ReportTemplate("A".repeat(100), "B".repeat(100), "C".repeat(100)))
+        store.setTonightSkip("2026-11-09")
+        assertEquals(draft, store.todayDraft("2026-11-09"))
+        assertNotNull(store.template())
+        assertTrue(store.isSkipped("2026-11-09"))
+        assertFalse(File(directory, "today-draft.json.tmp").exists())
+        assertFalse(File(directory, "report-template.json.tmp").exists())
+        assertFalse(File(directory, "tonight-skip.json.tmp").exists())
+    }
+
 }

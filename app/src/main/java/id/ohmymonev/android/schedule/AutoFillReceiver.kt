@@ -25,6 +25,8 @@ class AutoFillReceiver : BroadcastReceiver() {
         }
         val settings = TimeSettingsStore(context).settingsOnce()
         kotlin.coroutines.coroutineContext.ensureActive()
+        id.ohmymonev.android.data.SessionRepository.get(context).awaitLoaded()
+        kotlin.coroutines.coroutineContext.ensureActive()
         if (!FeatureReadiness.read(context).ready) {
             AlarmScheduler.armAll(context, settings)
             return

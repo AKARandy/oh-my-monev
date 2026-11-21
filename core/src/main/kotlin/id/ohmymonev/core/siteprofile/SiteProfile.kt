@@ -56,10 +56,13 @@ data class SiteProfile(
     /** true when this instance is a customized variant or a loader fallback, not the built-in default. */
     val modified: Boolean = false,
 ) {
-    fun dashboardUrl(): String = urls.baseUrl + urls.dashboardPath
-    fun evaluasiUrl(): String = urls.baseUrl + urls.evaluasiPath
-    fun riwayatUrl(): String = urls.baseUrl + urls.riwayatPath
-    fun riwayatEditUrl(dateISO: String): String = urls.baseUrl + urls.riwayatEditTemplate.replace("{date}", dateISO)
+    fun dashboardUrl(): String = joinUrl(urls.baseUrl, urls.dashboardPath)
+    fun evaluasiUrl(): String = joinUrl(urls.baseUrl, urls.evaluasiPath)
+    fun riwayatUrl(): String = joinUrl(urls.baseUrl, urls.riwayatPath)
+    fun riwayatEditUrl(dateISO: String): String = joinUrl(urls.baseUrl, urls.riwayatEditTemplate.replace("{date}", dateISO))
+
+    private fun joinUrl(base: String, path: String): String =
+        if (path.isBlank()) base.trimEnd('/') else base.trimEnd('/') + "/" + path.trimStart('/')
 }
 
 /** Built-in default profile, mirrors docs/site-research.md verbatim. */
@@ -115,9 +118,21 @@ object SiteProfileLoader {
         }
     }
 
-    /** A textareas map must cover every part with a usable selector; a partial map falls back. */
+    /** A profile must cover URLs, all 3 textareas, non-blank markers, and valid positive timings. */
     private fun SiteProfile.isUsable(): Boolean =
-        id.ohmymonev.core.model.ReportPart.entries.all { !textareasByPart[it].isNullOrBlank() }
+        urls.baseUrl.isNotBlank() &&
+            urls.riwayatEditTemplate.contains("{date}") &&
+            id.ohmymonev.core.model.ReportPart.entries.all { !textareasByPart[it].isNullOrBlank() } &&
+            markers.loggedInTabs.isNotEmpty() &&
+            markers.loggedInTabs.all { it.isNotBlank() } &&
+            markers.locationOkText.isNotBlank() &&
+            markers.confirmCheckboxText.isNotBlank() &&
+            markers.submitButtonLabel.isNotBlank() &&
+            markers.submissionSuccessText.isNotBlank() &&
+            markers.submissionUpdatedText.isNotBlank() &&
+            timing.pollIntervalMs > 0 &&
+            timing.textareaWaitTimeoutMs > 0 &&
+            timing.spaSettleMs >= 0
 
     private fun String.decodeSiteProfile(): SiteProfile = json.decodeFromString(SiteProfile.serializer(), this)
 

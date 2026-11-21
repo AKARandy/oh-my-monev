@@ -31,35 +31,39 @@ data class SkipMark(val date: String)
 class AppStore(private val context: Context) {
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun drafts(): List<StoredDraft> = runCatching {
-        historyFile().takeIf { it.exists() }
-            ?.readUtf8()
-            ?.lines()
-            ?.filter { it.isNotBlank() }
-            ?.mapNotNull { line -> runCatching { json.decodeFromString(StoredDraft.serializer(), line.trimStart('\uFEFF')) }.getOrNull() }
-            .orEmpty()
-    }.getOrElse { emptyList() }
+    fun drafts(): List<StoredDraft> = synchronized(fileLock) {
+        runCatching {
+            historyFile().takeIf { it.exists() }
+                ?.readUtf8()
+                ?.lines()
+                ?.filter { it.isNotBlank() }
+                ?.mapNotNull { line -> runCatching { json.decodeFromString(StoredDraft.serializer(), line.trimStart('\uFEFF')) }.getOrNull() }
+                .orEmpty()
+        }.getOrElse { emptyList() }
+    }
 
-    fun appendDraft(stored: StoredDraft) {
+    fun appendDraft(stored: StoredDraft) = synchronized(fileLock) {
         historyFile().appendText(json.encodeToString(stored) + "\n")
     }
 
     /** Draft yang ditulis pengguna untuk tanggal tertentu (satu per hari, ditimpa). */
-    fun todayDraft(dateIso: String): StoredDraft? = try {
-        draftFile().takeIf { it.exists() }
-            ?.readUtf8()
-            ?.let { json.decodeFromString(StoredDraft.serializer(), it) }
-            ?.takeIf { it.date == dateIso }
-    } catch (e: Exception) {
-        android.util.Log.w("ohmymonev", "todayDraft parse gagal: $e")
-        null
+    fun todayDraft(dateIso: String): StoredDraft? = synchronized(fileLock) {
+        try {
+            draftFile().takeIf { it.exists() }
+                ?.readUtf8()
+                ?.let { json.decodeFromString(StoredDraft.serializer(), it) }
+                ?.takeIf { it.date == dateIso }
+        } catch (e: Exception) {
+            android.util.Log.w("ohmymonev", "todayDraft parse gagal: $e")
+            null
+        }
     }
 
     /** File bisa ditulis manusia/alat lain; BOM di awal file tidak boleh menggagalkan parse. */
     private fun File.readUtf8(): String = readText().removePrefix("\uFEFF")
 
-    fun saveTodayDraft(stored: StoredDraft) {
-        draftFile().writeText(json.encodeToString(stored))
+    fun saveTodayDraft(stored: StoredDraft) = synchronized(fileLock) {
+        writeAtomically(draftFile(), json.encodeToString(stored))
     }
 
     fun sessionStatus(): SessionRecord? = runCatching {
@@ -80,55 +84,74 @@ class AppStore(private val context: Context) {
     }
 
     /** Benar bila alarm otomatis untuk tanggal ini dibatalkan pengguna. */
-    fun isSkipped(dateIso: String): Boolean = runCatching {
-        skipFile().takeIf { it.exists() }
-            ?.readUtf8()
-            ?.let { json.decodeFromString(SkipMark.serializer(), it) }
-            ?.date == dateIso
-    }.getOrDefault(false)
-
-    fun setTonightSkip(dateIso: String) {
-        skipFile().writeText(json.encodeToString(SkipMark(dateIso)))
+    fun isSkipped(dateIso: String): Boolean = synchronized(fileLock) {
+        runCatching {
+            skipFile().takeIf { it.exists() }
+                ?.readUtf8()
+                ?.let { json.decodeFromString(SkipMark.serializer(), it) }
+                ?.date == dateIso
+        }.getOrDefault(false)
     }
 
-    fun clearTonightSkip() {
+    fun setTonightSkip(dateIso: String) = synchronized(fileLock) {
+        writeAtomically(skipFile(), json.encodeToString(SkipMark(dateIso)))
+    }
+
+    fun clearTonightSkip() = synchronized(fileLock) {
         skipFile().delete()
     }
 
-    fun clearTodayDraft() {
+    fun clearTodayDraft() = synchronized(fileLock) {
         draftFile().delete()
     }
 
     /** Templat tetap tanpa tanggal; tidak ada yang menimpa kecuali pengguna. */
-    fun template(): ReportTemplate? = try {
-        templateFile().takeIf { it.exists() }
-            ?.readUtf8()
-            ?.let { json.decodeFromString(ReportTemplate.serializer(), it) }
-    } catch (e: Exception) {
-        android.util.Log.w("ohmymonev", "template parse gagal: $e")
-        null
+    fun template(): ReportTemplate? = synchronized(fileLock) {
+        try {
+            templateFile().takeIf { it.exists() }
+                ?.readUtf8()
+                ?.let { json.decodeFromString(ReportTemplate.serializer(), it) }
+        } catch (e: Exception) {
+            android.util.Log.w("ohmymonev", "template parse gagal: $e")
+            null
+        }
     }
 
-    fun saveTemplate(template: ReportTemplate) {
-        templateFile().writeText(json.encodeToString(template))
+    fun saveTemplate(template: ReportTemplate) = synchronized(fileLock) {
+        writeAtomically(templateFile(), json.encodeToString(template))
     }
 
-    fun clearTemplate() {
+    fun clearTemplate() = synchronized(fileLock) {
         templateFile().delete()
     }
 
-    fun appendRecord(record: RunRecord) {
+    fun appendRecord(record: RunRecord) = synchronized(fileLock) {
         recordFile().appendText(json.encodeToString(record) + "\n")
     }
 
-    fun records(): List<RunRecord> = runCatching {
-        recordFile().takeIf { it.exists() }
-            ?.readUtf8()
-            ?.lines()
-            ?.filter { it.isNotBlank() }
-            ?.mapNotNull { line -> runCatching { json.decodeFromString(RunRecord.serializer(), line.trimStart('\uFEFF')) }.getOrNull() }
-            .orEmpty()
-    }.getOrElse { emptyList() }
+    fun records(): List<RunRecord> = synchronized(fileLock) {
+        runCatching {
+            recordFile().takeIf { it.exists() }
+                ?.readUtf8()
+                ?.lines()
+                ?.filter { it.isNotBlank() }
+                ?.mapNotNull { line -> runCatching { json.decodeFromString(RunRecord.serializer(), line.trimStart('\uFEFF')) }.getOrNull() }
+                .orEmpty()
+        }.getOrElse { emptyList() }
+    }
+
+    private fun writeAtomically(target: File, text: String) {
+        target.parentFile?.mkdirs()
+        val temp = File(target.parentFile, "${target.name}.tmp")
+        temp.writeText(text)
+        if (!temp.renameTo(target)) {
+            if (target.exists()) target.delete()
+            if (!temp.renameTo(target)) {
+                temp.delete()
+                target.writeText(text)
+            }
+        }
+    }
 
     private fun historyFile() = File(context.filesDir, HISTORY_FILE)
     private fun recordFile() = File(context.filesDir, RECORDS_FILE)
@@ -138,6 +161,7 @@ class AppStore(private val context: Context) {
     private fun skipFile() = File(context.filesDir, SKIP_FILE)
 
     private companion object {
+        val fileLock = Any()
         const val HISTORY_FILE = "history.jsonl"
         const val RECORDS_FILE = "records.jsonl"
         const val DRAFT_FILE = "today-draft.json"

@@ -22,7 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -46,7 +46,7 @@ private const val TAB_SESSION = 3
 fun AppRoot() {
     val context = androidx.compose.ui.platform.LocalContext.current
     OhMyMonevTheme {
-        var selectedTab by remember { mutableIntStateOf(TAB_HOME) }
+        var selectedTab by rememberSaveable { mutableIntStateOf(TAB_HOME) }
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = MaterialTheme.colorScheme.background,
@@ -63,7 +63,7 @@ fun AppRoot() {
                                 selectedTab = index
                             },
                             icon = { Icon(tab.icon, contentDescription = null) },
-                            label = { Text(tab.label, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Visible) },
+                            label = { Text(tab.label, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = MaterialTheme.colorScheme.primary,
                                 selectedTextColor = MaterialTheme.colorScheme.primary,

@@ -13,11 +13,15 @@ class T5Tokenizer private constructor(
     private val eosId: Int,
     private val padId: Int,
 ) {
+    private val idToPiece: Map<Int, String> = HashMap<Int, String>(pieceScores.size * 2).apply {
+        for ((piece, entry) in pieceScores) put(entry.first, piece)
+    }
 
     fun encode(text: String): List<Int> {
         val normalized = PIECE_SPACE + text.replace(" ", PIECE_SPACE)
         val best = DoubleArray(normalized.length + 1) { Double.NEGATIVE_INFINITY }
         val back = arrayOfNulls<Int>(normalized.length + 1)
+        val backIds = arrayOfNulls<List<Int>>(normalized.length + 1)
         best[0] = 0.0
         for (i in normalized.indices) {
             if (best[i] == Double.NEGATIVE_INFINITY) continue
@@ -28,49 +32,75 @@ class T5Tokenizer private constructor(
                 if (entry != null && best[end + 1] < best[i] + entry.second) {
                     best[end + 1] = best[i] + entry.second
                     back[end + 1] = i
+                    backIds[end + 1] = listOf(entry.first)
                 }
                 end++
             }
-            // byte-fallback: karakter tunggal tanpa potongan tetap maju satu byte
-            if (back[i + 1] == null) {
-                val entry = pieceScores[bytePieceOf(normalized[i])]
-                if (entry != null && best[i + 1] < best[i] + entry.second) {
-                    best[i + 1] = best[i] + entry.second
-                    back[i + 1] = i
+            // byte-fallback UTF-8: karakter (atau surrogate pair) tanpa potongan tetap maju lewat token <0xNN>
+            val stepLen = if (Character.isHighSurrogate(normalized[i]) &&
+                i + 1 < normalized.length && Character.isLowSurrogate(normalized[i + 1])
+            ) 2 else 1
+            if (back[i + stepLen] == null) {
+                val utf8Bytes = normalized.substring(i, i + stepLen).toByteArray(Charsets.UTF_8)
+                val byteEntries = mutableListOf<Pair<Int, Double>>()
+                for (b in utf8Bytes) {
+                    val entry = pieceScores[bytePieceOf(b.toInt() and 0xFF)] ?: break
+                    byteEntries.add(entry)
+                }
+                if (byteEntries.size == utf8Bytes.size) {
+                    val totalScore = byteEntries.sumOf { it.second }
+                    if (best[i + stepLen] < best[i] + totalScore) {
+                        best[i + stepLen] = best[i] + totalScore
+                        back[i + stepLen] = i
+                        backIds[i + stepLen] = byteEntries.map { it.first }
+                    }
+                } else {
+                    best[i + stepLen] = best[i] - 100.0
+                    back[i + stepLen] = i
+                    backIds[i + stepLen] = listOf(padId)
                 }
             }
         }
-        val pieces = mutableListOf<String>()
+        val chunks = mutableListOf<List<Int>>()
         var cursor = normalized.length
         while (cursor > 0) {
             val start = back[cursor] ?: break
-            pieces.add(normalized.substring(start, cursor))
+            chunks.add(backIds[cursor] ?: listOf(padId))
             cursor = start
         }
-        pieces.reverse()
-        val ids = pieces.map { piece -> pieceScores[piece]?.first ?: padId }
+        chunks.reverse()
+        val ids = chunks.flatten()
         return ids + eosId
     }
 
     fun decode(ids: List<Int>, skipSpecialTokens: Boolean = true): String {
-        val reverse = HashMap<Int, String>()
-        for ((piece, entry) in pieceScores) reverse[entry.first] = piece
         val builder = StringBuilder()
-        for (id in ids) {
-            if (skipSpecialTokens && (id == eosId || id == padId)) continue
-            val piece = reverse[id] ?: continue
-            if (piece.startsWith("<0x") && piece.endsWith(">")) {
-                val byte = piece.removePrefix("<0x").removeSuffix(">").toInt(16)
-                builder.append(byte.toChar())
-            } else {
-                builder.append(piece)
+        val byteBuffer = java.io.ByteArrayOutputStream()
+        fun flushBytes() {
+            if (byteBuffer.size() > 0) {
+                builder.append(String(byteBuffer.toByteArray(), Charsets.UTF_8))
+                byteBuffer.reset()
             }
         }
+        for (id in ids) {
+            if (skipSpecialTokens && (id == eosId || id == padId)) continue
+            val piece = idToPiece[id] ?: continue
+            if (piece.length == 6 && piece.startsWith("<0x") && piece.endsWith(">")) {
+                val parsed = piece.substring(3, 5).toIntOrNull(16)
+                if (parsed != null) {
+                    byteBuffer.write(parsed)
+                    continue
+                }
+            }
+            flushBytes()
+            builder.append(piece)
+        }
+        flushBytes()
         return builder.toString().replace(PIECE_SPACE, " ").trimStart(' ')
     }
 
-    private fun bytePieceOf(ch: Char): String =
-        "<0x" + ch.code.toString(16).uppercase().padStart(2, '0') + ">"
+    private fun bytePieceOf(byteVal: Int): String =
+        "<0x" + byteVal.toString(16).uppercase().padStart(2, '0') + ">"
 
     companion object {
         private const val PIECE_SPACE = "▁"

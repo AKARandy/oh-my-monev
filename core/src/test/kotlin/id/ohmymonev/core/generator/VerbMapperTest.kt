@@ -58,4 +58,18 @@ class VerbMapperTest {
     @Test fun `unsupported lines retain their number and complete source text`() {
         assertEquals(listOf(2 to "Membikin data 123."), ContinuationRuleEngine().unsupported("1. Memeriksa data.\n2) Membikin data 123."))
     }
+
+    @Test fun `bare melanjutkan and punctuation-only object are rejected`() {
+        assertNull(VerbMapper.continuation("Melanjutkan"))
+        assertNull(VerbMapper.continuation("melanjutkan   "))
+        assertNull(VerbMapper.continuation("Membuat ."))
+        assertEquals("Melanjutkan pemeriksaan data", VerbMapper.continuation("melanjutkan pemeriksaan data"))
+        assertEquals("Melanjutkan pembuatan endpoint", VerbMapper.continuation("Membuat\u00A0endpoint"))
+        assertEquals("Melanjutkan pembuatan endpoint", VerbMapper.continuation("Membuat\tendpoint"))
+    }
+
+    @Test fun `marker-only lines and blank text are handled cleanly by continuation engine`() {
+        assertNull(ContinuationRuleEngine().bullets("   "))
+        assertEquals(listOf("Melanjutkan pemeriksaan data"), ContinuationRuleEngine().bullets("-\n1.Memeriksa data"))
+    }
 }

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -40,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
@@ -151,7 +153,10 @@ internal fun HomeTab(
         mutableStateOf(hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION))
     }
     var locationEnabled by remember {
-        mutableStateOf(LocationManagerCompat.isLocationEnabled(context.getSystemService(android.location.LocationManager::class.java)))
+        mutableStateOf(
+            context.getSystemService(android.location.LocationManager::class.java)
+                ?.let { LocationManagerCompat.isLocationEnabled(it) } == true,
+        )
     }
     var backgroundLocationGranted by remember {
         mutableStateOf(Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
@@ -168,9 +173,10 @@ internal fun HomeTab(
     var checkingStatus by remember { mutableStateOf(false) }
     var tonightSkipped by remember { mutableStateOf(false) }
     var armedState by remember { mutableStateOf<AlarmScheduler.ArmedState?>(null) }
+    var checkingArmed by remember { mutableStateOf(false) }
     var pratinjau by remember { mutableStateOf<PreparedReport?>(null) }
     var pratinjauLoading by remember { mutableStateOf(false) }
-    var editorExpanded by remember(session.version, todayIso) { mutableStateOf(false) }
+    var editorExpanded by rememberSaveable(todayIso) { mutableStateOf(false) }
     val manual by AutoFillService.manual.collectAsState()
     val manualSending = manual?.sending == true
     var confirmSend by remember { mutableStateOf<ManualReportRequest?>(null) }
@@ -181,7 +187,8 @@ internal fun HomeTab(
 
     fun refreshPermissions() {
         locationGranted = hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
-        locationEnabled = LocationManagerCompat.isLocationEnabled(context.getSystemService(android.location.LocationManager::class.java))
+        locationEnabled = context.getSystemService(android.location.LocationManager::class.java)
+            ?.let { LocationManagerCompat.isLocationEnabled(it) } == true
         backgroundLocationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
             hasPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         notificationsOn = NotificationManagerCompat.from(context).areNotificationsEnabled()
@@ -189,17 +196,24 @@ internal fun HomeTab(
             "location=$locationGranted backgroundLocation=$backgroundLocationGranted notifications=$notificationsOn")
     }
 
+    val permissionPrefs = remember(context) { context.getSharedPreferences("oh_my_monev_prefs", Context.MODE_PRIVATE) }
+    var locationRequested by remember { mutableStateOf(permissionPrefs.getBoolean("location_requested", false)) }
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { refreshPermissions() }
+    ) {
+        locationRequested = true
+        permissionPrefs.edit().putBoolean("location_requested", true).apply()
+        refreshPermissions()
+    }
     val backgroundLocationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { refreshPermissions() }
-    var notificationRequested by remember { mutableStateOf(false) }
+    var notificationRequested by remember { mutableStateOf(permissionPrefs.getBoolean("notification_requested", false)) }
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) {
         notificationRequested = true
+        permissionPrefs.edit().putBoolean("notification_requested", true).apply()
         refreshPermissions()
     }
 
@@ -358,11 +372,17 @@ internal fun HomeTab(
     }
 
     fun refreshArmed() {
+        if (checkingArmed) return
+        checkingArmed = true
         armedState = null
         scope.launch {
-            // Perbaiki dulu, baru buktikan: "Periksa" tidak pernah membaca keadaan lama.
-            val s = withContext(Dispatchers.IO) { store.settingsOnce() }
-            armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
+            try {
+                // Perbaiki dulu, baru buktikan: "Periksa" tidak pernah membaca keadaan lama.
+                val s = withContext(Dispatchers.IO) { store.settingsOnce() }
+                armedState = withContext(Dispatchers.IO) { AlarmScheduler.ensureArmed(context, s) }
+            } finally {
+                checkingArmed = false
+            }
         }
     }
 
@@ -386,6 +406,7 @@ internal fun HomeTab(
     val maySend = ready && status?.sessionActive == true && status.today == TodayState.UNFILLED &&
         account != null && status.credentialVersion == session.version && !checkingStatus && !attemptedByOtherAccount &&
         !manualSending && (manualResult == null || locationRetryReady ||
+            (manualResult.request.draft != visibleDraft && !manualResult.recheckRequired) ||
             (manualResult.request === recheckedManual && checkedAfter === manualResult.request)) &&
         manualResult?.outcome != EngineOutcome.SUBMITTED
 
@@ -394,6 +415,7 @@ internal fun HomeTab(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
                 .scrollIndicator(scrollState)
                 .verticalScroll(scrollState)
                 .padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 24.dp),
@@ -420,6 +442,9 @@ internal fun HomeTab(
                     refreshSiteStatus()
                 },
             )
+            if (!checkingStatus && !confirmingSession && status?.today == TodayState.UNKNOWN && !status.error.isNullOrBlank()) {
+                Text(status.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
             if (!ready && (session.usable || status?.sessionActive == false || session.signedOut)) {
                 Text(readiness.missing(), style = MaterialTheme.typography.bodyMedium)
             } else if (!notificationsOn) {
@@ -440,6 +465,7 @@ internal fun HomeTab(
                 savedDraft = visibleDraft,
                 account = account,
                 editable = ready && !manualSending && status?.today == TodayState.UNFILLED,
+                todayIso = todayIso,
             )
             if (visibleDraft != null && draftValid && status?.today == TodayState.UNFILLED) {
                 Button(
@@ -466,14 +492,30 @@ internal fun HomeTab(
                 },
                 onEnableLocation = {
                     confirmSend = null
-                    val settingsIntent = if (!locationEnabled) {
-                        Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
-                    } else {
-                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = Uri.fromParts("package", context.packageName, null)
+                    if (!locationEnabled) {
+                        context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                    } else if (!locationGranted) {
+                        val permanentlyDenied = locationRequested && (context as? android.app.Activity)?.let {
+                            !androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
+                                it, Manifest.permission.ACCESS_FINE_LOCATION,
+                            )
+                        } == true
+                        if (!permanentlyDenied) {
+                            requestLocation()
+                        } else {
+                            context.startActivity(
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.fromParts("package", context.packageName, null)
+                                },
+                            )
                         }
+                    } else {
+                        context.startActivity(
+                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.fromParts("package", context.packageName, null)
+                            },
+                        )
                     }
-                    context.startActivity(settingsIntent)
                 },
                 onDismiss = { confirmSend = null },
             )
@@ -493,10 +535,15 @@ internal fun HomeTab(
             onRefresh = { refreshPratinjau(true) },
             refreshEnabled = ready,
             holiday = status?.today == TodayState.LIBUR,
-            loadingText = if (settings?.escalationSource == ScheduleSettings.ContentSource.AUTOMATIC) {
-                "Membuat draf otomatis…"
-            } else {
-                "Mencari laporan Hadir…"
+            loadingText = when (settings?.escalationSource) {
+                ScheduleSettings.ContentSource.TEMPLATE -> "Menyiapkan templat…"
+                ScheduleSettings.ContentSource.AUTOMATIC -> "Membuat draf otomatis…"
+                else -> "Mencari laporan Hadir…"
+            },
+            emptyMessage = when {
+                !session.usable -> "Login untuk melihat laporan."
+                !notificationsOn -> "Aktifkan notifikasi untuk melihat pratinjau."
+                else -> "Memuat pratinjau…"
             },
         )
 
@@ -508,10 +555,12 @@ internal fun HomeTab(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                ScheduleStatus(armedState, onCheck = { refreshArmed() })
+                ScheduleStatus(armedState, onCheck = { refreshArmed() }, checking = checkingArmed)
 
                 var confirmSkip by remember { mutableStateOf(false) }
-                if (settings?.masterEnabled == true && settings?.escalationEnabled == true && tonightSkipped) {
+                val hideTonightSkip = status?.today == TodayState.FILLED ||
+                    status?.today == TodayState.LIBUR || status?.today == TodayState.LEAVE
+                if (settings?.masterEnabled == true && settings?.escalationEnabled == true && !hideTonightSkip && tonightSkipped) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Text(
                         "Dijeda untuk malam ini.",
@@ -522,9 +571,13 @@ internal fun HomeTab(
                         scope.launch {
                             withContext(Dispatchers.IO) { appStore.clearTonightSkip() }
                             tonightSkipped = false
+                            if (settings?.masterEnabled == true) {
+                                withContext(Dispatchers.IO) { id.ohmymonev.android.schedule.GuardService.tryEnsure(context) }
+                            }
+                            refreshArmed()
                         }
                     }) { Text("Nyalakan lagi") }
-                } else if (settings?.masterEnabled == true && settings?.escalationEnabled == true) {
+                } else if (settings?.masterEnabled == true && settings?.escalationEnabled == true && !hideTonightSkip) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     TextButton(enabled = ready, onClick = loggedClick("HomeTab:436") { confirmSkip = true }) {
                         Text("Jeda malam ini", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -571,7 +624,7 @@ internal fun HomeTab(
                             scope.launch {
                                 withContext(Dispatchers.IO) { appStore.clearTodayDraft() }
                                 refresh()
-                                refreshPratinjau(true)
+                                refreshPratinjau(true, allowModelRun = false)
                             }
                         }) { Text("Hapus") }
                     },
@@ -635,7 +688,6 @@ internal fun HomeTab(
                             style = MaterialTheme.typography.bodySmall,
                         )
                         TextButton(
-                            enabled = locationGranted && backgroundLocationGranted,
                             onClick = loggedClick("HomeTab:520") {
                                 AlarmScheduler.scheduleLocationProbe(context)
                             },
@@ -652,13 +704,6 @@ internal fun HomeTab(
             }
         }
 
-        if (status?.sessionActive == false || session.signedOut) {
-            Text(
-                "Sesi belum aktif. Buka tab Sesi, login, lalu periksa lagi.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
         if (BuildConfig.DEBUG) {
             TextButton(
                 enabled = !exportingLog,
@@ -956,7 +1001,7 @@ private fun hasPermission(context: Context, permission: String): Boolean =
 
 
 @Composable
-internal fun ScheduleStatus(state: AlarmScheduler.ArmedState?, onCheck: () -> Unit) {
+internal fun ScheduleStatus(state: AlarmScheduler.ArmedState?, onCheck: () -> Unit, checking: Boolean = false) {
     Column(
         modifier = Modifier.fillMaxWidth().testTag("schedule-status"),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -978,6 +1023,8 @@ internal fun ScheduleStatus(state: AlarmScheduler.ArmedState?, onCheck: () -> Un
             )
         }
         state?.lastError?.let { Text(it, fontSize = 18.sp, lineHeight = 26.sp, color = MaterialTheme.colorScheme.error) }
-        TextButton(onClick = loggedClick("HomeTab:816", onCheck)) { Text("Periksa jadwal", fontSize = 18.sp) }
+        TextButton(enabled = !checking, onClick = loggedClick("HomeTab:816", onCheck)) {
+            Text(if (checking) "Memeriksa…" else "Periksa jadwal", fontSize = 18.sp)
+        }
     }
 }

@@ -48,7 +48,7 @@ internal class LocationResolver(
     private val ip: IpLocationSource = IpLocationClient(),
     private val network: LocationNetworkMonitor = AndroidLocationNetworkMonitor(context),
 ) {
-    private data class Flight(val result: kotlinx.coroutines.Deferred<LocationFix>, var waiters: Int)
+    private data class Flight(val timeoutMs: Long, val result: kotlinx.coroutines.Deferred<LocationFix>, var waiters: Int)
 
     private val mutex = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -81,11 +81,12 @@ internal class LocationResolver(
                         else it.fallbackReason == deviceReason)
                 }
             }?.let { return it }
-            flight?.also { it.waiters++ } ?: Flight(
+            flight?.takeIf { it.timeoutMs >= timeout }?.also { it.waiters++ } ?: Flight(
+                timeout,
                 scope.async(start = CoroutineStart.LAZY) { fetch(timeout) },
                 1,
             ).also { created ->
-                flight = created
+                if (flight == null || timeout > (flight?.timeoutMs ?: 0)) flight = created
                 created.result.start()
             }
         }
@@ -219,8 +220,8 @@ internal class LocationResolver(
     }
 
     private fun refreshNetwork() {
-        val current = network.activeNetwork()
         synchronized(networkLock) {
+            val current = network.activeNetwork()
             if (current != observedNetwork) {
                 observedNetwork = current
                 networkEpoch.incrementAndGet()

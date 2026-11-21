@@ -43,17 +43,23 @@ internal class SessionRepository(private val context: Context, private val vault
     private val refreshMutex = Mutex()
     private var refreshFlight: Pair<Long, Deferred<SessionRefresh>>? = null
     private val loaded = CompletableDeferred<Unit>()
-    private var token: String? = null
+    @Volatile private var token: String? = null
     private var rejectedToken: String? = null
     private val mutable = MutableStateFlow(SessionSnapshot(initializing = true))
     val state = mutable.asStateFlow()
 
     init {
         scope.launch {
-            token = vault.read()
-            mutable.value = SessionSnapshot(store.sessionStatus(), token != null, signedOut = vault.signedOut())
+            mutex.withLock {
+                token = vault.read()
+                mutable.value = SessionSnapshot(store.sessionStatus(), token != null, signedOut = vault.signedOut())
+            }
             loaded.complete(Unit)
         }
+    }
+
+    suspend fun awaitLoaded() {
+        loaded.await()
     }
 
     suspend fun credentials(): SessionCredentials? {
@@ -70,17 +76,26 @@ internal class SessionRepository(private val context: Context, private val vault
         loaded.await()
         mutex.withLock {
             val snapshot = mutable.value
-            if (value.isBlank() || value == token || value == rejectedToken ||
+            if (value.isBlank() || value == token || (!afterLogin && value == rejectedToken) ||
                 snapshot.version != expectedVersion || (snapshot.signedOut && !afterLogin)
             ) return@withLock false
+            val previousToken = token
             try { vault.save(value) } catch (_: Exception) {
                 mutable.value = mutable.value.copy(issue = "Login belum dapat disimpan. Coba Cek sesi kembali.")
                 return@withLock false
             }
             if (!preserveConfirmation) {
-                store.clearSessionStatus()
+                try {
+                    store.clearSessionStatus()
+                } catch (_: IOException) {
+                    if (previousToken != null) runCatching { vault.save(previousToken) }
+                    else runCatching { vault.clear(snapshot.signedOut) }
+                    mutable.value = mutable.value.copy(issue = "Login belum dapat disimpan. Coba Cek sesi kembali.")
+                    return@withLock false
+                }
                 id.ohmymonev.android.schedule.WorkDaysStore(context).clear()
             }
+            rejectedToken = null
             token = value
             mutable.value = SessionSnapshot(if (preserveConfirmation) mutable.value.record else null, hasToken = true, version = expectedVersion + 1)
             true
@@ -136,15 +151,17 @@ internal class SessionRepository(private val context: Context, private val vault
     }
 
     suspend fun confirm(access: SessionCredentials) = withContext(Dispatchers.IO) {
+        loaded.await()
         mutex.withLock {
             if (!matches(access)) return@withLock
             val record = SessionRecord(true, OffsetDateTime.now().toString())
-            store.saveSessionStatus(record)
+            try { store.saveSessionStatus(record) } catch (_: IOException) { return@withLock }
             mutable.value = mutable.value.copy(record = record, issue = null)
         }
     }
 
     suspend fun reject(expectedVersion: Long): Boolean = withContext(Dispatchers.IO) {
+        loaded.await()
         mutex.withLock {
             if (mutable.value.version != expectedVersion) return@withLock false
             invalidate(signedOut = false)
@@ -164,11 +181,20 @@ internal class SessionRepository(private val context: Context, private val vault
             mutable.value = snapshot.copy(issue = message)
             return
         }
-        vault.clear(signedOut)
-        rejectedToken = token
-        token = null
+        val previousToken = token
+        val previousRecord = snapshot.record
         val record = SessionRecord(false, OffsetDateTime.now().toString())
-        store.saveSessionStatus(record)
+        try {
+            vault.clear(signedOut)
+            store.saveSessionStatus(record)
+        } catch (_: IOException) {
+            if (previousToken != null) runCatching { vault.save(previousToken) }
+            if (previousRecord != null) runCatching { store.saveSessionStatus(previousRecord) }
+            mutable.value = snapshot.copy(issue = message)
+            return
+        }
+        rejectedToken = previousToken
+        token = null
         mutable.value = SessionSnapshot(record, issue = message, version = snapshot.version + 1, signedOut = signedOut)
     }
 
@@ -183,8 +209,12 @@ internal class SessionRepository(private val context: Context, private val vault
 
     companion object {
         @Volatile private var instance: SessionRepository? = null
-        fun get(context: Context): SessionRepository = instance ?: synchronized(this) {
-            instance ?: SessionRepository(context.applicationContext).also { instance = it }
+        fun get(context: Context): SessionRepository {
+            val app = context.applicationContext
+            return instance?.takeIf { it.context.applicationContext === app } ?: synchronized(this) {
+                instance?.takeIf { it.context.applicationContext === app }
+                    ?: SessionRepository(app).also { instance = it }
+            }
         }
     }
 }

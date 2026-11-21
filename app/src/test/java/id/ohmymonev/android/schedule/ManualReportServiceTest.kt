@@ -95,4 +95,22 @@ class ManualReportServiceTest {
         assertEquals(listOf(id.ohmymonev.core.enginecore.EngineOutcome.LOADING_TIMEOUT), outcomes)
     }
 
+    @Test fun manualStartWithoutPendingRequestEntersForegroundBeforeStopping() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val controller = Robolectric.buildService(AutoFillService::class.java).create()
+        try {
+            val result = controller.get().onStartCommand(
+                Intent(app, AutoFillService::class.java).setAction("id.ohmymonev.android.MANUAL_REPORT"),
+                0,
+                1,
+            )
+            assertEquals(android.app.Service.START_NOT_STICKY, result)
+            val shadow = Shadows.shadowOf(controller.get())
+            assertNotNull(shadow.lastForegroundNotification)
+            assertTrue(shadow.isStoppedBySelf)
+        } finally {
+            controller.destroy()
+        }
+    }
+
 }

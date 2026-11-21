@@ -39,7 +39,7 @@ class SiteStatusProbe(private val context: Context) {
         fun unavailable() = SiteStatus(if (api.failureState == SessionState.EXPIRED) false else null,
             TodayState.UNKNOWN, null, emptyList(), api.message)
         val profile = api.objectData("/users/me") ?: return unavailable()
-        val id = profile.optString("id")
+        val id = profile.optString("id").takeUnless { profile.isNull("id") }.orEmpty()
         if (id.isBlank()) { api.failed("Profil belum dapat dibaca."); return unavailable() }
         api.confirmActive()
         if (expectedAccount != null && expectedAccount != id) {
@@ -53,7 +53,7 @@ class SiteStatusProbe(private val context: Context) {
             return unavailable()
         }
         val encodedId = URLEncoder.encode(id, "UTF-8")
-        val attendances = api.arrayData("/attendances?participant_id=$encodedId&start_date=${today.withDayOfMonth(1)}&end_date=$today&limit=100")
+        val attendances = api.allPages("/attendances?participant_id=$encodedId&start_date=${today.withDayOfMonth(1)}&end_date=$today&limit=100")
         if (api.failureState == SessionState.EXPIRED) return unavailable()
         if (attendances == null) { api.failed("Kehadiran hari ini belum dapat dibaca."); return unavailable() }
         api.confirmActive()
@@ -68,17 +68,23 @@ class SiteStatusProbe(private val context: Context) {
             DayEntry(date.format(format), state)
         }
         val attendanceToday = (0 until attendances.length()).map { attendances.optJSONObject(it) }
-            .firstOrNull { row -> row != null && belongsTo(row, id) && rowDate(row) == today }?.optString("status")
+            .firstOrNull { row -> row != null && belongsTo(row, id) && rowDate(row) == today }
+            ?.let { row -> if (row.isNull("status")) "" else row.optString("status") }
         val reportStateToday = (0 until logs.length()).map { logs.optJSONObject(it) }
-            .firstOrNull { row -> row != null && belongsTo(row, id) && rowDate(row) == today }?.optString("state")
+            .firstOrNull { row -> row != null && belongsTo(row, id) && rowDate(row) == today }
+            ?.let { row -> if (row.isNull("state")) "" else row.optString("state") }
         if (date != null) {
             fun validRows(rows: org.json.JSONArray, validStates: Set<String>, field: String): Boolean =
                 (0 until rows.length()).all { index ->
                     val row = rows.optJSONObject(index) ?: return@all false
                     val rowDay = rowDate(row) ?: return@all false
-                    !belongsTo(row, id) || rowDay != date || row.optString(field) in validStates
+                    val value = if (row.isNull(field)) "" else row.optString(field)
+                    !belongsTo(row, id) || rowDay != date || value in validStates
                 }
-            if (attendances.length() > today.dayOfMonth || !api.isCurrent() ||
+            val participantAttendances = (0 until attendances.length()).count { index ->
+                attendances.optJSONObject(index)?.let { belongsTo(it, id) } == true
+            }
+            if (participantAttendances > today.dayOfMonth || !api.isCurrent() ||
                 !validRows(attendances, nonFillableAttendance + "PRESENT", "status") ||
                 !validRows(logs, PastReportReader.submittedStates + setOf("DRAFT", "NEEDS_REVISION"), "state")
             ) {

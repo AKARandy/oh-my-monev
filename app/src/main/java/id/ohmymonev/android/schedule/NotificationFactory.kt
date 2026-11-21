@@ -152,7 +152,7 @@ class NotificationFactory(private val context: Context) {
 
     private fun builder(channelId: String): NotificationCompat.Builder =
         NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(context.applicationInfo.icon)
+            .setSmallIcon(id.ohmymonev.android.R.drawable.ic_launcher_foreground)
             .setAutoCancel(true)
             .setContentIntent(launchApp())
 

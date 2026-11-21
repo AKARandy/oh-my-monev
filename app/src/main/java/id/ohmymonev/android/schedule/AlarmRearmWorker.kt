@@ -10,6 +10,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import id.ohmymonev.android.data.ActionLog
+import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.core.schedule.ScheduleSettings
 import kotlinx.coroutines.CancellationException
 import java.util.concurrent.TimeUnit
@@ -17,6 +18,7 @@ import java.util.concurrent.TimeUnit
 class AlarmRearmWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         ActionLog.record(applicationContext, "alarm.rearm.started", "attempt=${runAttemptCount + 1}")
+        SessionRepository.get(applicationContext).awaitLoaded()
         val result = when (runAlarmRearm(
             attempts = runAttemptCount,
             readSettings = { TimeSettingsStore(applicationContext).settingsOnce() },

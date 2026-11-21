@@ -36,7 +36,31 @@ class AutoFillService : Service() {
     private var probeEngine: id.ohmymonev.android.engine.WebViewEngine? = null
     private val deadlineHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val deadline = Runnable {
-        manualRequest?.let { manualFinished(it, "Batas waktu pengiriman. Cek ulang status laporan.") }
+        val currentManual = manualRequest
+        if (currentManual != null) {
+            manualFinished(currentManual, "Batas waktu pengiriman. Cek ulang status laporan.")
+        } else {
+            val dateIso = java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta).toString()
+            val record = id.ohmymonev.core.enginecore.RunRecord(
+                date = dateIso,
+                attemptedAtISO = java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(java.time.OffsetDateTime.now()),
+                outcome = id.ohmymonev.core.enginecore.EngineOutcome.LOADING_TIMEOUT,
+                attempt = 1,
+                detail = "Batas waktu layanan pengisian tercapai.",
+                trigger = "EMERGENCY",
+                lastStage = "service_timeout",
+                verification = "UNCONFIRMED",
+            )
+            runCatching { id.ohmymonev.android.data.AppStore(this).appendRecord(record) }
+            val factory = NotificationFactory(this)
+            factory.ensureChannels()
+            if (factory.canPostNotifications()) {
+                NotificationManagerCompat.from(this).notify(
+                    NotificationFactory.NOTIF_ID_ESCALATION,
+                    factory.escalation("Pengisian otomatis terhenti karena batas waktu."),
+                )
+            }
+        }
         stopSelf()
     }
 
@@ -46,40 +70,26 @@ class AutoFillService : Service() {
             if (request != null && manualRequest == null) manualFinished(request, "Pengisian sedang berjalan. Cek ulang status laporan.")
             return START_NOT_STICKY
         }
+        val factory = NotificationFactory(this)
+        factory.ensureChannels()
+        val notification: Notification = factory.autofillProgress()
         if (intent?.action == ACTION_MANUAL && request == null) {
+            runCatching { startAsForeground(factory, notification, includeLocation = false) }
             stopSelf()
             return START_NOT_STICKY
         }
         running = true
         deadlineHandler.postDelayed(deadline, 185_000)
         manualRequest = request
-        val factory = NotificationFactory(this)
-        factory.ensureChannels()
-        val notification: Notification = factory.autofillProgress()
         val bench = intent?.action == ACTION_BENCH
-        var nativeLocation = !bench && FeatureReadiness.read(this).location &&
+        val locationManager = getSystemService(android.location.LocationManager::class.java)
+        val wantNativeLocation = !bench && FeatureReadiness.read(this).location &&
             (request != null || id.ohmymonev.android.MainActivity.visible || FeatureReadiness.backgroundLocation(this)) &&
-            androidx.core.location.LocationManagerCompat.isLocationEnabled(getSystemService(android.location.LocationManager::class.java))
+            locationManager?.let { androidx.core.location.LocationManagerCompat.isLocationEnabled(it) } == true
         try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceCompat.startForeground(
-                this,
-                NotificationFactory.NOTIF_ID_AUTOFILL,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-            )
-            if (nativeLocation) {
-                try {
-                    ServiceCompat.startForeground(this, NotificationFactory.NOTIF_ID_AUTOFILL, notification,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-                } catch (_: SecurityException) { nativeLocation = false }
-            }
-        } else {
-            startForeground(NotificationFactory.NOTIF_ID_AUTOFILL, notification)
-        }
-        nativeLocationAllowed = nativeLocation
+            nativeLocationAllowed = startAsForeground(factory, notification, wantNativeLocation)
         } catch (_: RuntimeException) {
-            request?.let { manualFinished(it, "Pengiriman tidak dapat dimulai Periksa izin aplikasi") }
+            request?.let { manualFinished(it, "Pengiriman tidak dapat dimulai. Periksa izin aplikasi.") }
             id.ohmymonev.android.data.ActionLog.record(this, "service.start.failed", "foreground service start denied")
             stopSelf()
             return START_NOT_STICKY
@@ -144,6 +154,33 @@ class AutoFillService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun startAsForeground(factory: NotificationFactory, notification: Notification, includeLocation: Boolean): Boolean {
+        var nativeLocation = includeLocation
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceCompat.startForeground(
+                this,
+                NotificationFactory.NOTIF_ID_AUTOFILL,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
+            if (nativeLocation) {
+                try {
+                    ServiceCompat.startForeground(
+                        this,
+                        NotificationFactory.NOTIF_ID_AUTOFILL,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
+                    )
+                } catch (_: SecurityException) {
+                    nativeLocation = false
+                }
+            }
+        } else {
+            startForeground(NotificationFactory.NOTIF_ID_AUTOFILL, notification)
+        }
+        return nativeLocation
+    }
 
     companion object {
         @Volatile var nativeLocationAllowed: Boolean = false

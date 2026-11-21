@@ -33,8 +33,9 @@ object ScheduleCalculator {
         horizonDays: Int = 7,
     ): Map<String, ZonedDateTime> {
         require(horizonDays >= 0) { "horizonDays tidak boleh negatif" }
-        val start = now.toInstant()
-        val startDate = now.toLocalDate()
+        val jakartaNow = now.withZoneSameInstant(asiaJakarta)
+        val start = jakartaNow.toInstant()
+        val startDate = jakartaNow.toLocalDate()
         val times = mapOf(
             KEY_REMINDER to s.reminderTime,
             KEY_ESCALATION to s.escalationTime,

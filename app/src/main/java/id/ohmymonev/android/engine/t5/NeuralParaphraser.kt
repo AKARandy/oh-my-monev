@@ -3,6 +3,7 @@ package id.ohmymonev.android.engine.t5
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import id.ohmymonev.android.data.ModelStore
 import java.io.File
 import kotlinx.coroutines.*
 
@@ -20,7 +21,7 @@ interface NeuralParaphraser {
     }
 }
 
-/** Implementasi ONNX Runtime: T5 fp16 (encoder + decoder + decoder-with-past) dari folder model. */
+/** Implementasi ONNX Runtime: tiga graph T5 fp16 memakai satu weights.bin. */
 class OrtNeuralParaphraser private constructor(
     private val environment: OrtEnvironment,
     private val modelDir: File,
@@ -112,8 +113,7 @@ class OrtNeuralParaphraser private constructor(
     companion object {
         /** Null bila model belum diunduh. Pemanggil bertanggung jawab menutup instance. */
         fun createOrNull(modelDir: File): OrtNeuralParaphraser? {
-            val required = listOf("encoder_model.onnx", "decoder_model.onnx", "decoder_with_past_model.onnx", "tokenizer.json")
-            if (required.any { !File(modelDir, it).isFile }) return null
+            if (!ModelStore.isReady(modelDir)) return null
             val tokenizer = T5Tokenizer.fromJson(File(modelDir, "tokenizer.json").readText())
             return OrtNeuralParaphraser(
                 OrtEnvironment.getEnvironment(), modelDir, tokenizer,

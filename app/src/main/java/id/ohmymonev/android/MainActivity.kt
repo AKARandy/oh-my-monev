@@ -5,7 +5,6 @@ import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import androidx.activity.compose.setContent
-import androidx.compose.material3.MaterialTheme
 import id.ohmymonev.android.ui.AppRoot
 
 /** Host layar utama; seluruh UI ada di package ui (tab Beranda/Jadwal/Log). */
@@ -14,11 +13,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         (application as? OhMyMonevApp)?.ensureAutomationStarted(fromMainActivity = true)
         openReminderSite(intent)
-        setContent {
-            MaterialTheme {
-                AppRoot()
-            }
-        }
+        setContent { AppRoot() }
     }
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
         if (event.actionMasked == android.view.MotionEvent.ACTION_UP) {

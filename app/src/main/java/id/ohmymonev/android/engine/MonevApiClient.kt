@@ -69,6 +69,7 @@ internal class MonevApiClient(
         var page = 1
         var previous: String? = null
         while (true) {
+            if (page > MAX_PAGES) { failed("Halaman riwayat terlalu banyak."); return null }
             val body = get("$path&page=$page") ?: return null
             try {
                 val root = JSONTokener(body).nextValue()
@@ -129,6 +130,10 @@ internal class MonevApiClient(
             failed("Aplikasi belum dapat menghubungi situs. Status login terakhir tidak berubah.")
         } catch (_: JSONException) {
             failed("Situs mengirim data login yang tidak dikenali.")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: RuntimeException) {
+            failed("Situs belum dapat diperiksa. Coba lagi.")
         }
         return null
     }
@@ -172,5 +177,9 @@ internal class MonevApiClient(
     private suspend fun request(method: String, path: String, token: String?): ApiResponse {
         transport?.let { return it(method, path, token) }
         return MonevApiTransport.request(context, method, path, token)
+    }
+
+    private companion object {
+        const val MAX_PAGES = 50
     }
 }

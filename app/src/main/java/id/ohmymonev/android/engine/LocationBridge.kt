@@ -114,7 +114,8 @@ internal class LocationBridge(
               navigator.geolocation.getCurrentPosition=function(success,error,options){
                 if(typeof success!=='function') throw new TypeError('A location callback is required');
                 options=options||{};
-                var id=String(++sequence), timeout=options.timeout===undefined?30000:Math.max(0,Math.min(30000,Number(options.timeout)));
+                var rawTimeout=options.timeout==null?30000:Number(options.timeout);
+                var id=String(++sequence), timeout=isFinite(rawTimeout)?Math.max(0,Math.min(30000,rawTimeout)):30000;
                 var age=Math.max(0,Number(options.maximumAge)||0);
                 pending[id]={success:success,error:error,timer:setTimeout(function(){
                   var item=pending[id]; delete pending[id];

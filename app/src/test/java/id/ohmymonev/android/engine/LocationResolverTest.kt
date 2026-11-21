@@ -197,6 +197,29 @@ class LocationResolverTest {
         resolver.close()
     }
 
+    @Test fun shortTimeoutCallerDoesNotAbortLongerConcurrentLookup() = runBlocking {
+        Shadows.shadowOf(app).denyPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        val firstStarted = CompletableDeferred<Unit>()
+        val firstGate = CompletableDeferred<Unit>()
+        val calls = AtomicInteger()
+        val resolver = resolver(ip = FakeIp {
+            if (calls.incrementAndGet() == 1) {
+                firstStarted.complete(Unit)
+                firstGate.await()
+            }
+            IpCoordinates(-6.2, 106.8)
+        })
+        val shortCaller = async { runCatching { resolver.resolve(0, 100) } }
+        firstStarted.await()
+        val longCaller = async { resolver.resolve(0, 5_000) }
+        delay(20)
+        assertTrue(shortCaller.await().isFailure)
+        firstGate.complete(Unit)
+        val fix = longCaller.await()
+        assertEquals(-6.2, fix.latitude, 0.0)
+        resolver.close()
+    }
+
     private fun resolver(
         device: NativeLocationSource = FakeDevice { error("device should be skipped") },
         ip: IpLocationSource = FakeIp(),

@@ -9,8 +9,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.schedule.FeatureReadiness
 
@@ -27,15 +28,21 @@ class OhMyMonevApp : Application() {
         if (automationStarted || !ProcessIdentity.isMain(ProcessIdentity.current(this), packageName, fromMainActivity)) return
         synchronized(this) {
             if (automationStarted || !ProcessIdentity.isMain(ProcessIdentity.current(this), packageName, fromMainActivity)) return
-            WorkManager.initialize(this, Configuration.Builder().build())
+            if (!WorkManager.isInitialized()) {
+                WorkManager.initialize(this, Configuration.Builder().build())
+            }
             if (BuildConfig.DEBUG) id.ohmymonev.android.diagnostics.StallWatchdog.start(this)
             id.ohmymonev.android.data.ActionLog.record(this, "process.start")
             AutoFillDelegateProvider.delegate = EngineAutoFillDelegate(applicationContext)
             CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
-                SessionRepository.get(applicationContext).state.map { it.usable }.distinctUntilChanged().collect {
-                    id.ohmymonev.android.data.ActionLog.record(applicationContext, "session.readiness", "usable=$it")
-                    FeatureReadiness.rearm(applicationContext)
-                }
+                SessionRepository.get(applicationContext).state
+                    .filter { !it.initializing }
+                    .map { it.usable }
+                    .distinctUntilChanged()
+                    .collect {
+                        id.ohmymonev.android.data.ActionLog.record(applicationContext, "session.readiness", "usable=$it")
+                        FeatureReadiness.rearm(applicationContext)
+                    }
             }
             automationStarted = true
         }

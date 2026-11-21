@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -27,6 +28,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -40,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +57,7 @@ import androidx.compose.material.icons.filled.Check
 import id.ohmymonev.android.data.AppStore
 import id.ohmymonev.android.BuildConfig
 import id.ohmymonev.android.data.ModelStore
+import id.ohmymonev.android.data.ModelTransferController
 import id.ohmymonev.android.data.SessionRepository
 import id.ohmymonev.android.schedule.FeatureReadiness
 import androidx.compose.runtime.collectAsState
@@ -101,7 +105,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val saveMutex = remember { Mutex() }
 
-    var loaded by remember { mutableStateOf<ScheduleSettings?>(null) }
+    val currentState by store.settings.collectAsState(initial = null)
     var workingDays by remember { mutableStateOf<Set<java.time.DayOfWeek>?>(null) }
     var editing by remember { mutableStateOf<AlarmId?>(null) }
     var editingTemplate by remember { mutableStateOf(false) }
@@ -127,25 +131,30 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
     var confirmDownload by remember { mutableStateOf(false) }
     var confirmModelDelete by remember { mutableStateOf(false) }
     var modelReady by remember { mutableStateOf(false) }
-    var modelProgress by remember { mutableStateOf<Int?>(null) }
-    var modelBusy by remember { mutableStateOf(false) }
-    var modelDeleteError by remember { mutableStateOf<String?>(null) }
-    var modelError by remember { mutableStateOf<String?>(null) }
+    val transfer by ModelTransferController.state.collectAsState()
+    val modelProgress = transfer.progress
+    val modelBusy = transfer.busy
+    val modelDeleteError = transfer.deleteError
+    val modelError = transfer.error
     // Draf editor: hanya ditulis ke penyimpanan saat Simpan ditekan.
     var pendingSubmit by remember { mutableStateOf<(() -> Unit)?>(null) }
     var pendingAuto by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var pendingAutoAndSubmit by remember { mutableStateOf<(() -> Unit)?>(null) }
     var confirmMasterOff by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         template = withContext(Dispatchers.IO) { appStore.template() }
         modelReady = withContext(Dispatchers.IO) { ModelStore(context).present() }
-        loaded = store.settingsOnce()
+    }
+
+    LaunchedEffect(transfer.busy) {
+        modelReady = withContext(Dispatchers.IO) { ModelStore(context).present() }
     }
 
     LaunchedEffect(session.version, session.record) {
         workingDays = withContext(Dispatchers.IO) { id.ohmymonev.android.schedule.WorkDaysStore(context).days() }
     }
-    val current = loaded
+    val current = currentState
     if (current == null) {
         Column(
             modifier = modifier.fillMaxSize().padding(20.dp),
@@ -162,13 +171,13 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
         scope.launch {
             saveMutex.withLock {
                 if (!FeatureReadiness.read(context).ready) return@withLock
-                val settings = update(loaded ?: return@withLock)
-                if (settings == loaded) return@withLock
+                val latest = store.settingsOnce()
+                val settings = update(latest)
+                if (settings == latest) return@withLock
                 store.save(settings)
-                loaded = settings
                 withContext(Dispatchers.IO) {
                     AlarmScheduler.armAll(context, settings)
-                    if (settings.masterEnabled) GuardService.ensure(context) else GuardService.stop(context)
+                    if (settings.masterEnabled) GuardService.tryEnsure(context) else GuardService.stop(context)
                 }
                 Toast.makeText(context, "Tersimpan", Toast.LENGTH_SHORT).show()
             }
@@ -196,6 +205,29 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
+        }
+
+        if (modelProgress != null) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().testTag("model-download-progress"),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        if (modelProgress == 100) "Memeriksa model…" else "Mengunduh model IndoT5… $modelProgress%",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    LinearProgressIndicator(
+                        progress = { modelProgress.coerceIn(0, 100) / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TextButton(onClick = loggedClick("ScheduleTab:cancelDownload") {
+                        ModelTransferController.cancelDownload()
+                    }) { Text("Batalkan") }
+                }
+            }
         }
 
         Surface(
@@ -231,6 +263,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             enabled = current.reminderEnabled,
             controlsEnabled = ready && current.masterEnabled && !modelBusy,
             effective = ready && current.reminderEnabled && current.masterEnabled,
+            paused = !ready && current.masterEnabled && current.reminderEnabled,
             detail = "Memeriksa status laporan.",
             actionLabel = "Suara dan getar",
             onAction = {
@@ -249,6 +282,7 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                 enabled = current.escalationEnabled,
                 controlsEnabled = ready && current.masterEnabled && !modelBusy,
                 effective = ready && current.escalationEnabled && current.masterEnabled,
+                paused = !ready && current.masterEnabled && current.escalationEnabled,
                 detail = when (current.escalationSource) {
                     ScheduleSettings.ContentSource.TEMPLATE ->
                         "Terpicu pada jam terjadwal bila laporan belum terkirim. Isian memakai templat Anda."
@@ -318,7 +352,9 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
             autoReady = modelReady && modelProgress == null,
             modelProgress = modelProgress,
             modelError = modelError,
+            profileDays = workingDays,
             onDownloadModel = { confirmDownload = true },
+            onCancelDownload = { ModelTransferController.cancelDownload() },
             onDismiss = { editing = null },
             onSave = { time, enabled, days, source ->
                 val persist: () -> Unit = {
@@ -331,6 +367,9 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
                     editing = null
                 }
                 when {
+                    which == AlarmId.ESCALATION && source == ScheduleSettings.ContentSource.AUTOMATIC &&
+                        current.escalationSource != ScheduleSettings.ContentSource.AUTOMATIC &&
+                        enabled && !current.escalationEnabled -> pendingAutoAndSubmit = persist
                     // Ganti ke otomatis: dialog peringatannya sudah mencakup persetujuan kirim.
                     which == AlarmId.ESCALATION && source == ScheduleSettings.ContentSource.AUTOMATIC &&
                         current.escalationSource != ScheduleSettings.ContentSource.AUTOMATIC -> pendingAuto = persist
@@ -343,61 +382,43 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
 
     if (ready && confirmDownload) {
         ModelActionDialog(delete = false, onDismiss = { confirmDownload = false }, onConfirm = {
-                confirmDownload = false
-                if (!modelBusy && FeatureReadiness.read(context).ready) {
-                    modelBusy = true
-                    modelError = null
-                    modelProgress = 0
-                    scope.launch {
-                        try {
-                            ModelStore(context).download { percent ->
-                                withContext(Dispatchers.Main) { modelProgress = percent }
-                            }
-                            modelReady = true
-                            Toast.makeText(context, "Model terunduh", Toast.LENGTH_SHORT).show()
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            modelError = e.message ?: "Unduhan gagal. Coba lagi."
-                        } finally {
-                            modelBusy = false
-                            modelProgress = null
-                        }
-                    }
+            confirmDownload = false
+            ModelTransferController.startDownload(context) { succeeded ->
+                if (succeeded) {
+                    Toast.makeText(context, "Model terunduh", Toast.LENGTH_SHORT).show()
                 }
-            })
+            }
+        })
     }
 
     if (ready && confirmModelDelete) {
         ModelActionDialog(delete = true, onDismiss = { confirmModelDelete = false }, onConfirm = {
             confirmModelDelete = false
-            if (!modelBusy && FeatureReadiness.read(context).ready) {
-                modelBusy = true
-                modelDeleteError = null
-                scope.launch {
-                    try {
-                        PreparedReportService(context).deleteAutomaticModel {
-                            saveMutex.withLock {
-                                val latest = store.settingsOnce()
-                                if (latest.escalationSource == ScheduleSettings.ContentSource.AUTOMATIC) {
-                                    val disabled = latest.copy(escalationEnabled = false)
-                                    store.save(disabled)
-                                    loaded = disabled
-                                    withContext(Dispatchers.IO) { AlarmScheduler.armAll(context, disabled) }
-                                }
-                            }
-                        }
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        modelDeleteError = e.message ?: "Model tidak dapat dihapus."
-                    } finally {
-                        modelReady = withContext(Dispatchers.IO) { ModelStore(context).present() }
-                        modelBusy = false
-                    }
-                }
+            ModelTransferController.startDelete(context, saveMutex) { present, _ ->
+                modelReady = present
             }
         })
+    }
+
+    if (ready && pendingAutoAndSubmit != null) {
+        AlertDialog(
+            onDismissRequest = { pendingAutoAndSubmit = null },
+            title = { Text("Pakai otomatis dan nyalakan kirim otomatis?") },
+            text = {
+                Text(
+                    "Sistem melanjutkan laporan hari kerja sebelumnya. Aplikasi mengisi formulir, mencentang kotak pernyataan, lalu mengirim laporan ke situs. Periksa pratinjau di Beranda sebelum mengaktifkan.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = loggedClick("ScheduleTab:autoAndSubmit") {
+                    pendingAutoAndSubmit?.invoke()
+                    pendingAutoAndSubmit = null
+                }) { Text("Paham, nyalakan") }
+            },
+            dismissButton = {
+                TextButton(onClick = loggedClick("ScheduleTab:autoAndSubmitDismiss") { pendingAutoAndSubmit = null }) { Text("Batal") }
+            },
+        )
     }
 
     if (ready && pendingAuto != null) {
@@ -467,7 +488,9 @@ fun ScheduleTab(modifier: Modifier = Modifier) {
     if (ready && editingTemplate) {
         TemplateEditor(
             current = template,
-            clearBlocked = current.escalationSource == ScheduleSettings.ContentSource.TEMPLATE,
+            clearBlocked = BuildConfig.DEBUG &&
+                current.escalationEnabled &&
+                current.escalationSource == ScheduleSettings.ContentSource.TEMPLATE,
             onDismiss = { editingTemplate = false },
             onSave = { saved ->
                 scope.launch {
@@ -499,19 +522,31 @@ internal fun AlarmEditor(
     autoReady: Boolean = true,
     modelProgress: Int? = null,
     modelError: String? = null,
+    profileDays: Set<DayOfWeek>? = null,
     onDownloadModel: (() -> Unit)? = null,
+    onCancelDownload: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onSave: (LocalTime, Boolean, Set<DayOfWeek>, ScheduleSettings.ContentSource) -> Unit,
 ) {
-    var enabled by remember { mutableStateOf(initialEnabled) }
-    var days by remember { mutableStateOf(initialDays) }
-    var source by remember { mutableStateOf(initialSource ?: ScheduleSettings.ContentSource.TEMPLATE) }
-    val profileDays = id.ohmymonev.android.schedule.WorkDaysStore(LocalContext.current).days()
+    var enabled by remember(title, initialTime, initialEnabled, initialDays, initialSource) { mutableStateOf(initialEnabled) }
+    var days by remember(title, initialTime, initialEnabled, initialDays, initialSource) { mutableStateOf(initialDays) }
+    var source by remember(title, initialTime, initialEnabled, initialDays, initialSource) {
+        mutableStateOf(initialSource ?: ScheduleSettings.ContentSource.TEMPLATE)
+    }
+    val context = LocalContext.current
+    val resolvedProfileDays = profileDays ?: remember(context) {
+        id.ohmymonev.android.schedule.WorkDaysStore(context).days()
+    }
     val editorScrollState = rememberScrollState()
-    var hour by remember { mutableStateOf(initialTime.hour.toString().padStart(2, '0')) }
-    var minute by remember { mutableStateOf(initialTime.minute.toString().padStart(2, '0')) }
+    var hour by remember(title, initialTime, initialEnabled, initialDays, initialSource) {
+        mutableStateOf(initialTime.hour.toString().padStart(2, '0'))
+    }
+    var minute by remember(title, initialTime, initialEnabled, initialDays, initialSource) {
+        mutableStateOf(initialTime.minute.toString().padStart(2, '0'))
+    }
     val editorView = androidx.compose.ui.platform.LocalView.current
     val selectedTime = parseTimeParts(hour, minute)
+    val effectiveDays = resolvedProfileDays?.let { days intersect it } ?: days
     val templateBlocked = initialSource != null &&
         source == ScheduleSettings.ContentSource.TEMPLATE && !templateReady
     val autoBlocked = initialSource != null &&
@@ -528,9 +563,22 @@ internal fun AlarmEditor(
             ) {
                 Text("Jam (WIB, 24 jam)", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
                 TimeWheels(hour, minute, { hour = it }, { minute = it })
+                if (selectedTime == null) {
+                    Text(
+                        "Masukkan jam 00–23 dan menit 00–59.",
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 Text("Hari untuk fitur ini", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                DayChipsRow(days, profileDays) { day -> days = if (day in days) days - day else days + day }
-                if (days.isEmpty()) Text("Pilih minimal satu hari.", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
+                DayChipsRow(days, resolvedProfileDays) { day -> days = if (day in days) days - day else days + day }
+                if (effectiveDays.isEmpty()) {
+                    Text(
+                        if (days.isEmpty()) "Pilih minimal satu hari." else "Semua hari yang dipilih sedang libur. Pilih hari kerja.",
+                        fontSize = 18.sp,
+                        color = if (days.isEmpty()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
+                    )
+                }
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Aktifkan fitur ini", modifier = Modifier.weight(1f), fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface)
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
@@ -567,18 +615,25 @@ internal fun AlarmEditor(
                     if (source == ScheduleSettings.ContentSource.AUTOMATIC && !autoReady) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Text(
-                            "Ukuran unduhan model: 845 MB.",
+                            "Ukuran unduhan model: ${ModelStore.DOWNLOAD_SIZE_MB} MB.",
                             fontSize = 18.sp,
                             lineHeight = 26.sp,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         when {
-                            modelProgress != null -> Text(
-                                if (modelProgress == 100) "Memeriksa model…" else "Mengunduh… $modelProgress%",
-                                fontSize = 18.sp,
-                                lineHeight = 26.sp,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
+                            modelProgress != null -> {
+                                Text(
+                                    if (modelProgress == 100) "Memeriksa model…" else "Mengunduh… $modelProgress%",
+                                    fontSize = 18.sp,
+                                    lineHeight = 26.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                if (onCancelDownload != null) {
+                                    TextButton(onClick = loggedClick("ScheduleTab:cancelEditorDownload", onCancelDownload)) {
+                                        Text("Batalkan", fontSize = 18.sp)
+                                    }
+                                }
+                            }
                             onDownloadModel != null -> Button(
                                 onClick = loggedClick("ScheduleTab:578", onDownloadModel),
                                 modifier = Modifier.fillMaxWidth().testTag("download-model"),
@@ -593,7 +648,7 @@ internal fun AlarmEditor(
         },
         confirmButton = {
             Button(
-                enabled = days.isNotEmpty() && selectedTime != null && !templateBlocked && !autoBlocked,
+                enabled = effectiveDays.isNotEmpty() && selectedTime != null && !templateBlocked && !autoBlocked,
                 onClick = loggedClick("ScheduleTab:592") { editorView.clearFocus(); parseTimeParts(hour, minute)?.let { onSave(it, enabled, days, source) } },
             ) { Text("Simpan", fontSize = 18.sp) }
         },
@@ -644,9 +699,15 @@ internal fun TemplateEditor(
     onSave: (ReportTemplate) -> Unit,
     onClear: () -> Unit,
 ) {
-    var aktivitas by remember(current) { mutableStateOf(current?.aktivitas ?: "") }
-    var pelajaran by remember(current) { mutableStateOf(current?.pelajaran ?: "") }
-    var kendala by remember(current) { mutableStateOf(current?.kendala ?: "") }
+    var aktivitas by rememberSaveable(current) { mutableStateOf(current?.aktivitas ?: "") }
+    var pelajaran by rememberSaveable(current) { mutableStateOf(current?.pelajaran ?: "") }
+    var kendala by rememberSaveable(current) { mutableStateOf(current?.kendala ?: "") }
+    var confirmClear by remember { mutableStateOf(false) }
+    var confirmDiscard by remember { mutableStateOf(false) }
+    val dirty = aktivitas != (current?.aktivitas ?: "") ||
+        pelajaran != (current?.pelajaran ?: "") ||
+        kendala != (current?.kendala ?: "")
+    val allBlank = aktivitas.isBlank() && pelajaran.isBlank() && kendala.isBlank()
     val issues = remember(aktivitas, pelajaran, kendala) {
         templateIssues(aktivitas, pelajaran, kendala)
     }
@@ -654,7 +715,7 @@ internal fun TemplateEditor(
     AlertDialog(
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).windowInsetsPadding(WindowInsets.safeDrawing),
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (dirty) confirmDiscard = true else onDismiss() },
         title = { Text("Templat laporan") },
         text = {
             Column(
@@ -669,7 +730,7 @@ internal fun TemplateEditor(
                 EditorField("Aktivitas", "Uraian aktivitas minimal 100 karakter", aktivitas) { aktivitas = it }
                 EditorField("Pelajaran", "Ilmu yang diperoleh minimal 100 karakter", pelajaran) { pelajaran = it }
                 EditorField("Kendala", "Kendala yang dialami minimal 100 karakter", kendala) { kendala = it }
-                if (issues.isNotEmpty()) {
+                if (!allBlank && issues.isNotEmpty()) {
                     Surface(
                         color = MaterialTheme.colorScheme.errorContainer,
                         shape = RoundedCornerShape(12.dp),
@@ -700,12 +761,46 @@ internal fun TemplateEditor(
         dismissButton = {
             Row {
                 if (current != null && !clearBlocked) {
-                    TextButton(onClick = loggedClick("ScheduleTab:698", onClear)) { Text("Hapus", fontSize = 16.sp) }
+                    TextButton(onClick = loggedClick("ScheduleTab:698") { confirmClear = true }) { Text("Hapus", fontSize = 16.sp) }
                 }
-                TextButton(onClick = loggedClick("ScheduleTab:700", onDismiss)) { Text("Batal", fontSize = 16.sp) }
+                TextButton(onClick = loggedClick("ScheduleTab:700") {
+                    if (dirty) confirmDiscard = true else onDismiss()
+                }) { Text("Batal", fontSize = 16.sp) }
             }
         },
     )
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Hapus templat laporan?") },
+            text = { Text("Templat yang tersimpan akan dihapus dari perangkat.") },
+            confirmButton = {
+                TextButton(onClick = loggedClick("ScheduleTab:confirmClear") {
+                    confirmClear = false
+                    onClear()
+                }) { Text("Hapus") }
+            },
+            dismissButton = {
+                TextButton(onClick = loggedClick("ScheduleTab:cancelClear") { confirmClear = false }) { Text("Batal") }
+            },
+        )
+    }
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("Buang perubahan?") },
+            text = { Text("Perubahan templat yang belum disimpan akan hilang.") },
+            confirmButton = {
+                TextButton(onClick = loggedClick("ScheduleTab:confirmDiscard") {
+                    confirmDiscard = false
+                    onDismiss()
+                }) { Text("Buang") }
+            },
+            dismissButton = {
+                TextButton(onClick = loggedClick("ScheduleTab:cancelDiscard") { confirmDiscard = false }) { Text("Lanjut menulis") }
+            },
+        )
+    }
 }
 
 /** Keep the purpose and instructions as prominent as the scheduled time. */
@@ -717,6 +812,7 @@ private fun AlarmCard(
     enabled: Boolean,
     effective: Boolean,
     controlsEnabled: Boolean,
+    paused: Boolean = false,
     detail: String,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
@@ -771,7 +867,11 @@ private fun AlarmCard(
             )
             if (!effective) {
                 Text(
-                    if (enabled) "Semua fitur nonaktif." else "Fitur ini nonaktif.",
+                    when {
+                        paused -> "Jadwal dijeda."
+                        enabled -> "Semua fitur nonaktif."
+                        else -> "Fitur ini nonaktif."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = textColor,
                 )
@@ -812,12 +912,14 @@ private fun DayChipsRow(
     ) {
         for (day in DayOfWeek.entries) {
             val on = day in selected
+            val dayEnabled = allowed == null || day in allowed
+            val checked = on && dayEnabled
             FilterChip(
-                enabled = allowed == null || day in allowed,
-                selected = on,
+                enabled = dayEnabled,
+                selected = checked,
                 onClick = loggedClick("ScheduleTab:813") { onToggle(day) },
                 leadingIcon = {
-                    if (on) {
+                    if (checked) {
                         Icon(
                             Icons.Filled.Check,
                             contentDescription = null,
@@ -836,7 +938,7 @@ private fun DayChipsRow(
                 ),
                 border = BorderStroke(
                     1.dp,
-                    if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                    if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                 ),
                 label = { Text(DAY_SHORT[day] ?: "", fontSize = 18.sp) },
             )
@@ -847,8 +949,9 @@ private fun DayChipsRow(
 /** Pilihan sumber bersifat radio: satu yang terpilih, wajib memilih satu. */
 @Composable
 private fun SourceOption(label: String, selected: Boolean, enabled: Boolean = true, onSelect: () -> Unit) {
+    val labelColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     Row(
-        modifier = Modifier.fillMaxWidth().selectable(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(
             selected = selected,
             role = Role.RadioButton,
             enabled = enabled,
@@ -857,7 +960,7 @@ private fun SourceOption(label: String, selected: Boolean, enabled: Boolean = tr
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected = selected, onClick = null, enabled = enabled)
-        Text(label, modifier = Modifier.padding(start = 8.dp).weight(1f), fontSize = 20.sp, lineHeight = 28.sp, color = MaterialTheme.colorScheme.onSurface)
+        Text(label, modifier = Modifier.padding(start = 8.dp).weight(1f), fontSize = 20.sp, lineHeight = 28.sp, color = labelColor)
     }
 }
 
@@ -869,7 +972,7 @@ internal fun ModelActionDialog(delete: Boolean, onDismiss: () -> Unit, onConfirm
         title = { Text(if (delete) "Hapus model IndoT5?" else "Unduh model IndoT5?") },
         text = {
             Text(if (delete) "Aplikasi menghapus model dan sisa unduhan. Jika sumbernya Otomatis, Pengisian darurat dimatikan."
-                else "Aplikasi akan mengunduh IndoT5 FP16 (845 MB) dari GitHub. Model ini membantu menulis ulang kalimat aktivitas dari laporan sebelumnya. Aplikasi menjalankan model di ponsel. Model dapat mengubah makna. Periksa draf sebelum mengirim.")
+                else "Unduh IndoT5 FP16 (${ModelStore.DOWNLOAD_SIZE_MB} MB) dari GitHub. Model menulis ulang kalimat aktivitas di ponsel. Makna dapat berubah. Periksa draf sebelum mengirim.")
         },
         confirmButton = { TextButton(onClick = loggedClick("ScheduleTab:869", onConfirm)) { Text(if (delete) "Hapus" else "Unduh") } },
         dismissButton = { TextButton(onClick = loggedClick("ScheduleTab:870", onDismiss)) { Text("Batal") } },

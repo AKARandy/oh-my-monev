@@ -49,4 +49,30 @@ class T5TokenizerTest {
         val ids = t.encode(sentence)
         assertTrue(t.decode(ids).endsWith(sentence))
     }
+
+    @Test fun `utf8 byte fallback preserves non-ascii punctuation and ascii fallback never emits pad`() {
+        val vocabEntries = org.json.JSONArray()
+            .put(org.json.JSONArray().put("<pad>").put(0.0))
+            .put(org.json.JSONArray().put("</s>").put(0.0))
+            .put(org.json.JSONArray().put("▁").put(-1.0))
+            .put(org.json.JSONArray().put("a").put(-1.0))
+            .put(org.json.JSONArray().put("b").put(-1.0))
+        for (b in 0..255) {
+            val hex = "<0x" + b.toString(16).uppercase().padStart(2, '0') + ">"
+            vocabEntries.put(org.json.JSONArray().put(hex).put(-10.0))
+        }
+        val added = org.json.JSONArray()
+            .put(org.json.JSONObject().put("id", 0).put("content", "<pad>"))
+            .put(org.json.JSONObject().put("id", 1).put("content", "</s>"))
+        val json = org.json.JSONObject()
+            .put("added_tokens", added)
+            .put("model", org.json.JSONObject().put("vocab", vocabEntries))
+            .toString()
+        val synthetic = T5Tokenizer.fromJson(json)
+        val input = "a—b “c” •"
+        val ids = synthetic.encode(input)
+        assertTrue(ids.size > 5)
+        assertTrue(ids.dropLast(1).none { it == 0 })
+        assertEquals(input, synthetic.decode(ids))
+    }
 }

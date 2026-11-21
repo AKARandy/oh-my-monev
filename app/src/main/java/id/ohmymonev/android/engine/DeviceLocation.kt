@@ -38,12 +38,22 @@ internal class DeviceLocation(private val context: Context) : NativeLocationSour
         val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
             .filter { service.isProviderEnabled(it) }
         if (providers.isEmpty()) throw LocationFailure("unavailable", 2, "Lokasi tidak tersedia.")
+        val listenerLock = Any()
         val listeners = mutableListOf<LocationListenerCompat>()
+        var cancelled = false
+        fun removeAllListeners() {
+            val snapshot = synchronized(listenerLock) {
+                cancelled = true
+                listeners.toList().also { listeners.clear() }
+            }
+            snapshot.forEach { service.removeUpdates(it) }
+        }
         val started = SystemClock.elapsedRealtimeNanos()
         try {
             val location = withTimeoutOrNull(timeoutMs.coerceIn(1, 30_000)) {
                 suspendCancellableCoroutine<Location?> { continuation ->
-                    continuation.invokeOnCancellation { listeners.forEach { service.removeUpdates(it) } }
+                    continuation.invokeOnCancellation { removeAllListeners() }
+                    var registered = 0
                     providers.forEach { provider ->
                         if (!continuation.isActive) return@forEach
                         val listener = object : LocationListenerCompat {
@@ -52,10 +62,24 @@ internal class DeviceLocation(private val context: Context) : NativeLocationSour
                                     continuation.resume(fix)
                             }
                         }
-                        listeners += listener
-                        LocationManagerCompat.requestLocationUpdates(service, provider,
-                            LocationRequestCompat.Builder(0).setQuality(LocationRequestCompat.QUALITY_HIGH_ACCURACY).build(),
-                            ContextCompat.getMainExecutor(context), listener)
+                        val added = synchronized(listenerLock) {
+                            if (cancelled) false else {
+                                listeners += listener
+                                true
+                            }
+                        }
+                        if (!added) return@forEach
+                        try {
+                            LocationManagerCompat.requestLocationUpdates(service, provider,
+                                LocationRequestCompat.Builder(0).setQuality(LocationRequestCompat.QUALITY_HIGH_ACCURACY).build(),
+                                ContextCompat.getMainExecutor(context), listener)
+                            registered++
+                        } catch (_: IllegalArgumentException) {
+                            synchronized(listenerLock) { listeners.remove(listener) }
+                        }
+                    }
+                    if (registered == 0 && continuation.isActive) {
+                        continuation.resume(null)
                     }
                 }
             } ?: throw LocationFailure("timeout", 3, "Lokasi belum ditemukan. Coba lagi.")
@@ -65,7 +89,7 @@ internal class DeviceLocation(private val context: Context) : NativeLocationSour
             throw LocationFailure("permission", 1, "Izinkan lokasi akurat.")
         } catch (_: IllegalArgumentException) {
             throw LocationFailure("unavailable", 2, "Lokasi tidak tersedia.")
-        } finally { listeners.forEach { service.removeUpdates(it) } }
+        } finally { removeAllListeners() }
     }
 
     override suspend fun current(timeoutMs: Long): Location = current(0, timeoutMs)

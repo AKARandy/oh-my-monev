@@ -115,4 +115,35 @@ class SiteProfileTest {
         val fallback = SiteProfileLoader.load("")
         assertFalse(fallback === default)
     }
+
+    @Test
+    fun `url helpers normalize extra slashes`() {
+        val trailing = default.copy(
+            urls = default.urls.copy(
+                baseUrl = "https://monev.maganghub.kemnaker.go.id/",
+                dashboardPath = "dashboard",
+                riwayatPath = "/dashboard/riwayat",
+            ),
+        )
+        assertEquals("https://monev.maganghub.kemnaker.go.id/dashboard", trailing.dashboardUrl())
+        assertEquals("https://monev.maganghub.kemnaker.go.id/dashboard/riwayat", trailing.riwayatUrl())
+        assertEquals(
+            "https://monev.maganghub.kemnaker.go.id/dashboard/riwayat?date=2026-11-06&view=edit",
+            trailing.riwayatEditUrl("2026-11-06"),
+        )
+    }
+
+    @Test
+    fun `loader falls back when markers or timings are invalid`() {
+        val blankLocationOk = DEFAULT_SITE_PROFILE_JSON.replace("\"locationOkText\":\"Lokasi berhasil diakses\"", "\"locationOkText\":\"\"")
+        assertTrue(SiteProfileLoader.load(blankLocationOk).modified)
+        val blankSuccess = DEFAULT_SITE_PROFILE_JSON.replace("\"submissionSuccessText\":\"berhasil dikirim\"", "\"submissionSuccessText\":\" \"")
+        assertTrue(SiteProfileLoader.load(blankSuccess).modified)
+        val blankTab = DEFAULT_SITE_PROFILE_JSON.replace("\"Beranda\"", "\"\"")
+        assertTrue(SiteProfileLoader.load(blankTab).modified)
+        val badPoll = DEFAULT_SITE_PROFILE_JSON.replace("\"pollIntervalMs\":250", "\"pollIntervalMs\":0")
+        assertTrue(SiteProfileLoader.load(badPoll).modified)
+        val missingDatePlaceholder = DEFAULT_SITE_PROFILE_JSON.replace("/dashboard/riwayat?date={date}&view=edit", "/dashboard/riwayat")
+        assertTrue(SiteProfileLoader.load(missingDatePlaceholder).modified)
+    }
 }

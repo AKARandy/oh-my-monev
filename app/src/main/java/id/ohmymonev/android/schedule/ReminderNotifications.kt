@@ -49,13 +49,12 @@ internal class ReminderNotifications(private val context: Context) {
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             .putExtra("reminder_site", key), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val builder = NotificationCompat.Builder(context, channel.id)
-            .setSmallIcon(context.applicationInfo.icon)
+            .setSmallIcon(id.ohmymonev.android.R.drawable.ic_launcher_foreground)
             .setContentTitle(title).setContentText(detail)
             .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
             .setContentIntent(open).setAutoCancel(!alarm).setOngoing(alarm)
         if (alarm) {
             builder.setCategory(NotificationCompat.CATEGORY_ALARM)
-                .setTimeoutAfter(300_000)
                 .addAction(0, "Hentikan", action(key, "stop"))
                 .addAction(0, "Tunda 10 menit", action(key, "snooze"))
                 .addAction(0, "Buka situs", open)
@@ -74,7 +73,7 @@ internal class ReminderNotifications(private val context: Context) {
     fun cancel(key: String) = manager.cancel(key, ID)
 
     private fun action(key: String, action: String): PendingIntent =
-        PendingIntent.getService(context, 0, Intent(context, GuardService::class.java)
+        PendingIntent.getForegroundService(context, 0, Intent(context, GuardService::class.java)
             .setAction(action).setData(Uri.fromParts("monev-reminder", key, null)),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 

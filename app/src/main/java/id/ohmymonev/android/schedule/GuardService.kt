@@ -37,7 +37,15 @@ class GuardService : Service() {
         startAsForeground()
         if (intent?.action in listOf("stop", "snooze")) {
             reminders.handle(intent)
-            refreshContent()
+            command?.cancel()
+            command = scope.launch {
+                val settings = runCatching { TimeSettingsStore(this@GuardService).settingsOnce() }.getOrNull()
+                if (settings?.masterEnabled != true) {
+                    stopSelf()
+                } else {
+                    refreshContent()
+                }
+            }
             return START_STICKY
         }
         command?.cancel()
@@ -87,13 +95,6 @@ class GuardService : Service() {
                 NotificationFactory.NOTIF_ID_GUARD,
                 notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-            )
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceCompat.startForeground(
-                this,
-                NotificationFactory.NOTIF_ID_GUARD,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
             )
         } else {
             startForeground(NotificationFactory.NOTIF_ID_GUARD, notification)

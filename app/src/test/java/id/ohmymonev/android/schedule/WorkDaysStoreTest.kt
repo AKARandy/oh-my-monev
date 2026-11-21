@@ -99,4 +99,13 @@ class WorkDaysStoreTest {
         ReminderController.clear(context)
     }
 
+    @Test fun clearRemovesBothDaysAndAccount() {
+        calendar.save(profile("SUNDAY"))
+        assertEquals("participant", calendar.lastAccount())
+        assertNotNull(calendar.days())
+        calendar.clear()
+        assertNull(calendar.days())
+        assertNull(calendar.lastAccount())
+    }
+
 }

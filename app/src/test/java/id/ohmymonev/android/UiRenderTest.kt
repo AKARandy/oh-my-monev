@@ -468,4 +468,23 @@ class UiRenderTest {
         id.ohmymonev.android.ui.HomeTab()
     }
 
+    @Test @Config(qualifiers = "w411dp-h1800dp-xhdpi")
+    fun templatePreviewIsVisible() {
+        val draftText = "Menyiapkan dan memeriksa kelengkapan dokumen kegiatan harian peserta secara terstruktur."
+        val prepared = id.ohmymonev.android.engine.PreparedReport(
+            date = "2026-11-08",
+            participantId = "participant",
+            sourceDate = "",
+            source = "Templat Anda",
+            draft = id.ohmymonev.android.data.StoredDraft("2026-11-08", draftText, draftText, draftText, "participant"),
+            issues = emptyList(),
+            templateKey = "TEMPLATE:1",
+            sourceReadComplete = true,
+        )
+        capture("forge-preview-template", "Templat Anda", captureTag = "automatic-preview") {
+            PratinjauCard(prepared, false, {})
+        }
+        compose.onNodeWithText("Buka pratinjau").assertExists()
+    }
+
 }

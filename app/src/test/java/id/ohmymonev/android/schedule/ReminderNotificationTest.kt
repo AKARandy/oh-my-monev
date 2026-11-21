@@ -64,7 +64,7 @@ class ReminderNotificationTest {
 
     @Test fun missingReportVibratesWithoutAnInitialDelay() {
         val app = ApplicationProvider.getApplicationContext<Application>()
-        Shadows.shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        readySession(app)
         val manager = app.getSystemService(NotificationManager::class.java)
         Shadows.shadowOf(manager).setNotificationPolicyAccessGranted(true)
         manager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
@@ -83,6 +83,51 @@ class ReminderNotificationTest {
             controller.close()
         }
         assertFalse(vibrator.isVibrating)
+    }
+
+    @Test fun dndPriorityAllowingAlarmsStillTriggersAlarm() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        readySession(app)
+        val manager = app.getSystemService(NotificationManager::class.java)
+        Shadows.shadowOf(manager).setNotificationPolicyAccessGranted(true)
+        manager.setNotificationPolicy(
+            NotificationManager.Policy(NotificationManager.Policy.PRIORITY_CATEGORY_ALARMS, 0, 0),
+        )
+        manager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+        val vibrator = Shadows.shadowOf(app.getSystemService(android.os.Vibrator::class.java))
+        vibrator.setHasVibrator(true)
+        val now = java.time.ZonedDateTime.parse("2026-11-09T20:00:00+07:00[Asia/Jakarta]")
+        val controller = ReminderController(app)
+        try {
+            controller.deliver("fixture/2026-11-09", now.toLocalDate(),
+                id.ohmymonev.core.enginecore.TodayState.UNFILLED, now)
+            Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            assertTrue(vibrator.isVibrating)
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test fun timedOutAlarmLeavesPersistentReminderNotification() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        readySession(app)
+        val manager = app.getSystemService(NotificationManager::class.java)
+        Shadows.shadowOf(manager).setNotificationPolicyAccessGranted(true)
+        manager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+        val now = java.time.ZonedDateTime.parse("2026-11-09T23:58:58+07:00[Asia/Jakarta]")
+        val controller = ReminderController(app)
+        try {
+            controller.deliver("fixture/2026-11-09", now.toLocalDate(),
+                id.ohmymonev.core.enginecore.TodayState.UNFILLED, now)
+            val looper = Shadows.shadowOf(android.os.Looper.getMainLooper())
+            looper.idleFor(java.time.Duration.ofSeconds(3))
+            val active = manager.activeNotifications.single()
+            assertEquals("Laporan hari ini belum terkirim.",
+                active.notification.extras.getCharSequence(Notification.EXTRA_TITLE))
+            assertEquals(0, active.notification.flags and Notification.FLAG_ONGOING_EVENT)
+        } finally {
+            controller.close()
+        }
     }
 
 }

@@ -3,13 +3,12 @@ package id.ohmymonev.android.schedule
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import androidx.core.app.NotificationManagerCompat
+import id.ohmymonev.android.data.SessionRepository
 import kotlinx.coroutines.ensureActive
 
 /**
  * Alarm pengisian darurat 22:30 (default) — satu-satunya pengisi otomatis, selalu
- * isi lalu kirim. Notifikasi kanal "escalation" (full-screen intent + suara;
- * lihat NotificationFactory), lalu picu mesin pengisi.
+ * isi lalu kirim.
  */
 class EscalationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -20,24 +19,19 @@ class EscalationReceiver : BroadcastReceiver() {
         id.ohmymonev.android.data.ActionLog.record(context, "alarm.received", "EscalationReceiver")
         val settings = TimeSettingsStore(context).settingsOnce()
         kotlin.coroutines.coroutineContext.ensureActive()
-        if (!FeatureReadiness.read(context).ready) {
-            AlarmScheduler.armAll(context, settings)
-            return
-        }
-        val today = java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
-        if (!WorkDaysStore(context).isWorkday(today)) return
-        if (!settings.masterEnabled || !settings.escalationEnabled || today.dayOfWeek !in settings.escalationDays) return
-        if (id.ohmymonev.android.data.AppStore(context).isSkipped(today.toString())) {
-            return
-        }
-        val factory = NotificationFactory(context)
-        factory.ensureChannels()
-        if (factory.canPostNotifications()) {
-            NotificationManagerCompat.from(context)
-                .notify(NotificationFactory.NOTIF_ID_ESCALATION, factory.escalation())
-        }
+        SessionRepository.get(context).awaitLoaded()
         kotlin.coroutines.coroutineContext.ensureActive()
-        AutoFillService.start(context)
+        try {
+            if (!FeatureReadiness.read(context).ready) return
+            val today = java.time.LocalDate.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta)
+            if (!WorkDaysStore(context).isWorkday(today)) return
+            if (!settings.masterEnabled || !settings.escalationEnabled || today.dayOfWeek !in settings.escalationDays) return
+            if (id.ohmymonev.android.data.AppStore(context).isSkipped(today.toString())) return
+            kotlin.coroutines.coroutineContext.ensureActive()
+            AutoFillService.start(context)
+        } finally {
+            if (settings.masterEnabled) AlarmScheduler.armAll(context, settings)
+        }
     }
 
     companion object {

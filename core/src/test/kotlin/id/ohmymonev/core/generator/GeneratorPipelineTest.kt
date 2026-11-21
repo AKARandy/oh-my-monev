@@ -45,4 +45,11 @@ class GeneratorPipelineTest {
         val result = GeneratorPipeline(Templates { original.copy(pelajaran = "Tanggal {tanggal}") }, ReportHistory { null }).generate(date)
         assertEquals("Tanggal 8 November 2026", (result as GenerationOutcome.Generated).draft.pelajaran)
     }
+
+    @Test fun blankPreviousSectionsRefuseWithoutGeneratingEmptyDraft() {
+        val blankActivities = generate(original.copy(aktivitas = "  \n- ")) as GenerationOutcome.Failed
+        assertEquals(FailureReason.NO_SOURCE_MATERIAL, blankActivities.reason)
+        val blankLesson = generate(original.copy(pelajaran = "   ")) as GenerationOutcome.Failed
+        assertEquals(FailureReason.NO_SOURCE_MATERIAL, blankLesson.reason)
+    }
 }

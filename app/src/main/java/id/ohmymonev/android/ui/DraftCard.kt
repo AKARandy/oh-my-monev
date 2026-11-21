@@ -1,6 +1,7 @@
 package id.ohmymonev.android.ui
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,15 +21,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.heightIn
 import id.ohmymonev.android.data.AppStore
 import id.ohmymonev.android.data.StoredDraft
 import id.ohmymonev.core.model.ReportDraft
@@ -52,33 +51,40 @@ fun DraftCard(
     savedDraft: StoredDraft?,
     account: String,
     editable: Boolean,
+    todayIso: String = LocalDate.now(ScheduleCalculator.asiaJakarta).toString(),
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val store = remember { AppStore(context) }
     val scope = rememberCoroutineScope()
-    val editorScrollState = rememberScrollState()
-    val todayIso = LocalDate.now(ScheduleCalculator.asiaJakarta).toString()
 
-    var aktivitas by remember(account, todayIso) { mutableStateOf("") }
-    var pelajaran by remember(account, todayIso) { mutableStateOf("") }
-    var kendala by remember(account, todayIso) { mutableStateOf("") }
-    var dirty by remember(account, todayIso) { mutableStateOf(false) }
+    var aktivitas by rememberSaveable(account, todayIso) { mutableStateOf("") }
+    var pelajaran by rememberSaveable(account, todayIso) { mutableStateOf("") }
+    var kendala by rememberSaveable(account, todayIso) { mutableStateOf("") }
+    var dirty by rememberSaveable(account, todayIso) { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
 
     androidx.compose.runtime.LaunchedEffect(expanded, savedDraft, account, todayIso) {
-        if (expanded) {
+        if (expanded && !dirty) {
             aktivitas = savedDraft?.aktivitas.orEmpty()
             pelajaran = savedDraft?.pelajaran.orEmpty()
             kendala = savedDraft?.kendala.orEmpty()
-            dirty = false
         }
+    }
+
+    BackHandler(enabled = expanded && dirty && !saving) {
+        confirmDiscard = true
     }
 
     val draft = ReportDraft(aktivitas, pelajaran, kendala)
     val gate = DeliveryGate().validate(draft)
     val isEmpty = aktivitas.isBlank() && pelajaran.isBlank() && kendala.isBlank()
+    val failedSections = buildList {
+        if (aktivitas.trim().length !in 100..5000) add("Aktivitas")
+        if (pelajaran.trim().length !in 100..5000) add("Pelajaran")
+        if (kendala.trim().length !in 100..5000) add("Kendala")
+    }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -86,7 +92,7 @@ fun DraftCard(
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Column(modifier = Modifier.heightIn(max = 620.dp).scrollIndicator(editorScrollState).verticalScroll(editorScrollState).padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -130,7 +136,8 @@ fun DraftCard(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            Text("Gunakan 100 sampai 5000 karakter per bagian.",
+                            val sectionHint = if (failedSections.isNotEmpty()) " (${failedSections.joinToString(", ")})" else ""
+                            Text("Gunakan 100 sampai 5000 karakter per bagian$sectionHint.",
                                 color = MaterialTheme.colorScheme.onErrorContainer)
                         }
                     }
@@ -144,6 +151,8 @@ fun DraftCard(
                         scope.launch {
                             try {
                                 withContext(Dispatchers.IO) { store.saveTodayDraft(toSave) }
+                                dirty = false
+                                Toast.makeText(context, "Draf tersimpan.", Toast.LENGTH_SHORT).show()
                                 onSaved()
                                 onExpandedChange(false)
                             } catch (_: java.io.IOException) {
@@ -198,6 +207,7 @@ internal fun EditorField(
     onChange: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val trimmed = value.trim().length
     OutlinedTextField(
         value = value,
         onValueChange = {
@@ -207,14 +217,18 @@ internal fun EditorField(
         label = { Text(label) },
         placeholder = { Text(hint, style = MaterialTheme.typography.bodySmall) },
         minLines = 3,
+        isError = trimmed > 5000,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         supportingText = {
             Text(
-                text = "${value.length} karakter",
+                text = if (trimmed > 5000) "$trimmed karakter (maks. 5000)" else "$trimmed / 100 karakter",
                 style = MaterialTheme.typography.labelSmall,
-                color = if (value.length >= 100) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = when {
+                    trimmed > 5000 -> MaterialTheme.colorScheme.error
+                    trimmed in 100..5000 -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
         },
     )

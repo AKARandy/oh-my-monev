@@ -30,14 +30,18 @@ object VerbMapper {
         "mengevaluasi" to "evaluasi",
     )
 
+    private val WHITESPACE = Regex("""[\s\u00A0\u2007\u202F]+""")
+
     fun continuation(rawSentence: String): String? {
-        val sentence = rawSentence.trim()
+        val sentence = rawSentence.trim { it.isWhitespace() || it == '\u00A0' || it == '\u2007' || it == '\u202F' }
         if (sentence.isEmpty()) return null
-        val verb = sentence.substringBefore(' ').lowercase()
-        val rest = sentence.substringAfter(' ', "").trim()
+        val match = WHITESPACE.find(sentence)
+        val verb = (if (match == null) sentence else sentence.substring(0, match.range.first)).lowercase()
+        val rest = (if (match == null) "" else sentence.substring(match.range.last + 1))
+            .trim { it.isWhitespace() || it == '\u00A0' || it == '\u2007' || it == '\u202F' }
+        if (rest.isBlank() || rest.none { it.isLetterOrDigit() }) return null
         return when {
-            verb == "melanjutkan" -> sentence
-            rest.isBlank() -> null
+            verb == "melanjutkan" -> join("Melanjutkan", rest)
             verb == "melakukan" -> join("Melanjutkan", rest)
             NOUN_FORMS.containsKey(verb) -> join("Melanjutkan ${NOUN_FORMS.getValue(verb)}", rest)
             else -> null

@@ -27,6 +27,7 @@ internal object MonevApiTransport {
                 val closed = AtomicBoolean(false)
                 fun close() {
                     if (!closed.compareAndSet(false, true)) return
+                    runCatching { CookieManager.getInstance().flush() }
                     view.removeJavascriptInterface("MonevRead")
                     view.stopLoading()
                     view.destroy()

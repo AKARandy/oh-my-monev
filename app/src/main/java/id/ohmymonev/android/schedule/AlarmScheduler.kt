@@ -105,7 +105,7 @@ object AlarmScheduler {
                 if (exactAllowed) {
                     am.setAlarmClock(AlarmManager.AlarmClockInfo(triggerAt, showApp(context)), pending)
                 } else {
-                    am.setWindow(AlarmManager.RTC_WAKEUP, triggerAt, 10 * 60 * 1000L, pending)
+                    am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending)
                 }
                 armedKeys.add(key)
             } catch (e: Exception) {
@@ -146,7 +146,7 @@ object AlarmScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val triggerAt = System.currentTimeMillis() + inSeconds * 1000L
-        am.setAlarmClock(AlarmManager.AlarmClockInfo(triggerAt, showApp(context)), pending)
+        scheduleAlarmOrIdle(am, context, triggerAt, pending)
     }
 
     /**
@@ -165,7 +165,19 @@ object AlarmScheduler {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        am.setAlarmClock(AlarmManager.AlarmClockInfo(at.toInstant().toEpochMilli(), showApp(context)), pending)
+        scheduleAlarmOrIdle(am, context, at.toInstant().toEpochMilli(), pending)
+    }
+
+    private fun scheduleAlarmOrIdle(am: AlarmManager, context: Context, triggerAt: Long, pending: PendingIntent) {
+        val exactAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()
+        if (exactAllowed) {
+            try {
+                am.setAlarmClock(AlarmManager.AlarmClockInfo(triggerAt, showApp(context)), pending)
+                return
+            } catch (_: SecurityException) {
+            }
+        }
+        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending)
     }
 
     // ------------------------------------------------------------- internal

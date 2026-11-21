@@ -30,9 +30,9 @@ internal class ReminderController(private val context: Context) {
     private val notifications = ReminderNotifications(context)
     private val preferences = store(context)
     private val sessions = SessionRepository.get(context)
-    private val network = context.getSystemService(ConnectivityManager::class.java)
-    private val manager = context.getSystemService(NotificationManager::class.java)
-    private val vibrator = context.getSystemService(Vibrator::class.java)
+    private val network: ConnectivityManager? = context.getSystemService(ConnectivityManager::class.java)
+    private val manager: NotificationManager? = context.getSystemService(NotificationManager::class.java)
+    private val vibrator: Vibrator? = context.getSystemService(Vibrator::class.java)
     private var enabled = false
     private var listening = false
     private var online = false
@@ -61,8 +61,9 @@ internal class ReminderController(private val context: Context) {
                 .distinctUntilChanged().collect { active ->
                     enabled = active
                     if (active) {
-                        network.registerDefaultNetworkCallback(callback)
-                        listening = true
+                        listening = runCatching {
+                            network?.registerDefaultNetworkCallback(callback) != null
+                        }.getOrDefault(false)
                         connectivityChanged()
                     } else {
                         stopListening()
@@ -105,8 +106,11 @@ internal class ReminderController(private val context: Context) {
     }
 
     private fun connectivityChanged() {
-        val connected = network.getNetworkCapabilities(network.activeNetwork)
-            ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+        val cm = network
+        val connected = if (cm == null) false else runCatching {
+            cm.getNetworkCapabilities(cm.activeNetwork)
+                ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+        }.getOrDefault(false)
         if (connected && !online) {
             // Clear server backoff on reconnect, but preserve explicit snoozes.
             failures.keys.forEach { if (due(it) >= 0) save(it, 0) }
@@ -134,8 +138,18 @@ internal class ReminderController(private val context: Context) {
 
     private suspend fun runChecks() {
         val keys = withContext(Dispatchers.IO) { preferences.all.keys.sorted() }
+        val cutoff = LocalDate.now(ScheduleCalculator.asiaJakarta).minusDays(7)
+        val staleKeys = keys.filter { k ->
+            due(k) == DONE && runCatching { LocalDate.parse(k.substringAfterLast('/')).isBefore(cutoff) }.getOrDefault(false)
+        }
+        if (staleKeys.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                preferences.edit().apply { staleKeys.forEach(::remove) }.apply()
+            }
+        }
+        val activeKeys = keys - staleKeys.toSet()
         val now = System.currentTimeMillis()
-        for (key in keys) {
+        for (key in activeKeys) {
             if (!enabled || !FeatureReadiness.read(context).ready) {
                 stopAlarm()
                 withContext(Dispatchers.IO) { clear(context) }
@@ -252,21 +266,28 @@ internal class ReminderController(private val context: Context) {
         val duration = java.time.Duration.between(now, now.withHour(23).withMinute(59).withSecond(0).withNano(0))
             .toMillis().coerceIn(1, 300_000)
         wakeLock = context.getSystemService(PowerManager::class.java)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "oh-my-monev:reminder")
-            .apply { acquire(duration) }
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "oh-my-monev:reminder")
+            ?.apply { acquire(duration) }
         ringJob = scope.launch {
+            var stoppedByReadiness = false
             try {
                 val audio = context.getSystemService(android.media.AudioManager::class.java)
                 val end = android.os.SystemClock.elapsedRealtime() + duration
                 var firstCycle = true
                 while (android.os.SystemClock.elapsedRealtime() < end) {
-                    if (!firstCycle && !FeatureReadiness.read(context).ready) break
-                    val policy = manager.currentInterruptionFilter
+                    if (!firstCycle && !FeatureReadiness.read(context).ready) {
+                        stoppedByReadiness = true
+                        break
+                    }
+                    val policy = manager?.currentInterruptionFilter ?: NotificationManager.INTERRUPTION_FILTER_ALL
+                    val priorityCategories = runCatching { manager?.notificationPolicy?.priorityCategories ?: 0 }.getOrDefault(0)
                     val allowed = policy == NotificationManager.INTERRUPTION_FILTER_ALL ||
-                        policy == NotificationManager.INTERRUPTION_FILTER_ALARMS
+                        policy == NotificationManager.INTERRUPTION_FILTER_ALARMS ||
+                        (policy == NotificationManager.INTERRUPTION_FILTER_PRIORITY &&
+                            (priorityCategories and NotificationManager.Policy.PRIORITY_CATEGORY_ALARMS) != 0)
                     val sound = allowed && channel.sound != null &&
-                        audio.getStreamVolume(android.media.AudioManager.STREAM_ALARM) > 0
-                    val vibrate = allowed && channel.shouldVibrate() && vibrator.hasVibrator()
+                        (audio?.getStreamVolume(android.media.AudioManager.STREAM_ALARM) ?: 0) > 0
+                    val vibrate = allowed && channel.shouldVibrate() && vibrator?.hasVibrator() == true
                     if (sound) {
                         try {
                             ringtone = RingtoneManager.getRingtone(context, channel.sound)?.also {
@@ -280,7 +301,7 @@ internal class ReminderController(private val context: Context) {
                     var vibrationRequested = false
                     if (vibrate) {
                         try {
-                            vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 300, 500), -1),
+                            vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 300, 500), -1),
                                 android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_ALARM).build())
                             vibrationRequested = true
                         } catch (_: RuntimeException) {
@@ -300,32 +321,41 @@ internal class ReminderController(private val context: Context) {
                     delay((end - android.os.SystemClock.elapsedRealtime()).coerceIn(1, 4_000))
                     ringtone?.stop()
                     ringtone = null
-                    vibrator.cancel()
+                    vibrator?.cancel()
                 }
             } finally {
                 if (playing == key) {
                     ringJob = null
-                    stopAlarm()
+                    val timedOut = !stoppedByReadiness
+                    stopAlarm(cancelNotification = !timedOut)
+                    if (timedOut) {
+                        notifications.post(
+                            key,
+                            "Laporan hari ini belum terkirim.",
+                            "Buka situs dan kirim laporan sebelum 23.59 WIB.",
+                            normal = true,
+                        )
+                    }
                 }
             }
         }
     }
 
-    private fun stopAlarm() {
+    private fun stopAlarm(cancelNotification: Boolean = true) {
         val key = playing ?: return
         playing = null
         ringJob?.cancel()
         ringJob = null
         ringtone?.stop()
         ringtone = null
-        vibrator.cancel()
+        vibrator?.cancel()
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
-        notifications.cancel(key)
+        if (cancelNotification) notifications.cancel(key)
     }
 
     private fun stopListening() {
-        if (listening) network.unregisterNetworkCallback(callback)
+        if (listening) runCatching { network?.unregisterNetworkCallback(callback) }
         listening = false
         online = false
     }

@@ -54,7 +54,7 @@ internal data class PreparedReport(
             FailureReason.INVALID_REPORT, issues.joinToString("\n"),
         )
         val tier = when {
-            written != null -> GenerationTier.TEMPLATE
+            written != null || templateKey?.startsWith("TEMPLATE:") == true -> GenerationTier.TEMPLATE
             neural -> GenerationTier.NEURAL
             else -> GenerationTier.CONTINUATION_RULES
         }
@@ -89,6 +89,7 @@ internal class PreparedReportService(
                     preferences.getString("draft", null)?.let { json.decodeFromString<PreparedReport>(it) }
                 }.getOrNull()
                 if (cached?.templateKey?.startsWith("AUTOMATIC:") == true) save(null)
+                preferences.edit().remove(NEURAL_DONE_KEY).commit()
             }
             ModelStore(context).delete()
         } finally {
@@ -99,10 +100,11 @@ internal class PreparedReportService(
     private suspend fun prepareLocked(force: Boolean, allowModelRun: Boolean): PreparedReport {
         val date = today()
         val fillMode = TimeSettingsStore(context).settingsOnce().escalationSource
-        val neuralDone = fillMode == ScheduleSettings.ContentSource.AUTOMATIC &&
-            neuralDoneDate()?.startsWith("$date|") == true
-        // Mode Otomatis: draf sudah dibuat hari ini berarti Perbarui tidak boleh menjalankan model lagi.
-        if (force && !neuralDone) withContext(Dispatchers.IO) { save(null) }
+        val neuralMarker = neuralDoneDate()
+        // Mode Otomatis: jika draf belum dibuat hari ini (atau mode bukan Otomatis), hapus cache lama sebelum membaca API.
+        if (force && (fillMode != ScheduleSettings.ContentSource.AUTOMATIC || neuralMarker?.startsWith("$date|") != true)) {
+            withContext(Dispatchers.IO) { save(null) }
+        }
         val api = apiFactory()
         val profile = api.objectData("/users/me") ?: return failed(date, api.message)
         val id = profile.optString("id").takeUnless { profile.isNull("id") }.orEmpty()
@@ -116,16 +118,28 @@ internal class PreparedReportService(
                 "TEMPLATE:" + (template?.let { "${it.aktivitas}\u0000${it.pelajaran}\u0000${it.kendala}".hashCode() } ?: "none")
             ScheduleSettings.ContentSource.AUTOMATIC -> "AUTOMATIC:" + ModelStore.VERSION
         }
+        val neuralDone = fillMode == ScheduleSettings.ContentSource.AUTOMATIC &&
+            written == null &&
+            neuralMarker == "$date|$id"
         val cached = withContext(Dispatchers.IO) { runCatching {
             preferences.getString("draft", null)?.let { json.decodeFromString<PreparedReport>(it) }
         }.getOrNull() }
+        if (force && neuralDone && cached?.let { it.participantId == id && it.templateKey == templateKey && it.written == null } != true) {
+            withContext(Dispatchers.IO) { save(null) }
+        }
         if (!force && today() == date && cached?.date == date.toString() && cached.participantId == id && cached.written == written && cached.templateKey == templateKey && cached.sourceReadComplete && api.isCurrent()) {
             return cached.copy(sessionVersion = api.credentialVersion, reusedPreview = true)
         }
         // Mode Otomatis: draf hari ini sudah pernah dibuat — Perbarui tidak menjalankan model lagi.
         if (neuralDone) {
             val fresh = cached?.takeIf {
-                it.date == date.toString() && it.participantId == id && it.draft != null && !it.sourceUnavailable
+                it.date == date.toString() &&
+                    it.participantId == id &&
+                    it.written == written &&
+                    it.templateKey == templateKey &&
+                    it.draft != null &&
+                    !it.sourceUnavailable &&
+                    api.isCurrent()
             }
             if (fresh != null) return fresh.copy(sessionVersion = api.credentialVersion, reusedPreview = true)
         }
@@ -162,6 +176,9 @@ internal class PreparedReportService(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { created?.close() }
                 throw e
+            } catch (_: Exception) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { created?.close() }
+                return failed(date, "Model otomatis rusak atau tidak dapat dimuat.")
             }
             if (paraphraser == null) {
                 sourceDate = date
@@ -176,7 +193,7 @@ internal class PreparedReportService(
                 sourceDate = material?.date?.let(LocalDate::parse) ?: date
                 source = previous.message
                 sourceUnavailable = previous.unavailable
-                outcome = material?.let { report -> neuralOutcome(date, id, report, paraphraser) }
+                outcome = material?.let { report -> neuralOutcome(report, paraphraser) }
                     ?: GenerationOutcome.Failed(FailureReason.NO_SOURCE_MATERIAL, previous.message)
                 } finally { withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { paraphraser.close() } }
             }
@@ -194,6 +211,9 @@ internal class PreparedReportService(
             val owned = written?.copy(participantId = id)
             if (owned != null) store.saveTodayDraft(owned)
             save(prepared.copy(written = owned))
+            if (prepared.neural && issues.isEmpty()) {
+                preferences.edit().putString(NEURAL_DONE_KEY, "$date|$id").commit()
+            }
         }
         return prepared.copy(sessionVersion = api.credentialVersion)
     }
@@ -202,8 +222,6 @@ internal class PreparedReportService(
 
     /** Lanjutan laporan: kalimat yang dikenali peta aturan ditangani lokal; sisanya diparafrasakan model. */
     private suspend fun neuralOutcome(
-        date: LocalDate,
-        participantId: String,
         material: SourceReport,
         paraphraser: NeuralParaphraser,
     ): GenerationOutcome {
@@ -217,7 +235,6 @@ internal class PreparedReportService(
         }
         return try {
             val neural = paraphraser.paraphrase(unknownIndexes.map { sentences[it] })
-            markNeuralDone(date, participantId)
             val bullets = sentences.mapIndexed { i, _ -> "- ${ruled[i] ?: neural[unknownIndexes.indexOf(i)]}" }
             GenerationOutcome.Generated(
                 ReportDraft(bullets.joinToString("\n"), material.pelajaran, material.kendala),
@@ -230,12 +247,6 @@ internal class PreparedReportService(
 
     private suspend fun neuralDoneDate(): String? =
         withContext(Dispatchers.IO) { preferences.getString(NEURAL_DONE_KEY, null) }
-
-    private suspend fun markNeuralDone(date: LocalDate, participantId: String) {
-        withContext(Dispatchers.IO) {
-            preferences.edit().putString(NEURAL_DONE_KEY, "$date|$participantId").commit()
-        }
-    }
 
     private fun save(report: PreparedReport?) {
         val edit = preferences.edit()
@@ -250,8 +261,10 @@ internal class PreparedReportService(
 
         internal fun splitSentences(text: String): List<String> =
             text.split('\n').flatMap { line ->
-                line.split(SENTENCE_SPLIT).map { it.trim() }.filter { it.isNotBlank() }
-            }.map { it.replace(Regex("^(?:[-•]\\s*|\\d+[.)]\\s+)"), "") }
+                line.split(SENTENCE_SPLIT)
+                    .map { it.trim().replace(Regex("^(?:[-•]\\s*|\\d+[.)]\\s*)"), "").trim() }
+                    .filter { it.isNotBlank() }
+            }
 
         internal fun validationIssues(draft: ReportDraft): List<String> = DeliveryGate().validate(draft).violations.map { violation ->
             val part = violation.message.substringBefore(':').replace("aktivitas", "Aktivitas").replace("pelajaran", "Pelajaran").replace("kendala", "Kendala")

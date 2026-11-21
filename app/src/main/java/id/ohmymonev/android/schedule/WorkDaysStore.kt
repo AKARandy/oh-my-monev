@@ -9,7 +9,7 @@ import id.ohmymonev.core.schedule.ScheduleSettings
 /** Cached profile calendar for alarms that run without a network connection. No weekend defaults. */
 internal class WorkDaysStore(context: Context) {
     private val preferences = context.getSharedPreferences("work_days", Context.MODE_PRIVATE)
-    fun clear() { preferences.edit().remove("days").commit() }
+    fun clear() { preferences.edit().remove("days").remove("account").commit() }
     fun lastAccount(): String? = preferences.getString("account", null)
     fun save(profile: JSONObject) {
         val rows = profile.optJSONArray("off_days")

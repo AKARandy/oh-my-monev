@@ -85,4 +85,13 @@ class SessionClassifierTest {
             SessionClassifier.classify(200, "https://monev.maganghub.kemnaker.go.id/dashboard", "Memuat halaman", profile),
         )
     }
+
+    @Test
+    fun `login url matching avoids substring false positives and handles unescaped query spaces`() {
+        assertFalse(SessionClassifier.landsOnLoginUrl("https://monev.maganghub.kemnaker.go.id/dashboard/lesson"))
+        assertFalse(SessionClassifier.landsOnLoginUrl("https://author.example.go.id/dashboard"))
+        assertTrue(SessionClassifier.landsOnLoginUrl("https://monev.maganghub.kemnaker.go.id/auth/sign-in?error=Sesi berakhir"))
+        assertTrue(SessionClassifier.landsOnLoginUrl("https://sso-kemnaker.example.go.id/callback?scope=openid profile"))
+        assertFalse(SessionClassifier.pageHasTabs(dashboardText, listOf("")))
+    }
 }

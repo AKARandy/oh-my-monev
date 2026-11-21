@@ -284,4 +284,32 @@ class PreparedReportServiceTest {
         val second = service(session).prepare()
         assertNotEquals(first.draft?.pelajaran, second.draft?.pelajaran)
     }
+
+    @Test fun authoredDraftOverridesEarlierNeuralRunOnSameDay() = runBlocking {
+        val session = session()
+        activity = "Mengikuti apel pagi bersama mentor.\nMenjadwalkan pengujian layanan backend."
+        val neural = service(session).prepare()
+        assertEquals(GenerationTier.NEURAL, (neural.outcome() as GenerationOutcome.Generated).tier)
+        val authoredText = "Melakukan penulisan laporan harian lengkap dengan catatan pengujian sistem yang sangat rinci hari ini."
+        store.saveTodayDraft(StoredDraft(date.toString(), authoredText, lesson, obstacle, participant))
+        val afterDraft = service(session).prepare()
+        assertEquals(authoredText, afterDraft.draft?.aktivitas)
+        assertEquals(GenerationTier.TEMPLATE, (afterDraft.outcome() as GenerationOutcome.Generated).tier)
+    }
+
+    @Test fun templateModeOutcomeReportsTemplateTier() = runBlocking {
+        val session = session()
+        TimeSettingsStore(context).save(ScheduleSettings(escalationSource = ScheduleSettings.ContentSource.TEMPLATE))
+        store.saveTemplate(ReportTemplate(activity, lesson, obstacle))
+        val result = service(session).prepare()
+        val outcome = result.outcome() as GenerationOutcome.Generated
+        assertEquals(GenerationTier.TEMPLATE, outcome.tier)
+    }
+
+    @Test fun splitSentencesDropsMarkerOnlyLines() {
+        assertEquals(
+            listOf("Memeriksa data.", "Menguji hasil."),
+            PreparedReportService.splitSentences("- \n1. \n• Memeriksa data.\n2) Menguji hasil."),
+        )
+    }
 }

@@ -76,7 +76,18 @@ internal object SessionWebView {
         } }
     }
 
-    fun release(view: WebView, session: SessionRepository, expectedVersion: Long, afterLogin: Boolean = false) {
+    fun release(
+        view: WebView,
+        session: SessionRepository,
+        expectedVersion: Long,
+        afterLogin: Boolean = false,
+        inspectToken: Boolean = true,
+    ) {
+        if (!inspectToken) {
+            view.stopLoading()
+            view.destroy()
+            return
+        }
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 inspect(view)?.token?.let {

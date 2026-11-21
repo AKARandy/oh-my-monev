@@ -132,4 +132,29 @@ class AlarmSchedulerTest {
             shadowOf(context.applicationContext as Application).nextStartedService.component?.className)
     }
 
+    @Test fun scheduleRetryFallsBackCleanlyWhenExactAlarmPermissionMissing() = kotlinx.coroutines.runBlocking {
+        org.junit.Assume.assumeTrue(id.ohmymonev.android.BuildConfig.DEBUG)
+        org.robolectric.shadows.ShadowAlarmManager.setCanScheduleExactAlarms(false)
+        TimeSettingsStore(context).save(ScheduleSettings(escalationEnabled = true))
+        val target = java.time.ZonedDateTime.now(id.ohmymonev.core.schedule.ScheduleCalculator.asiaJakarta).plusMinutes(5)
+        AlarmScheduler.scheduleRetry(context, target)
+        assertTrue(shadowOf(alarms).scheduledAlarms.isNotEmpty())
+        org.robolectric.shadows.ShadowAlarmManager.setCanScheduleExactAlarms(true)
+    }
+
+    @Test fun escalationReceiverRearmsAlarmsAndAvoidsPrematureNotification() = kotlinx.coroutines.runBlocking {
+        org.junit.Assume.assumeTrue(id.ohmymonev.android.BuildConfig.DEBUG)
+        val app = context.applicationContext as Application
+        shadowOf(app).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        TimeSettingsStore(context).save(ScheduleSettings(reminderEnabled = false, escalationEnabled = true))
+        alarms.cancel(android.app.PendingIntent.getBroadcast(context, 13,
+            android.content.Intent(context, EscalationReceiver::class.java).setAction(EscalationReceiver.ACTION_ESCALATION),
+            android.app.PendingIntent.FLAG_IMMUTABLE))
+        EscalationReceiver().onReceive(context, android.content.Intent(EscalationReceiver.ACTION_ESCALATION))
+        ReceiverWork.awaitIdle()
+        val notifications = shadowOf(context.getSystemService(android.app.NotificationManager::class.java))
+        assertTrue(notifications.allNotifications.isEmpty())
+        assertTrue(shadowOf(alarms).scheduledAlarms.isNotEmpty())
+    }
+
 }

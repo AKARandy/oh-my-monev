@@ -53,7 +53,7 @@ class WebViewEngine(
 
     private val appContext: Context = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
-    private var active: RunState? = null
+    @Volatile private var active: RunState? = null
 
     fun cancel() { main.post { active?.let { finish(it, EngineOutcome.RETRYABLE_ERROR, "Pengiriman terhenti.", notify = false) } } }
 
@@ -100,7 +100,7 @@ class WebViewEngine(
             kotlinx.coroutines.CoroutineExceptionHandler { _, failure ->
                 if (failure !is kotlinx.coroutines.CancellationException) {
                     id.ohmymonev.android.data.ActionLog.record(appContext, "send.exception", state.runId)
-                    main.post { finish(state, EngineOutcome.RETRYABLE_ERROR, "Pengiriman terhenti Cek ulang status laporan") }
+                    main.post { finish(state, EngineOutcome.RETRYABLE_ERROR, "Pengiriman terhenti. Cek ulang status laporan.") }
                 }
             })
         state.watchdog = Runnable {
@@ -110,6 +110,7 @@ class WebViewEngine(
         active = state
         id.ohmymonev.android.data.ActionLog.record(appContext, "send.start", state.runId)
         main.post {
+            if (state.finished) return@post
             main.postDelayed(state.watchdog, 90_000)
             try {
                 startRun(state)
@@ -141,8 +142,10 @@ class WebViewEngine(
         if (SessionWebView.trusted(profile.urls.baseUrl)) {
             state.stage = "memeriksa lokasi"
             id.ohmymonev.android.data.ActionLog.record(appContext, "send.stage", "${state.runId} ${state.stage}")
+            val locationEnabled = appContext.getSystemService(android.location.LocationManager::class.java)
+                ?.let { androidx.core.location.LocationManagerCompat.isLocationEnabled(it) } == true
             id.ohmymonev.android.data.ActionLog.record(appContext, "send.environment",
-                "${state.runId} webview=${WebView.getCurrentWebViewPackage()?.versionName} locationEnabled=${androidx.core.location.LocationManagerCompat.isLocationEnabled(appContext.getSystemService(android.location.LocationManager::class.java))} background=${id.ohmymonev.android.schedule.FeatureReadiness.backgroundLocation(appContext)}")
+                "${state.runId} webview=${WebView.getCurrentWebViewPackage()?.versionName} locationEnabled=$locationEnabled background=${id.ohmymonev.android.schedule.FeatureReadiness.backgroundLocation(appContext)}")
             state.bootstrap = state.scope.launch {
                 try {
                     val bridge = LocationBridge(appContext, webView, state.runId,
@@ -236,6 +239,8 @@ class WebViewEngine(
     /** Loads the per-date riwayat edit URL and polls for the 3 textareas, matched by placeholder. */
     private fun openForm(state: RunState) {
         state.stage = "membuka formulir"
+        state.mainFrameError = null
+        state.httpStatusCode = 200
         id.ohmymonev.android.data.ActionLog.record(appContext, "send.stage", "${state.runId} ${state.stage}")
         val deadline = SystemClock.elapsedRealtime() + profile.timing.textareaWaitTimeoutMs
         state.webView.loadUrl(profile.riwayatEditUrl(state.dateISO))
@@ -256,12 +261,14 @@ class WebViewEngine(
                 checkLocation(state)
             } else if (SystemClock.elapsedRealtime() >= deadline) {
                 val finalUrl = webView.url ?: "about:blank"
-                when (SessionClassifier.classify(state.httpStatusCode, finalUrl, null, profile)) {
-                    SessionState.EXPIRED ->
-                        finish(state, EngineOutcome.LOGIN_REQUIRED, "sesi berakhir selama menunggu form")
-                    else ->
-                        finish(state, EngineOutcome.DAY_NOT_FILLABLE, "textarea tidak diketemukan untuk tanggal ${state.dateISO}")
-                }
+                val (outcome, detail) = classifyTextareaTimeout(
+                    state.httpStatusCode,
+                    state.mainFrameError,
+                    finalUrl,
+                    state.dateISO,
+                    profile,
+                )
+                finish(state, outcome, detail)
             } else {
                 main.postDelayed({ waitTextareas(state, deadline) }, profile.timing.pollIntervalMs)
             }
@@ -445,7 +452,7 @@ class WebViewEngine(
         runCatching { CookieManager.getInstance().flush() }
         events(state, "Hasil: $outcome" + (detail?.let { " ($it)" } ?: ""))
         state.viewOrNull()?.let { view ->
-            SessionWebView.release(view, SessionRepository.get(appContext), state.sessionVersion)
+            SessionWebView.release(view, SessionRepository.get(appContext), state.sessionVersion, inspectToken = false)
         }
         if (notify) callbacks.onRunFinished(
             RunRecord(
@@ -495,6 +502,25 @@ class WebViewEngine(
             JSONObject(inner)
         } catch (e: Exception) {
             null
+        }
+    }
+
+    internal companion object {
+        fun classifyTextareaTimeout(
+            httpStatusCode: Int,
+            mainFrameError: String?,
+            finalUrl: String,
+            dateISO: String,
+            profile: SiteProfile,
+        ): Pair<EngineOutcome, String?> = when {
+            SessionClassifier.classify(httpStatusCode, finalUrl, null, profile) == SessionState.EXPIRED ->
+                EngineOutcome.LOGIN_REQUIRED to "sesi berakhir selama menunggu form"
+            mainFrameError != null ->
+                EngineOutcome.RETRYABLE_ERROR to mainFrameError
+            httpStatusCode !in 200..299 ->
+                EngineOutcome.RETRYABLE_ERROR to "gagal membuka form (HTTP $httpStatusCode)"
+            else ->
+                EngineOutcome.DAY_NOT_FILLABLE to "textarea tidak diketemukan untuk tanggal $dateISO"
         }
     }
 }

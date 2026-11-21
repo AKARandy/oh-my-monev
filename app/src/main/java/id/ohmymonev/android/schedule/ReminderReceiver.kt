@@ -17,7 +17,9 @@ class ReminderReceiver : BroadcastReceiver() {
         if (intent.action != ACTION_REMINDER) return
         val settings = TimeSettingsStore(context).settingsOnce()
         kotlin.coroutines.coroutineContext.ensureActive()
-        val date = intent.getStringExtra("date")?.let(LocalDate::parse)
+        id.ohmymonev.android.data.SessionRepository.get(context).awaitLoaded()
+        kotlin.coroutines.coroutineContext.ensureActive()
+        val date = intent.getStringExtra("date")?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
             ?: LocalDate.now(ScheduleCalculator.asiaJakarta)
         val calendar = WorkDaysStore(context)
         if (FeatureReadiness.read(context).ready && settings.masterEnabled && settings.reminderEnabled &&
