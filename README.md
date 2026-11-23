@@ -62,7 +62,7 @@ Anda bertanggung jawab atas teks yang dikirim aplikasi.
 Aplikasi menulis setiap tindakan otomatis ke dalam catatan. Anda dapat membaca teks setiap tindakan.
 Anda dapat menghentikan otomatisasi untuk satu hari.
 
-## Cara kerja teknis
+## Cara kerja
 
 ### Sesi dan jadwal
 
