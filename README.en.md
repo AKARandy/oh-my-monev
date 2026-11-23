@@ -32,9 +32,9 @@ Status: stable v1.1.0 released (separate rolling dev build on tag `dev`).
 
 ## Screenshots
 
-| Home | Automation |
+| Homepage | Automation page |
 | :---: | :---: |
-| <img src="screenshots/forge-home.png" alt="Home" width="240" /> | <img src="screenshots/schedule-delete-in-card.png" alt="Automation" width="240" /> |
+| <img src="screenshots/WhatsApp Image 2026-11-23 at 08.51.52.jpeg" alt="Beranda" width="300" /> | <img src="screenshots/WhatsApp Image 2026-11-23 at 08.51.53.jpeg" alt="Otomatis" width="300" /> |
 
 ## Structure
 
