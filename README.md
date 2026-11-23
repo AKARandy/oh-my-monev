@@ -61,3 +61,45 @@ Aplikasi memakai akun Anda dan sesi Anda.
 Anda bertanggung jawab atas teks yang dikirim aplikasi.
 Aplikasi menulis setiap tindakan otomatis ke dalam catatan. Anda dapat membaca teks setiap tindakan.
 Anda dapat menghentikan otomatisasi untuk satu hari.
+
+## Cara kerja teknis
+
+### Sesi dan jadwal
+
+Anda masuk ke situs Monev melalui WebView di tab **Sesi**. Aplikasi mengenkripsi token akses dengan
+kunci dari Android Keystore sebelum menyimpannya di ponsel. Aplikasi memakai token ini untuk membaca
+profil peserta, kehadiran, dan laporan harian melalui API Monev.
+
+`AlarmManager` menjadwalkan pengingat dan pengisian darurat sesuai hari kerja dan jam pilihan Anda (WIB).
+Pada jam pengingat, alarm berbunyi jika laporan hari ini masih perlu diisi. Pada jam pengisian darurat,
+layanan latar depan Android memeriksa status lagi. Layanan ini melewati hari libur, cuti, dan laporan
+yang sudah terkirim.
+
+### Sumber draf
+
+Pengisian darurat memakai draf yang sudah Anda tulis untuk hari ini. Jika belum ada draf, aplikasi
+memakai sumber yang Anda pilih.
+
+- **Templat.** Aplikasi mengganti `{tanggal}` dalam templat dengan tanggal laporan.
+- **Lanjutan otomatis.** Aplikasi membaca laporan lengkap terakhir yang Anda kirim untuk hari berstatus
+  **Hadir**. Aturan kata kerja menyusun ulang kalimat aktivitas yang dikenali. Model IndoT5 menyusun
+  ulang kalimat aktivitas lainnya di ponsel dengan ONNX Runtime. Aplikasi menyalin bagian pelajaran
+  dan kendala dari laporan sumber.
+
+Aplikasi menyimpan draf per peserta dan tanggal agar pengisian darurat dapat memakai kembali teks pratinjau.
+
+### Pengiriman dan konfirmasi
+
+Pengiriman dari **Beranda** dan pengisian darurat memakai formulir Monev di WebView. Aplikasi meminta
+lokasi perangkat terlebih dahulu. Jika lokasi belum tersedia, aplikasi mencoba perkiraan lokasi dari
+alamat IP. Setelah situs mengonfirmasi akses lokasi, JavaScript mengisi kolom aktivitas, pelajaran, dan kendala.
+
+Aplikasi membaca kembali ketiga kolom. Jika teks cocok dengan draf dan setiap kolom berisi 100 sampai
+5.000 karakter, aplikasi mencentang kotak pernyataan lalu menekan **Simpan dan Kirim**. Aplikasi
+menandai pengiriman berhasil di tab **Log** setelah API Monev mengonfirmasi laporan untuk peserta
+dan tanggal yang sama.
+
+Lihat kode [penjadwalan](app/src/main/java/id/ohmymonev/android/schedule/AlarmScheduler.kt),
+[penyusunan draf](app/src/main/java/id/ohmymonev/android/engine/PreparedReportService.kt),
+[pengisian formulir](app/src/main/java/id/ohmymonev/android/engine/WebViewEngine.kt), dan
+[konfirmasi pengiriman](app/src/main/java/id/ohmymonev/android/engine/EngineAutoFillDelegate.kt).

@@ -60,3 +60,46 @@ The app uses your account and your session. It does not invent report text.
 You are responsible for the text that the app sends.
 The app writes every automatic action to a log. You can read the text of each action.
 You can stop the automation for one day.
+
+## How it works
+
+### Session and scheduling
+
+You sign in to Monev through an Android WebView in the **Sesi** (Session) tab. The app encrypts
+your access token with a key from Android Keystore before saving it on your phone. It uses the
+token to read your profile, attendance, and daily reports through the Monev API.
+
+`AlarmManager` schedules reminders and emergency submissions (**Pengisian darurat**) on workdays
+at the times you choose, in Jakarta time (WIB). The reminder sounds if you still need to submit
+today's report. When an emergency submission is due, an Android foreground service checks the
+status again. It skips holidays, days on leave, and reports you have already submitted.
+
+### Draft sources
+
+For an emergency submission, the app uses the draft you wrote for today. If you have no draft
+for today, it uses the source you selected.
+
+- **Template.** The app replaces `{tanggal}` in your template with the report date.
+- **Automatic continuation.** The app reads your most recent complete report submitted for a day
+  marked **Hadir** (present). It uses verb rules to rewrite the activity sentences it recognizes.
+  For the remaining activity sentences, it runs the IndoT5 model on your phone with ONNX Runtime.
+  It copies the lessons learned and obstacles from the source report.
+
+The app saves the draft with the participant ID and date so the service can reuse the text from the preview.
+
+### Submission and confirmation
+
+Both the **Beranda** (Home) tab and the emergency submission service use the Monev form in a WebView.
+The app first requests the device's location. If that is unavailable, it tries to estimate the location
+from the IP address. Once the site confirms location access, JavaScript fills in the activities,
+lessons learned, and obstacles.
+
+The app reads all three fields back from the form. If the text matches the draft and each field
+contains 100 to 5,000 characters, it checks the declaration box and selects **Simpan dan Kirim**
+(Save and Submit). The app marks the submission as successful in the **Log** tab only after the
+Monev API confirms the report for the same participant and date.
+
+See the code for [scheduling](app/src/main/java/id/ohmymonev/android/schedule/AlarmScheduler.kt),
+[draft preparation](app/src/main/java/id/ohmymonev/android/engine/PreparedReportService.kt),
+[form filling](app/src/main/java/id/ohmymonev/android/engine/WebViewEngine.kt), and
+[submission confirmation](app/src/main/java/id/ohmymonev/android/engine/EngineAutoFillDelegate.kt).
