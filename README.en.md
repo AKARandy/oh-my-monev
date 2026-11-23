@@ -11,7 +11,7 @@ their daily attendance on https://monev.maganghub.kemnaker.go.id.
 
 Read this file in Indonesian: [README.md](README.md).
 
-[Download here](https://github.com/AKARandy/oh-my-monev/releases/latest) (stable) | [Dev build](https://github.com/AKARandy/oh-my-monev/releases/tag/dev) (installs side-by-side).
+[Download stable version here](https://github.com/AKARandy/oh-my-monev/releases/latest) (For user) | [Download dev build version here](https://github.com/AKARandy/oh-my-monev/releases/tag/dev) (For debugging if you're developer).
 
 MagangHub gives money to interns. But the participant must record attendance every day.
 If the participant does not send the record before 23:59 WIB, the participant loses the money
