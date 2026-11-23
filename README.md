@@ -31,11 +31,11 @@ Aplikasi ini bisa melakukan hal-hal berikut:
 
 Status: rilis stabil v1.1.0 tersedia (build dev terpisah pada tag `dev`).
 
-## Tampilan
+## Tampilan (taken from a real phone)
 
-| Beranda | Otomatis |
+| Halaman Beranda | Halaman Otomatis |
 | :---: | :---: |
-| <img src="screenshots/forge-home.png" alt="Beranda" width="240" /> | <img src="screenshots/schedule-delete-in-card.png" alt="Otomatis" width="240" /> |
+| <img src="screenshots/WhatsApp Image 2026-11-23 at 08.51.52.jpeg" alt="Beranda" width="300" /> | <img src="screenshots/WhatsApp Image 2026-11-23 at 08.51.53.jpeg" alt="Otomatis" width="300" /> |
 
 ## Struktur
 
